@@ -44,8 +44,8 @@ New module `cfd::mesh` (`src/mesh`, static library `cfd_mesh`, alias `cfd::mesh`
 | 11 | CLI subcommands in `src/app/main.cpp` | H |
 
 ## Definition of Done
-- [ ] CI green (Windows, Linux, format)
-- [ ] All shapes: volume exact, every cell closed (|Σ ±Sf| < 1e-12·scale)
-- [ ] Box mesh: cell/face/patch counts exact, volume = box volume, non-orthogonality 0
-- [ ] Gmsh 4.1 files read with correct patches
-- [ ] `cfd check-mesh` works
+- [x] CI green (Windows, Linux, format)
+- [x] All shapes: volume exact, every cell closed (|Σ ±Sf| < 1e-12·scale)
+- [x] Box mesh: cell/face/patch counts exact, volume = box volume, non-orthogonality 0
+- [x] Gmsh 4.1 files read with correct patches
+- [x] `cfd check-mesh` works
