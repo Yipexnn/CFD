@@ -149,54 +149,54 @@ TEST(CaseConfig, CommentsAllowed) {
 }
 
 TEST(CaseConfig, Errors) {
-    EXPECT_THROW(cc::parse_case(R"({"mesh": )"), std::runtime_error);
+    EXPECT_THROW((void)cc::parse_case(R"({"mesh": )"), std::runtime_error);
 
-    EXPECT_THROW(cc::parse_case(R"({"meshh": {"type": "box"}})"), std::runtime_error);
+    EXPECT_THROW((void)cc::parse_case(R"({"meshh": {"type": "box"}})"), std::runtime_error);
 
-    EXPECT_THROW(cc::parse_case(R"({"name": "no_mesh"})"), std::runtime_error);
+    EXPECT_THROW((void)cc::parse_case(R"({"name": "no_mesh"})"), std::runtime_error);
 
-    EXPECT_THROW(cc::parse_case(R"({
+    EXPECT_THROW((void)cc::parse_case(R"({
         "mesh": {"type": "box"},
         "boundaries": {"inlet": {"type": "inflow"}}
     })"),
                  std::runtime_error);
 
-    EXPECT_THROW(cc::parse_case(R"({
+    EXPECT_THROW((void)cc::parse_case(R"({
         "mesh": {"type": "box"},
         "boundaries": {"inlet": {"type": "velocity_inlet"}}
     })"),
                  std::runtime_error);
 
-    EXPECT_THROW(cc::parse_case(R"({
+    EXPECT_THROW((void)cc::parse_case(R"({
         "mesh": {"type": "box"},
         "boundaries": {"inlet": {"type": "velocity_inlet", "velocity": [1, 0]}}
     })"),
                  std::runtime_error);
 
-    EXPECT_THROW(cc::parse_case(R"({
+    EXPECT_THROW((void)cc::parse_case(R"({
         "mesh": {"type": "box"},
         "physics": {"nu": -0.1}
     })"),
                  std::runtime_error);
 
-    EXPECT_THROW(cc::parse_case(R"({
+    EXPECT_THROW((void)cc::parse_case(R"({
         "mesh": {"type": "box"},
         "solver": {"alpha_u": 1.5}
     })"),
                  std::runtime_error);
 
-    EXPECT_THROW(cc::parse_case(R"({
+    EXPECT_THROW((void)cc::parse_case(R"({
         "mesh": {"type": "box", "patch_types": {"left": "wall"}}
     })"),
                  std::runtime_error);
 
-    EXPECT_THROW(cc::parse_case(R"({
+    EXPECT_THROW((void)cc::parse_case(R"({
         "mesh": {"type": "box"},
         "physics": {"turbulence": "kEpsilon"}
     })"),
                  std::runtime_error);
 
-    EXPECT_THROW(cc::parse_case(R"({"mesh": {"type": "gmsh"}})"), std::runtime_error);
+    EXPECT_THROW((void)cc::parse_case(R"({"mesh": {"type": "gmsh"}})"), std::runtime_error);
 }
 
 TEST(CaseConfig, ErrorMessageMentionsPath) {
