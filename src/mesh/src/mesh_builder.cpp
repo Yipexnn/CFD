@@ -15,8 +15,16 @@ using FaceKey = std::array<Label, 4>;
 
 FaceKey make_key(const std::array<Label, 4>& nodes, int n) {
     FaceKey key{-1, -1, -1, -1};
-    std::copy_n(nodes.begin(), n, key.begin());
-    std::sort(key.begin(), key.begin() + n);
+    // Insertion sort over at most 4 entries (std::sort triggers a GCC 15 false-positive
+    // -Warray-bounds on such small fixed-size ranges).
+    for (std::size_t i = 0; i < static_cast<std::size_t>(n); ++i) {
+        const Label v = nodes[i];
+        std::size_t j = i;
+        for (; j > 0 && key[j - 1] > v; --j) {
+            key[j] = key[j - 1];
+        }
+        key[j] = v;
+    }
     return key;
 }
 
