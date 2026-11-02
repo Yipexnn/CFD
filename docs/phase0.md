@@ -77,9 +77,8 @@ Targets:
 ## 4. Tasks
 
 Agent legend (from CLAUDE.md):
-- **H**: Haiku 5.5, effort medium (simple single-file tasks)
-- **S**: Sonnet 5.5, effort high (complex single-file tasks)
-- **O**: orchestrator itself
+- **H**: Haiku 5.5 subagent, effort medium (grunt work, simple single-file tasks)
+- **O**: orchestrator itself (complex tasks). Never use Sonnet.
 
 Each task produces **one file** (T-11 is a header/impl pair handled sequentially). The orchestrator reviews every result.
 
@@ -110,7 +109,7 @@ Each task produces **one file** (T-11 is a header/impl pair handled sequentially
 
 ### Wave 2 – build system (after Wave 1)
 
-**T-06 `CMakeLists.txt` (root)** (S)
+**T-06 `CMakeLists.txt` (root)** (O)
 - `cmake_minimum_required(VERSION 3.25)`, `project(cfd VERSION 0.1.0 LANGUAGES CXX)`.
 - `CMAKE_CXX_STANDARD 20`, `CMAKE_CXX_STANDARD_REQUIRED ON`, `CMAKE_CXX_EXTENSIONS OFF`, `CMAKE_EXPORT_COMPILE_COMMANDS ON`.
 - Options: `CFD_BUILD_APP` (ON), `CFD_BUILD_TESTS` (ON), `CFD_ENABLE_OPENMP` (ON), `CFD_WARNINGS_AS_ERRORS` (OFF).
@@ -119,7 +118,7 @@ Each task produces **one file** (T-11 is a header/impl pair handled sequentially
 - `add_subdirectory(src/core)`; app/tests depending on options; tests: `enable_testing()` before `add_subdirectory(tests)`.
 - Prevent in-source builds (fatal error if source dir == binary dir).
 
-**T-07 `CMakePresets.json`** (S)
+**T-07 `CMakePresets.json`** (O)
 - Schema `version: 6`.
 - Hidden `base`: generator `Ninja`, `binaryDir: ${sourceDir}/build/${presetName}`, `toolchainFile: $env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake`.
 - Hidden `windows-base` (inherits `base`): condition `hostSystemName == Windows`, `CMAKE_CXX_COMPILER: cl`, `VCPKG_TARGET_TRIPLET: x64-windows-static-md`, `architecture: {value: x64, strategy: external}`.
@@ -145,7 +144,7 @@ Each task produces **one file** (T-11 is a header/impl pair handled sequentially
 - OpenMP: `#ifdef _OPENMP` → `omp_get_max_threads()`, else `false` / `1`.
 - Eigen version from `EIGEN_WORLD_VERSION.EIGEN_MAJOR_VERSION.EIGEN_MINOR_VERSION`.
 
-**T-12 `src/core/CMakeLists.txt`** (S)
+**T-12 `src/core/CMakeLists.txt`** (O)
 - `configure_file(include/cfd/core/version.hpp.in ${CMAKE_CURRENT_BINARY_DIR}/generated/include/cfd/core/version.hpp @ONLY)`.
 - `add_library(cfd_core STATIC src/build_info.cpp)` + `add_library(cfd::core ALIAS cfd_core)`.
 - Public include dirs: `include/` and `generated/include/`.
@@ -176,7 +175,7 @@ Each task produces **one file** (T-11 is a header/impl pair handled sequentially
 
 ### Wave 3 – CI & docs (after Wave 2 builds locally)
 
-**T-18 `.github/workflows/ci.yml`** (S)
+**T-18 `.github/workflows/ci.yml`** (O)
 - Triggers: `push` to `main` and `claude/**`, `pull_request`, `workflow_dispatch`.
 - Job `build-test`, matrix:
   - `windows-latest` + preset `windows-msvc-release`
@@ -221,7 +220,7 @@ Each task produces **one file** (T-11 is a header/impl pair handled sequentially
    Conventions: <copy section 3>
    Context: repo layout in docs/phase0.md §2. Report back the file content summary.
    ```
-   - H tasks: `model: haiku`, `effort: medium`. S tasks: `model: sonnet`, `effort: high`.
+   - H tasks: `model: haiku`, `effort: medium`. O tasks: the orchestrator writes them itself (no Sonnet).
 4. **Review per file:** matches spec, conventions, no extra files, clang-format clean.
 5. **Local verification (Linux sandbox):**
    - `git clone https://github.com/microsoft/vcpkg <scratchpad>/vcpkg && <scratchpad>/vcpkg/bootstrap-vcpkg.sh -disableMetrics`

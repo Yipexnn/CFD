@@ -2,5 +2,5 @@ ANswer short and Concise
 Don't explain, when not asked
 Ask Question to clarify
 Ignore FIles that are in the .gitignore
-Use Haiku 5.5 as a Subagent on Medium and for complex Tasks Sonnet 5.5 High, they should only get small signle file tasks
+Use Haiku 5.5 subagents (effort medium) only for grunt work: small single-file tasks. Never use Sonnet. Do complex tasks yourself.
 Review what they did afterwards
