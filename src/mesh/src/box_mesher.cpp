@@ -2,6 +2,7 @@
 #include <cfd/mesh/box_mesher.hpp>
 #include <cfd/mesh/cell_shapes.hpp>
 #include <cfd/mesh/mesh_builder.hpp>
+#include <cmath>
 #include <cstddef>
 #include <span>
 #include <stdexcept>
@@ -21,6 +22,9 @@ void validate(const BoxSpec& spec) {
         throw std::invalid_argument(
             "make_box_mesh: max must be greater than min in every direction");
     }
+    if (!(spec.grading.minCoeff() > 0.0)) {
+        throw std::invalid_argument("make_box_mesh: grading must be positive");
+    }
 }
 
 // Point index for lattice position (i, j, k), i fastest.
@@ -28,20 +32,35 @@ Label point_index(const BoxSpec& spec, Label i, Label j, Label k) {
     return i + (spec.nx + 1) * (j + (spec.ny + 1) * k);
 }
 
+// Normalised node positions in [0, 1] for n cells with the given last/first size ratio.
+std::vector<Scalar> graded_positions(Label n, Scalar grading) {
+    std::vector<Scalar> s(static_cast<std::size_t>(n) + 1);
+    const Scalar ratio = n > 1 ? std::pow(grading, 1.0 / static_cast<Scalar>(n - 1)) : 1.0;
+    for (Label i = 0; i <= n; ++i) {
+        s[static_cast<std::size_t>(i)] = std::abs(ratio - 1.0) < 1e-12
+                                             ? static_cast<Scalar>(i) / static_cast<Scalar>(n)
+                                             : (std::pow(ratio, static_cast<Scalar>(i)) - 1.0) /
+                                                   (std::pow(ratio, static_cast<Scalar>(n)) - 1.0);
+    }
+    return s;
+}
+
 std::vector<Vec3> make_points(const BoxSpec& spec) {
     const Vec3 extent = spec.max - spec.min;
     const auto n_points = static_cast<std::size_t>(spec.nx + 1) *
                           static_cast<std::size_t>(spec.ny + 1) *
                           static_cast<std::size_t>(spec.nz + 1);
+    const auto sx = graded_positions(spec.nx, spec.grading.x());
+    const auto sy = graded_positions(spec.ny, spec.grading.y());
+    const auto sz = graded_positions(spec.nz, spec.grading.z());
 
     std::vector<Vec3> points;
     points.reserve(n_points);
     for (Label k = 0; k <= spec.nz; ++k) {
         for (Label j = 0; j <= spec.ny; ++j) {
             for (Label i = 0; i <= spec.nx; ++i) {
-                const Vec3 frac(static_cast<Scalar>(i) / static_cast<Scalar>(spec.nx),
-                                static_cast<Scalar>(j) / static_cast<Scalar>(spec.ny),
-                                static_cast<Scalar>(k) / static_cast<Scalar>(spec.nz));
+                const Vec3 frac(sx[static_cast<std::size_t>(i)], sy[static_cast<std::size_t>(j)],
+                                sz[static_cast<std::size_t>(k)]);
                 points.push_back(spec.min + extent.cwiseProduct(frac));
             }
         }

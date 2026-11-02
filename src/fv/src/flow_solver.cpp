@@ -3,6 +3,7 @@
 #include <cfd/fv/flow_solver.hpp>
 #include <cmath>
 #include <stdexcept>
+#include <tuple>
 #include <utility>
 
 namespace cfd::fv {
@@ -65,6 +66,7 @@ Vec3 FlowSolver::boundary_velocity(Label face) const {
     case FlowBoundary::Wall:
         return c.velocity;
     case FlowBoundary::PressureOutlet:
+    case FlowBoundary::Empty:
         return up;
     case FlowBoundary::Symmetry:
         break;
@@ -112,7 +114,8 @@ void FlowSolver::compute_initial_flux() {
         phi_[f] = (w[f] * up + (1.0 - w[f]) * un).dot(sf[f]);
     }
     for (std::size_t f = nif; f < nf; ++f) {
-        phi_[f] = bc(static_cast<Label>(f - nif)).kind == FlowBoundary::Symmetry
+        const FlowBoundary kind = bc(static_cast<Label>(f - nif)).kind;
+        phi_[f] = kind == FlowBoundary::Symmetry || kind == FlowBoundary::Empty
                       ? 0.0
                       : boundary_velocity(static_cast<Label>(f)).dot(sf[f]);
     }
@@ -230,12 +233,17 @@ void FlowSolver::assemble_momentum(MomentumSystem& sys, Scalar dt, bool relax) c
     sys.source.assign(nc, Vec3::Zero());
 
     const std::vector<Mat3> grad = velocity_gradient();
+    const auto& sf = m.face_area_vectors();
+    const std::vector<Scalar>* nut = turbulence_ != nullptr ? &turbulence_->nut() : nullptr;
+    const std::vector<Scalar>* nut_b =
+        turbulence_ != nullptr ? &turbulence_->boundary_nut() : nullptr;
 
     for (std::size_t f = 0; f < nif; ++f) {
         const auto p = static_cast<std::size_t>(own[f]);
         const auto n = static_cast<std::size_t>(nei[f]);
         const Scalar flux = phi_[f];
-        const Scalar diff = nu * dc[f];
+        const Scalar nu_f = nut != nullptr ? nu + w[f] * (*nut)[p] + (1.0 - w[f]) * (*nut)[n] : nu;
+        const Scalar diff = nu_f * dc[f];
 
         a.upper[f] = std::min(flux, 0.0) - diff;
         a.lower[f] = -std::max(flux, 0.0) - diff;
@@ -249,7 +257,11 @@ void FlowSolver::assemble_momentum(MomentumSystem& sys, Scalar dt, bool relax) c
             explicit_flux -= flux * (grad[up].transpose() * r);
         }
         const Mat3 grad_f = w[f] * grad[p] + (1.0 - w[f]) * grad[n];
-        explicit_flux += nu * (grad_f.transpose() * k[f]);
+        explicit_flux += nu_f * (grad_f.transpose() * k[f]);
+        if (nut != nullptr) {
+            // div(nu_eff (grad U)^T): vanishes for constant viscosity.
+            explicit_flux += nu_f * (grad_f * sf[f]);
+        }
 
         sys.source[p] += explicit_flux;
         sys.source[n] -= explicit_flux;
@@ -258,8 +270,12 @@ void FlowSolver::assemble_momentum(MomentumSystem& sys, Scalar dt, bool relax) c
     for (std::size_t f = nif; f < nf; ++f) {
         const auto p = static_cast<std::size_t>(own[f]);
         const Scalar flux = phi_[f];
-        const Scalar diff = nu * dc[f];
+        const Scalar nu_f = nut_b != nullptr ? nu + (*nut_b)[f - nif] : nu;
+        const Scalar diff = nu_f * dc[f];
         const BoundaryCondition& c = bc(static_cast<Label>(f - nif));
+        if (nut != nullptr && c.kind != FlowBoundary::Empty) {
+            sys.source[p] += nu_f * (grad[p] * sf[f]);
+        }
         switch (c.kind) {
         case FlowBoundary::VelocityInlet:
         case FlowBoundary::Wall:
@@ -268,6 +284,8 @@ void FlowSolver::assemble_momentum(MomentumSystem& sys, Scalar dt, bool relax) c
             break;
         case FlowBoundary::PressureOutlet:
             a.diag[p] += flux;
+            break;
+        case FlowBoundary::Empty:
             break;
         case FlowBoundary::Symmetry:
             // Shared implicit diagonal with the explicit mirrored value U_P - (U_P.n)n keeps
@@ -279,6 +297,7 @@ void FlowSolver::assemble_momentum(MomentumSystem& sys, Scalar dt, bool relax) c
     }
 
     for (std::size_t c = 0; c < nc; ++c) {
+        sys.source[c] += settings_.body_force * vol[c];
         if (dt > 0.0) {
             const Scalar ddt = vol[c] / dt;
             a.diag[c] += ddt;
@@ -390,6 +409,7 @@ Scalar FlowSolver::pressure_correction(const MomentumSystem& sys, bool relax_p) 
             phi_hbya[f] = hbya[p].dot(sf[f]);
             break;
         case FlowBoundary::Symmetry:
+        case FlowBoundary::Empty:
             phi_hbya[f] = 0.0;
             break;
         }
@@ -480,6 +500,9 @@ Residuals FlowSolver::simple_iteration() {
     Residuals res;
     res.u = solve_momentum(sys);
     res.p = pressure_correction(sys, true);
+    if (turbulence_ != nullptr) {
+        std::tie(res.k, res.omega) = turbulence_->correct(*this, 0.0);
+    }
     res.continuity = continuity_error();
     history_.push_back(res);
     return res;
@@ -508,6 +531,9 @@ Residuals FlowSolver::piso_step(Scalar dt) {
         if (corr == 0) {
             res.p = r;
         }
+    }
+    if (turbulence_ != nullptr) {
+        std::tie(res.k, res.omega) = turbulence_->correct(*this, dt);
     }
     res.continuity = continuity_error();
     history_.push_back(res);

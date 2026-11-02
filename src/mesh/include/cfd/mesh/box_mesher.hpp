@@ -12,6 +12,9 @@ struct BoxSpec {
     Label nz = 1;
     Vec3 min = Vec3::Zero();
     Vec3 max = Vec3::Ones();
+    // Geometric grading per direction: size of the last cell / size of the first cell
+    // (1 = uniform, > 1 = cells grow towards max).
+    Vec3 grading = Vec3::Ones();
     // Patch order: xmin, xmax, ymin, ymax, zmin, zmax.
     std::array<std::string, 6> patch_names{"xmin", "xmax", "ymin", "ymax", "zmin", "zmax"};
     std::array<PatchType, 6> patch_types{PatchType::Wall, PatchType::Wall, PatchType::Wall,

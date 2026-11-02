@@ -2,6 +2,9 @@ add_library(cfd_fv STATIC
     src/fv_geometry.cpp
     src/ldu_matrix.cpp
     src/flow_solver.cpp
+    src/scalar_transport.cpp
+    src/wall_distance.cpp
+    src/k_omega_sst.cpp
 )
 add_library(cfd::fv ALIAS cfd_fv)
 

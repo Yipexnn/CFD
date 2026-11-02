@@ -29,7 +29,7 @@ Goal: realistic 3D CFD desktop application, running locally on Windows.
 1. ✅ **Mesh core** – unstructured 3D FV mesh (cells/faces/owner-neighbour), box/channel generator, `.msh` import, quality metrics → details: [docs/phase1.md](docs/phase1.md)
 2. ✅ **Laminar solver** – collocated FV, SIMPLE (steady) / PIMPLE (transient), Rhie-Chow, BCs (inlet, outlet, wall, symmetry), non-orthogonal correction → details: [docs/phase2.md](docs/phase2.md)
    - Validation: lid-driven cavity (Ghia), Poiseuille channel (incl. non-orthogonal mesh); cylinder deferred to Phase 6
-3. **Turbulence** – k-ω SST, wall functions, y+
+3. **Turbulence** – k-ω SST, wall functions, y+ → details: [docs/phase3.md](docs/phase3.md)
    - Validation: channel flow, backward-facing step
 4. **Case I/O** – JSON case files, VTU output, checkpoint/restart
 5. **GUI** – geometry viewer, primitives (box/cylinder/sphere), mesh settings, BC assignment, run with live residuals, post-processing (slices, contours, streamlines, vectors)

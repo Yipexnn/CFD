@@ -1,25 +1,33 @@
 #pragma once
 
+#include <algorithm>
 #include <cfd/fv/fv_geometry.hpp>
 #include <cfd/fv/ldu_matrix.hpp>
+#include <cfd/fv/turbulence_model.hpp>
 #include <map>
 #include <string>
 #include <vector>
 
 namespace cfd::fv {
 
-enum class FlowBoundary { VelocityInlet, Wall, PressureOutlet, Symmetry };
+// Empty: zero flux and zero gradient; only valid for directions with one cell layer
+// (quasi-1D/2D cases, e.g. a fully developed channel driven by a body force).
+enum class FlowBoundary { VelocityInlet, Wall, PressureOutlet, Symmetry, Empty };
 
 struct BoundaryCondition {
     FlowBoundary kind = FlowBoundary::Wall;
     Vec3 velocity = Vec3::Zero(); // inlet velocity or wall velocity
     Scalar pressure = 0.0;        // outlet (kinematic) pressure
+    // Inlet turbulence: k = 1.5 (I |U|)^2, nu_t / nu = viscosity_ratio.
+    Scalar turbulence_intensity = 0.05;
+    Scalar viscosity_ratio = 10.0;
 };
 
 enum class ConvectionScheme { Upwind, LinearUpwind };
 
 struct FlowSettings {
-    Scalar nu = 1e-3; // kinematic viscosity [m^2/s]
+    Scalar nu = 1e-3;               // kinematic viscosity [m^2/s]
+    Vec3 body_force = Vec3::Zero(); // acceleration [m/s^2], e.g. driving pressure gradient
     ConvectionScheme convection = ConvectionScheme::LinearUpwind;
     Scalar alpha_u = 0.7; // SIMPLE velocity under-relaxation
     Scalar alpha_p = 0.3; // SIMPLE pressure under-relaxation
@@ -33,8 +41,10 @@ struct Residuals {
     Vec3 u = Vec3::Zero();   // initial normalised residual per velocity component
     Scalar p = 0.0;          // initial normalised pressure residual
     Scalar continuity = 0.0; // volume-weighted |div(phi)| / total volume
+    Scalar k = 0.0;          // turbulence equations (0 for laminar)
+    Scalar omega = 0.0;
 
-    [[nodiscard]] Scalar max() const { return std::max(u.maxCoeff(), p); }
+    [[nodiscard]] Scalar max() const { return std::max({u.maxCoeff(), p, k, omega}); }
 };
 
 // Incompressible laminar Navier-Stokes solver (collocated FV, SIMPLE / PISO).
@@ -58,6 +68,16 @@ public:
     Residuals piso_step(Scalar dt);
 
     void set_uniform_velocity(const Vec3& u);
+
+    // Couples an eddy-viscosity model (not owned; nullptr = laminar). The model is
+    // corrected after every SIMPLE iteration / PISO step.
+    void set_turbulence_model(TurbulenceModel* model) { turbulence_ = model; }
+    [[nodiscard]] const TurbulenceModel* turbulence_model() const { return turbulence_; }
+
+    // Boundary condition of a boundary face (indexed by f - n_internal_faces).
+    [[nodiscard]] const BoundaryCondition& boundary_condition(Label boundary_face_index) const {
+        return bc(boundary_face_index);
+    }
 
     // Replaces the cell fields (e.g. restart or initial condition); fluxes are recomputed.
     void set_state(std::vector<Vec3> u, std::vector<Scalar> p);
@@ -98,6 +118,7 @@ private:
     FlowSettings settings_;
     std::vector<BoundaryCondition> patch_bcs_;
     bool has_fixed_pressure_ = false;
+    TurbulenceModel* turbulence_ = nullptr;
 
     std::vector<Vec3> u_;
     std::vector<Vec3> u_old_;

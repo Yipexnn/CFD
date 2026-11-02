@@ -8,6 +8,7 @@ add_executable(cfd_tests
     test_gmsh_reader.cpp
     test_ldu_matrix.cpp
     test_flow_validation.cpp
+    test_turbulence.cpp
 )
 target_link_libraries(cfd_tests PRIVATE cfd::core cfd::mesh cfd::fv GTest::gtest_main)
 cfd_target_defaults(cfd_tests)
