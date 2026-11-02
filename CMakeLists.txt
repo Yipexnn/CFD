@@ -26,6 +26,7 @@ if(CFD_ENABLE_OPENMP)
 endif()
 
 add_subdirectory(src/core)
+add_subdirectory(src/mesh)
 
 if(CFD_BUILD_APP)
     add_subdirectory(src/app)
