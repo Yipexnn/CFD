@@ -28,6 +28,6 @@ Goal: RANS turbulence with the k-ω SST model (Menter 2003, OpenFOAM variant), a
 - **Backward-facing step**: optional/slow, after a performance pass (AMG)
 
 ## Definition of Done
-- [ ] CI green, Phase 2 laminar tests unchanged
+- [x] CI green, Phase 2 laminar tests unchanged
 - [x] Channel validations pass (Re_τ 395 resolved: U_b+ 17.9, U_c+ 20.1; Re_τ 2000 wall functions: U_b+ 22.4 vs Dean 21.7)
 - [x] y+ reported (KOmegaSst::y_plus)
