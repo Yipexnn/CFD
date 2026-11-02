@@ -25,7 +25,7 @@ Goal: realistic 3D CFD desktop application, running locally on Windows.
 | Tests / CI | GoogleTest, GitHub Actions (Windows) |
 
 ## Phases
-0. **Setup** – repo structure, CMake/vcpkg, CI, tests
+0. **Setup** – repo structure, CMake/vcpkg, CI, tests → details: [docs/phase0.md](docs/phase0.md)
 1. **Mesh core** – unstructured 3D FV mesh (cells/faces/owner-neighbour), box/channel generator, `.msh` import, quality metrics
 2. **Laminar solver** – collocated FV, SIMPLE (steady) / PIMPLE (transient), Rhie-Chow, BCs (inlet, outlet, wall, symmetry), non-orthogonal correction
    - Validation: 3D lid-driven cavity, Poiseuille pipe, cylinder
