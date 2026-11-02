@@ -29,6 +29,12 @@ public:
     [[nodiscard]] const std::vector<Scalar>& nut() const override { return nut_; }
     [[nodiscard]] const std::vector<Scalar>& boundary_nut() const override { return nut_b_; }
 
+    // Restart: sets k and omega (nu_t = k / omega until the next correct()).
+    void set_fields(std::vector<Scalar> k, std::vector<Scalar> omega);
+    // Exact restart including cell and boundary-face nu_t.
+    void set_fields(std::vector<Scalar> k, std::vector<Scalar> omega, std::vector<Scalar> nut,
+                    std::vector<Scalar> boundary_nut);
+
     [[nodiscard]] const std::vector<Scalar>& k() const { return k_; }
     [[nodiscard]] const std::vector<Scalar>& omega() const { return omega_; }
     [[nodiscard]] const std::vector<Scalar>& wall_distance() const { return y_; }

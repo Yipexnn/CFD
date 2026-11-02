@@ -101,6 +101,14 @@ void FlowSolver::set_state(std::vector<Vec3> u, std::vector<Scalar> p) {
     compute_initial_flux();
 }
 
+void FlowSolver::set_state(std::vector<Vec3> u, std::vector<Scalar> p, std::vector<Scalar> phi) {
+    if (phi.size() != static_cast<std::size_t>(geo_.mesh().n_faces())) {
+        throw std::invalid_argument("FlowSolver::set_state: face flux size mismatch");
+    }
+    set_state(std::move(u), std::move(p));
+    phi_ = std::move(phi);
+}
+
 void FlowSolver::compute_initial_flux() {
     const Mesh& m = geo_.mesh();
     const auto nf = static_cast<std::size_t>(m.n_faces());

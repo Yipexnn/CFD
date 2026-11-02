@@ -6,7 +6,7 @@ See [PLAN.md](PLAN.md) and [Phase 0 details](docs/phase0.md).
 
 ## Status
 
-Phase 0 – project setup (core library, CLI app `cfd`, unit tests, CI).
+Phases 0–4 done: mesh core, laminar solver (SIMPLE/PISO), k-ω SST turbulence, JSON case files with VTU output and restart. Next: GUI (Phase 5).
 
 ## Windows setup (CLion)
 
@@ -58,10 +58,15 @@ ctest --preset <preset>
 ## Usage
 
 ```sh
-cfd --version
-cfd --info
-cfd --help
+cfd run examples/cavity.json        # run a case file (see docs/case_format.md)
+cfd mesh-box 10 10 10               # create a box mesh and print statistics
+cfd check-mesh mesh.msh             # check a Gmsh 4.1 mesh
+cfd run-cavity 32 100               # quick lid-driven cavity demo
+cfd --version | --info | --help
 ```
+
+Results are written as `.vtu` files (open with ParaView) plus `residuals.csv` and a
+`checkpoint.bin` for restarts (`"restart": "results/<case>/checkpoint.bin"`).
 
 ## Project layout
 

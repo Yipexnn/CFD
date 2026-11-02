@@ -1,0 +1,31 @@
+// Fully developed turbulent half channel, Re_tau 395, as a 1D case:
+// one cell layer in x and z (empty), 60 cells in y growing 20:1 from the wall to the
+// centreline (first cell y+ < 1). ymax is the symmetry plane at the channel centre; ymin is a wall.
+// nu = 1/395, body force [1,0,0] drives the flow, k-omega SST closure.
+{
+  "name": "channel_sst",
+  "mesh": {
+    "type": "box",
+    "cells": [1, 60, 1],
+    "max": [0.1, 1, 0.1],
+    "grading": [1, 20, 1],
+    "patch_types": { "ymax": "symmetry" }
+  },
+  "physics": { "nu": 0.0025316456, "body_force": [1, 0, 0], "turbulence": "kOmegaSST" },
+  "boundaries": {
+    "xmin": { "type": "empty" },
+    "xmax": { "type": "empty" },
+    "zmin": { "type": "empty" },
+    "zmax": { "type": "empty" },
+    "ymax": { "type": "symmetry" }
+  },
+  "initial": { "velocity": [15, 0, 0], "k": 1, "omega": 10 },
+  "solver": {
+    "mode": "steady",
+    "max_iterations": 20000,
+    "tolerance": 1e-7,
+    "alpha_u": 0.95,
+    "alpha_p": 0.5
+  },
+  "output": { "directory": "results/channel_sst", "log_interval": 500 }
+}

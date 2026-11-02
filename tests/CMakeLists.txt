@@ -10,8 +10,10 @@ add_executable(cfd_tests
     test_flow_validation.cpp
     test_turbulence.cpp
     test_scalar_transport.cpp
+    test_case_config.cpp
+    test_case_runner.cpp
 )
-target_link_libraries(cfd_tests PRIVATE cfd::core cfd::mesh cfd::fv GTest::gtest_main)
+target_link_libraries(cfd_tests PRIVATE cfd::core cfd::mesh cfd::fv cfd::case GTest::gtest_main)
 cfd_target_defaults(cfd_tests)
 
 include(GoogleTest)

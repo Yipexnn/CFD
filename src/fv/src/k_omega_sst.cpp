@@ -2,6 +2,8 @@
 #include <cfd/fv/k_omega_sst.hpp>
 #include <cfd/fv/wall_distance.hpp>
 #include <cmath>
+#include <stdexcept>
+#include <utility>
 
 namespace cfd::fv {
 
@@ -67,6 +69,36 @@ KOmegaSst::KOmegaSst(const FlowSolver& flow, SstSettings settings)
                 m.owner()[m.n_internal_faces() + static_cast<Label>(b)])];
         }
     }
+}
+
+void KOmegaSst::set_fields(std::vector<Scalar> k, std::vector<Scalar> omega) {
+    if (k.size() != k_.size() || omega.size() != omega_.size()) {
+        throw std::invalid_argument("KOmegaSst::set_fields: size mismatch");
+    }
+    k_ = std::move(k);
+    omega_ = std::move(omega);
+    k_old_ = k_;
+    omega_old_ = omega_;
+    for (std::size_t c = 0; c < nut_.size(); ++c) {
+        nut_[c] = k_[c] / std::max(omega_[c], k_small);
+    }
+    const Mesh& m = geo_->mesh();
+    const auto nif = static_cast<std::size_t>(m.n_internal_faces());
+    for (std::size_t b = 0; b < nut_b_.size(); ++b) {
+        if (is_wall_face_[b] == 0) {
+            nut_b_[b] = nut_[static_cast<std::size_t>(m.owner()[nif + b])];
+        }
+    }
+}
+
+void KOmegaSst::set_fields(std::vector<Scalar> k, std::vector<Scalar> omega,
+                           std::vector<Scalar> nut, std::vector<Scalar> boundary_nut) {
+    if (nut.size() != nut_.size() || boundary_nut.size() != nut_b_.size()) {
+        throw std::invalid_argument("KOmegaSst::set_fields: size mismatch");
+    }
+    set_fields(std::move(k), std::move(omega));
+    nut_ = std::move(nut);
+    nut_b_ = std::move(boundary_nut);
 }
 
 void KOmegaSst::update_nut(const std::vector<Scalar>& s2, const std::vector<Scalar>& f2) {

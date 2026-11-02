@@ -81,6 +81,8 @@ public:
 
     // Replaces the cell fields (e.g. restart or initial condition); fluxes are recomputed.
     void set_state(std::vector<Vec3> u, std::vector<Scalar> p);
+    // Restart: also restores the conservative face flux (size n_faces).
+    void set_state(std::vector<Vec3> u, std::vector<Scalar> p, std::vector<Scalar> phi);
 
     [[nodiscard]] const std::vector<Vec3>& velocity() const { return u_; }
     [[nodiscard]] const std::vector<Scalar>& pressure() const { return p_; }

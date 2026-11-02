@@ -1,0 +1,15 @@
+{
+  "name": "pipe_flow",
+  "mesh": {
+    "type": "box",
+    "cells": [50, 20, 1],
+    "max": [5, 1, 0.05],
+    "patch_types": { "xmin": "inlet", "xmax": "outlet", "zmin": "symmetry", "zmax": "symmetry" }
+  },
+  "physics": { "nu": 0.1, "turbulence": "laminar" },
+  "boundaries": {
+    "xmin": { "type": "velocity_inlet", "velocity": [1, 0, 0] }
+  },
+  "solver": { "mode": "steady", "max_iterations": 3000, "tolerance": 1e-7 },
+  "output": { "directory": "results/channel_laminar" }
+}
