@@ -236,11 +236,11 @@ Each task produces **one file** (T-11 is a header/impl pair handled sequentially
 
 ## 6. Definition of Done
 
-- [ ] CI is green: Windows/MSVC, Ubuntu/GCC, format check; warnings-as-errors on.
-- [ ] `cfd --version` → `cfd 0.1.0`; `cfd --info` shows compiler, build type, OpenMP threads, Eigen version.
-- [ ] All tests pass via `ctest`.
+- [x] CI is green: Windows/MSVC, Ubuntu/GCC, format check; warnings-as-errors on.
+- [x] `cfd --version` → `cfd 0.1.0`; `cfd --info` shows compiler, build type, OpenMP threads, Eigen version.
+- [x] All tests pass via `ctest`.
 - [ ] The user has built and run it in CLion on Windows with the `windows-msvc-debug` preset (manual check).
-- [ ] `PLAN.md` updated, merged into `main`.
+- [x] `PLAN.md` updated, merged into `main`.
 
 ## 7. Risks / notes
 
