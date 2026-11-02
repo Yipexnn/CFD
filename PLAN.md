@@ -27,8 +27,8 @@ Goal: realistic 3D CFD desktop application, running locally on Windows.
 ## Phases
 0. ✅ **Setup** – repo structure, CMake/vcpkg, CI, tests → details: [docs/phase0.md](docs/phase0.md)
 1. ✅ **Mesh core** – unstructured 3D FV mesh (cells/faces/owner-neighbour), box/channel generator, `.msh` import, quality metrics → details: [docs/phase1.md](docs/phase1.md)
-2. **Laminar solver** – collocated FV, SIMPLE (steady) / PIMPLE (transient), Rhie-Chow, BCs (inlet, outlet, wall, symmetry), non-orthogonal correction → details: [docs/phase2.md](docs/phase2.md)
-   - Validation: 3D lid-driven cavity, Poiseuille pipe, cylinder
+2. ✅ **Laminar solver** – collocated FV, SIMPLE (steady) / PIMPLE (transient), Rhie-Chow, BCs (inlet, outlet, wall, symmetry), non-orthogonal correction → details: [docs/phase2.md](docs/phase2.md)
+   - Validation: lid-driven cavity (Ghia), Poiseuille channel (incl. non-orthogonal mesh); cylinder deferred to Phase 6
 3. **Turbulence** – k-ω SST, wall functions, y+
    - Validation: channel flow, backward-facing step
 4. **Case I/O** – JSON case files, VTU output, checkpoint/restart

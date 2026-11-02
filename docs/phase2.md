@@ -67,7 +67,7 @@ New module `cfd::fv` (`src/fv`, static library `cfd_fv`, depends on `cfd::mesh`)
 | 10 | CLI `run-cavity` | H |
 
 ## Definition of Done
-- [ ] CI green
-- [ ] Gradient of a linear field is exact on box meshes
-- [ ] Poiseuille and cavity validations pass within tolerance
-- [ ] `cfd run-cavity 32 100` converges and writes VTK
+- [x] CI green
+- [x] Pressure gradient of a linear field is exact (checked on sheared mesh)
+- [x] Poiseuille and cavity validations pass within tolerance
+- [x] `cfd run-cavity 32 100` converges and writes VTK
