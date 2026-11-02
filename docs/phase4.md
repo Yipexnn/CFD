@@ -17,4 +17,4 @@ Goal: run complete cases from JSON files, with VTU output, residual logs and exa
 ## Definition of Done
 - [x] Case parsing tests (valid, defaults, errors)
 - [x] Runner tests: outputs, intermediate writes, transient end time, stop callback, exact restart (laminar + SST), mesh-mismatch error
-- [ ] CI green
+- [x] CI green

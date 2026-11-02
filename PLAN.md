@@ -31,7 +31,7 @@ Goal: realistic 3D CFD desktop application, running locally on Windows.
    - Validation: lid-driven cavity (Ghia), Poiseuille channel (incl. non-orthogonal mesh); cylinder deferred to Phase 6
 3. ✅ **Turbulence** – k-ω SST, wall functions, y+ → details: [docs/phase3.md](docs/phase3.md)
    - Validation: channel Re_τ 395 (DNS) and 2000 (wall functions); backward-facing step deferred (needs AMG)
-4. **Case I/O** – JSON case files, VTU output, checkpoint/restart → details: [docs/phase4.md](docs/phase4.md), format: [docs/case_format.md](docs/case_format.md)
+4. ✅ **Case I/O** – JSON case files, VTU output, checkpoint/restart → details: [docs/phase4.md](docs/phase4.md), format: [docs/case_format.md](docs/case_format.md)
 5. **GUI** – geometry viewer, primitives (box/cylinder/sphere), mesh settings, BC assignment, run with live residuals, post-processing (slices, contours, streamlines, vectors)
 6. **Real geometry** – STL/STEP import, auto meshing, boundary-layer (prism) cells
 7. **Later** – heat transfer, compressible, multiphase, GPU, MPI
