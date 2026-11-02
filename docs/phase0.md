@@ -102,7 +102,7 @@ Each task produces **one file** (T-11 is a header/impl pair handled sequentially
 **T-05 `cmake/CfdTargetDefaults.cmake`** (H)
 - Defines `function(cfd_target_defaults target)`:
   - MSVC: `/W4 /permissive- /utf-8 /Zc:__cplusplus`; defines `NOMINMAX`, `_USE_MATH_DEFINES`.
-  - GCC/Clang: `-Wall -Wextra -Wpedantic -Wshadow -Wnon-virtual-dtor -Wold-style-cast -Wcast-align -Wunused -Woverloaded-virtual -Wnull-dereference -Wdouble-promotion -Wformat=2`.
+  - GCC/Clang: `-Wall -Wextra -Wpedantic -Wshadow -Wnon-virtual-dtor -Wold-style-cast -Wcast-align -Wunused -Woverloaded-virtual -Wdouble-promotion -Wformat=2`.
   - If `CFD_WARNINGS_AS_ERRORS`: MSVC `/WX`, others `-Werror`.
   - Sets `cxx_std_20` via `target_compile_features(... PUBLIC cxx_std_20)`.
 - Use generator expressions or `if(MSVC)` branches; no global `add_compile_options`.

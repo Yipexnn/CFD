@@ -4,6 +4,7 @@ add_library(cfd_mesh STATIC
     src/box_mesher.cpp
     src/gmsh_reader.cpp
     src/quality.cpp
+    src/vtu_writer.cpp
 )
 add_library(cfd::mesh ALIAS cfd_mesh)
 

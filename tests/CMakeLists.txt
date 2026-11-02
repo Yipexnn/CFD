@@ -6,8 +6,10 @@ add_executable(cfd_tests
     test_mesh_builder.cpp
     test_box_mesher.cpp
     test_gmsh_reader.cpp
+    test_ldu_matrix.cpp
+    test_flow_validation.cpp
 )
-target_link_libraries(cfd_tests PRIVATE cfd::core cfd::mesh GTest::gtest_main)
+target_link_libraries(cfd_tests PRIVATE cfd::core cfd::mesh cfd::fv GTest::gtest_main)
 cfd_target_defaults(cfd_tests)
 
 include(GoogleTest)

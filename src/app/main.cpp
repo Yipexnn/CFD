@@ -1,12 +1,18 @@
 #include <cfd/core/build_info.hpp>
 #include <cfd/core/version.hpp>
+#include <cfd/fv/flow_solver.hpp>
 #include <cfd/mesh/box_mesher.hpp>
 #include <cfd/mesh/gmsh_reader.hpp>
 #include <cfd/mesh/mesh.hpp>
 #include <cfd/mesh/quality.hpp>
+#include <cfd/mesh/vtu_writer.hpp>
 #include <charconv>
+#include <cmath>
 #include <exception>
+#include <iomanip>
 #include <iostream>
+#include <map>
+#include <string>
 #include <string_view>
 #include <system_error>
 
@@ -18,7 +24,8 @@ void print_usage(std::ostream& os) {
        << "  --info                     Print build information\n"
        << "  --help                     Show this help\n"
        << "  mesh-box <nx> <ny> <nz>    Create a unit box mesh and print statistics\n"
-       << "  check-mesh <file.msh>      Read a Gmsh 4.1 mesh and print statistics\n";
+       << "  check-mesh <file.msh>      Read a Gmsh 4.1 mesh and print statistics\n"
+       << "  run-cavity <n> <Re>        Lid-driven cavity demo, writes cavity.vtu\n";
 }
 
 // Parses a strictly positive integer. Returns false on non-numeric input or values < 1.
@@ -27,6 +34,18 @@ bool parse_positive(std::string_view text, cfd::mesh::Label& value) {
     const char* last = text.data() + text.size();
     const auto [ptr, ec] = std::from_chars(text.data(), last, parsed);
     if (ec != std::errc{} || ptr != last || parsed < 1) {
+        return false;
+    }
+    value = parsed;
+    return true;
+}
+
+// Parses a strictly positive, finite real number. Returns false on invalid input.
+bool parse_positive_real(std::string_view text, double& value) {
+    double parsed = 0.0;
+    const char* last = text.data() + text.size();
+    const auto [ptr, ec] = std::from_chars(text.data(), last, parsed);
+    if (ec != std::errc{} || ptr != last || !(parsed > 0.0) || !std::isfinite(parsed)) {
         return false;
     }
     value = parsed;
@@ -76,6 +95,62 @@ int run_check_mesh(int argc, char* argv[]) {
     return 0;
 }
 
+int run_cavity(int argc, char* argv[]) {
+    if (argc != 4) {
+        std::cerr << "cfd: error: run-cavity expects 2 arguments\n";
+        print_usage(std::cerr);
+        return 1;
+    }
+
+    cfd::mesh::Label n = 0;
+    if (!parse_positive(argv[2], n) || n < 2) {
+        std::cerr << "cfd: error: run-cavity n must be an integer >= 2\n";
+        print_usage(std::cerr);
+        return 1;
+    }
+    double re = 0.0;
+    if (!parse_positive_real(argv[3], re)) {
+        std::cerr << "cfd: error: run-cavity Re must be a positive number\n";
+        print_usage(std::cerr);
+        return 1;
+    }
+
+    cfd::mesh::BoxSpec spec;
+    spec.nx = n;
+    spec.ny = n;
+    spec.nz = 1;
+    spec.max = cfd::core::Vec3(1.0, 1.0, 1.0 / static_cast<double>(n));
+    spec.patch_types[4] = cfd::mesh::PatchType::Symmetry; // zmin
+    spec.patch_types[5] = cfd::mesh::PatchType::Symmetry; // zmax
+    const cfd::mesh::Mesh mesh = cfd::mesh::make_box_mesh(spec);
+
+    cfd::fv::FlowSettings settings;
+    settings.nu = 1.0 / re;
+    const std::map<std::string, cfd::fv::BoundaryCondition> conditions{
+        {"ymax", {cfd::fv::FlowBoundary::Wall, cfd::core::Vec3(1.0, 0.0, 0.0), 0.0}}};
+
+    cfd::fv::FlowSolver solver(mesh, conditions, settings);
+    const int iterations = solver.solve_steady(1e-6, 5000);
+
+    const auto& history = solver.history();
+    const bool converged = !history.empty() && history.back().max() < 1e-6;
+    const cfd::fv::Residuals last = history.empty() ? cfd::fv::Residuals{} : history.back();
+
+    if (converged) {
+        std::cout << "Converged in " << iterations << " iterations\n";
+    } else {
+        std::cout << "Not converged after " << iterations << " iterations\n";
+    }
+    std::cout << std::scientific << std::setprecision(3) << "u " << last.u.maxCoeff() << "  p "
+              << last.p << "  continuity " << last.continuity << "\n";
+
+    cfd::mesh::write_vtu("cavity.vtu", mesh, {{"p", &solver.pressure()}},
+                         {{"U", &solver.velocity()}});
+    std::cout << "Wrote cavity.vtu\n";
+
+    return converged ? 0 : 2;
+}
+
 } // namespace
 
 int main(int argc, char* argv[]) {
@@ -99,9 +174,15 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
-    if (arg == "mesh-box" || arg == "check-mesh") {
+    if (arg == "mesh-box" || arg == "check-mesh" || arg == "run-cavity") {
         try {
-            return arg == "mesh-box" ? run_mesh_box(argc, argv) : run_check_mesh(argc, argv);
+            if (arg == "mesh-box") {
+                return run_mesh_box(argc, argv);
+            }
+            if (arg == "check-mesh") {
+                return run_check_mesh(argc, argv);
+            }
+            return run_cavity(argc, argv);
         } catch (const std::exception& e) {
             std::cerr << "cfd: error: " << e.what() << "\n";
             return 1;

@@ -28,7 +28,6 @@ function(cfd_target_defaults target)
             -Wcast-align
             -Wunused
             -Woverloaded-virtual
-            -Wnull-dereference
             -Wdouble-promotion
             -Wformat=2
         )

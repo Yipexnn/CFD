@@ -27,6 +27,7 @@ endif()
 
 add_subdirectory(src/core)
 add_subdirectory(src/mesh)
+add_subdirectory(src/fv)
 
 if(CFD_BUILD_APP)
     add_subdirectory(src/app)
