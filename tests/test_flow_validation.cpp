@@ -226,3 +226,39 @@ TEST(FlowValidation, UnknownPatchThrows) {
                                   FlowSettings{}),
                  std::invalid_argument);
 }
+
+TEST(FlowValidation, LimitedLinearUpwindCavityIsAccurateAndBounded) {
+    const int n = 32;
+    BoxSpec spec;
+    spec.nx = n;
+    spec.ny = n;
+    spec.nz = 1;
+    spec.max = Vec3(1.0, 1.0, 1.0 / n);
+    spec.patch_types[4] = PatchType::Symmetry;
+    spec.patch_types[5] = PatchType::Symmetry;
+    const auto mesh = cfd::mesh::make_box_mesh(spec);
+
+    FlowSettings settings;
+    settings.nu = 0.01;
+    settings.convection = ConvectionScheme::LimitedLinearUpwind;
+    FlowSolver solver(mesh, {{"ymax", {FlowBoundary::Wall, Vec3(1.0, 0.0, 0.0), 0.0}}}, settings);
+    EXPECT_LT(solver.solve_steady(1e-6, 4000), 4000);
+
+    const auto& u = solver.velocity();
+    Scalar max_err = 0.0;
+    for (std::size_t k = 0; k < k_ghia_y.size(); ++k) {
+        const Scalar pos = k_ghia_y[k] * n - 0.5;
+        const int row = std::clamp(static_cast<int>(std::floor(pos)), 0, n - 2);
+        const Scalar t = std::clamp(pos - row, 0.0, 1.0);
+        auto centre_u = [&](int r) {
+            return 0.5 * (u[static_cast<std::size_t>(n / 2 - 1 + r * n)].x() +
+                          u[static_cast<std::size_t>(n / 2 + r * n)].x());
+        };
+        max_err = std::max(
+            max_err, std::abs((1.0 - t) * centre_u(row) + t * centre_u(row + 1) - k_ghia_u[k]));
+    }
+    EXPECT_LT(max_err, 0.02);
+    for (const auto& v : u) {
+        ASSERT_LE(std::abs(v.x()), 1.0 + 1e-9); // bounded by the lid velocity
+    }
+}

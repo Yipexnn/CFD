@@ -95,7 +95,7 @@ Patches without an entry get a default from their patch type:
 | `end_time` | number | `1.0` | Transient: end time, must be > 0. |
 | `alpha_u` | number | `0.7` | Velocity under-relaxation, 0 < alpha <= 1. |
 | `alpha_p` | number | `0.3` | Pressure under-relaxation, 0 < alpha <= 1. |
-| `convection` | string | `"linear_upwind"` | `"linear_upwind"` or `"upwind"`. |
+| `convection` | string | `"linear_upwind"` | `"linear_upwind"`, `"limited_linear_upwind"` (bounded, recommended for high Reynolds numbers / coarse meshes) or `"upwind"` (first order). |
 | `non_orthogonal_correctors` | int | `0` | Must be >= 0. |
 | `piso_correctors` | int | `2` | Must be >= 1. |
 

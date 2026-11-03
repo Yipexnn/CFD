@@ -261,8 +261,11 @@ CaseConfig parse_case(const std::string& json_text, const std::filesystem::path&
             flow.convection = fv::ConvectionScheme::LinearUpwind;
         } else if (conv == "upwind") {
             flow.convection = fv::ConvectionScheme::Upwind;
+        } else if (conv == "limited_linear_upwind") {
+            flow.convection = fv::ConvectionScheme::LimitedLinearUpwind;
         } else {
-            fail(path + ".convection", "unknown scheme '" + conv + "' (upwind, linear_upwind)");
+            fail(path + ".convection",
+                 "unknown scheme '" + conv + "' (upwind, linear_upwind, limited_linear_upwind)");
         }
         flow.n_non_orth_correctors =
             get_int(s, "non_orthogonal_correctors", path, flow.n_non_orth_correctors);

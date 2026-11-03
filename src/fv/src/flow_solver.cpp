@@ -258,7 +258,8 @@ void FlowSolver::assemble_momentum(MomentumSystem& sys, Scalar dt, bool relax) c
     const auto& cc = m.cell_centres();
     const auto& vol = m.cell_volumes();
     const Scalar nu = settings_.nu;
-    const bool linear_upwind = settings_.convection == ConvectionScheme::LinearUpwind;
+    const bool linear_upwind = settings_.convection != ConvectionScheme::Upwind;
+    const bool limited = settings_.convection == ConvectionScheme::LimitedLinearUpwind;
 
     LduMatrix& a = sys.base;
     a.set_zero();
@@ -267,6 +268,46 @@ void FlowSolver::assemble_momentum(MomentumSystem& sys, Scalar dt, bool relax) c
 
     const std::vector<Mat3> grad = velocity_gradient();
     const auto& sf = m.face_area_vectors();
+
+    // Barth-Jespersen limiter per cell and component: the reconstructed face values must
+    // stay within the min/max of the cell and its face neighbours (boundary values included).
+    std::vector<Vec3> limiter;
+    if (settings_.convection == ConvectionScheme::LimitedLinearUpwind) {
+        std::vector<Vec3> u_min(u_);
+        std::vector<Vec3> u_max(u_);
+        for (std::size_t f = 0; f < nif; ++f) {
+            const auto p = static_cast<std::size_t>(own[f]);
+            const auto n = static_cast<std::size_t>(nei[f]);
+            u_min[p] = u_min[p].cwiseMin(u_[n]);
+            u_max[p] = u_max[p].cwiseMax(u_[n]);
+            u_min[n] = u_min[n].cwiseMin(u_[p]);
+            u_max[n] = u_max[n].cwiseMax(u_[p]);
+        }
+        for (std::size_t f = nif; f < nf; ++f) {
+            const auto p = static_cast<std::size_t>(own[f]);
+            const Vec3 ub = boundary_velocity(static_cast<Label>(f));
+            u_min[p] = u_min[p].cwiseMin(ub);
+            u_max[p] = u_max[p].cwiseMax(ub);
+        }
+        limiter.assign(nc, Vec3::Ones());
+        auto limit = [&](std::size_t c, std::size_t f) {
+            const Vec3 delta = grad[c].transpose() * Vec3(cf[f] - cc[c]);
+            for (int i = 0; i < 3; ++i) {
+                const Scalar d = delta[i];
+                if (std::abs(d) < 1e-300) {
+                    continue;
+                }
+                const Scalar bound = d > 0.0 ? u_max[c][i] - u_[c][i] : u_min[c][i] - u_[c][i];
+                limiter[c][i] = std::min(limiter[c][i], std::max(bound / d, 0.0));
+            }
+        };
+        for (std::size_t f = 0; f < nf; ++f) {
+            limit(static_cast<std::size_t>(own[f]), f);
+            if (f < nif) {
+                limit(static_cast<std::size_t>(nei[f]), f);
+            }
+        }
+    }
     const std::vector<Scalar>* nut = turbulence_ != nullptr ? &turbulence_->nut() : nullptr;
     const std::vector<Scalar>* nut_b =
         turbulence_ != nullptr ? &turbulence_->boundary_nut() : nullptr;
@@ -287,7 +328,8 @@ void FlowSolver::assemble_momentum(MomentumSystem& sys, Scalar dt, bool relax) c
         if (linear_upwind) {
             const std::size_t up = flux >= 0.0 ? p : n;
             const Vec3 r = cf[f] - cc[up];
-            explicit_flux -= flux * (grad[up].transpose() * r);
+            const Vec3 delta = grad[up].transpose() * r;
+            explicit_flux -= flux * (limited ? Vec3(limiter[up].cwiseProduct(delta)) : delta);
         }
         const Mat3 grad_f = w[f] * grad[p] + (1.0 - w[f]) * grad[n];
         explicit_flux += nu_f * (grad_f.transpose() * k[f]);

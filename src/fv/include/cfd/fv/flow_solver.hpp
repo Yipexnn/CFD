@@ -24,7 +24,9 @@ struct BoundaryCondition {
     Scalar viscosity_ratio = 10.0;
 };
 
-enum class ConvectionScheme { Upwind, LinearUpwind };
+// LimitedLinearUpwind: linear upwind with a Barth-Jespersen gradient limiter (bounded,
+// robust at high cell Peclet numbers).
+enum class ConvectionScheme { Upwind, LinearUpwind, LimitedLinearUpwind };
 
 struct FlowSettings {
     Scalar nu = 1e-3;               // kinematic viscosity [m^2/s]
