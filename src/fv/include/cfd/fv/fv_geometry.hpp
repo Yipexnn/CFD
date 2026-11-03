@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cfd/fv/ldu_matrix.hpp>
 #include <cfd/mesh/mesh.hpp>
 #include <vector>
 
@@ -31,6 +32,9 @@ public:
     // Index of the patch owning each boundary face (indexed by f - n_internal_faces).
     [[nodiscard]] const std::vector<Label>& boundary_patch() const { return boundary_patch_; }
 
+    // CSR pattern of the cell matrix (for fast LduMatrix -> CSR conversion).
+    [[nodiscard]] const CsrPattern& csr_pattern() const { return pattern_; }
+
 private:
     const Mesh* mesh_;
     std::vector<Scalar> weights_;
@@ -39,6 +43,7 @@ private:
     std::vector<Vec3> unit_normals_;
     std::vector<Scalar> face_areas_;
     std::vector<Label> boundary_patch_;
+    CsrPattern pattern_;
 };
 
 } // namespace cfd::fv

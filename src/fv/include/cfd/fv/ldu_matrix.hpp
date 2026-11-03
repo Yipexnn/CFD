@@ -1,6 +1,8 @@
 #pragma once
 
+#include <Eigen/SparseCore>
 #include <cfd/mesh/mesh.hpp>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -10,7 +12,9 @@ namespace cfd::fv {
 using core::Label;
 using core::Scalar;
 
-enum class LinearSolverType { ConjugateGradient, BiCgStab };
+// ConjugateGradient: incomplete-Cholesky CG; AmgCg: smoothed-aggregation AMG
+// preconditioned CG (symmetric matrices, e.g. pressure); BiCgStab: Jacobi-preconditioned.
+enum class LinearSolverType { ConjugateGradient, BiCgStab, AmgCg };
 
 struct LinearSolverSettings {
     LinearSolverType type = LinearSolverType::BiCgStab;
@@ -31,6 +35,33 @@ struct LinearSolveResult {
 //                                         + sum_f lower[f] x[P'] (faces where P is neighbour)
 //                          = source[P]
 // i.e. upper[f] = a(owner, neighbour) and lower[f] = a(neighbour, owner).
+class AmgPreconditioner;
+
+// CSR sparsity pattern of the cell-to-cell matrix of a mesh with the value positions of
+// the LDU coefficients, so assembled matrices can be converted to CSR without sorting.
+struct CsrPattern {
+    Eigen::SparseMatrix<Scalar, Eigen::RowMajor, int> structure;
+    std::vector<int> diag_pos;
+    std::vector<int> upper_pos; // position of a(owner, neighbour)
+    std::vector<int> lower_pos; // position of a(neighbour, owner)
+};
+[[nodiscard]] CsrPattern build_csr_pattern(const mesh::Mesh& mesh);
+
+// Reusable AMG hierarchy for repeated solves with slowly changing matrices.
+struct AmgCache {
+    AmgCache();
+    ~AmgCache();
+    AmgCache(const AmgCache&) = delete;
+    AmgCache& operator=(const AmgCache&) = delete;
+    AmgCache(AmgCache&&) = delete;
+    AmgCache& operator=(AmgCache&&) = delete;
+
+    std::unique_ptr<AmgPreconditioner> amg;
+    int age = 0;              // solves since the last setup
+    int setup_iterations = 0; // CG iterations of the first solve after setup
+    int max_age = 20;         // rebuild at the latest after this many solves
+};
+
 class LduMatrix {
 public:
     explicit LduMatrix(const mesh::Mesh& mesh);
@@ -55,7 +86,13 @@ public:
     void set_reference(Label cell, Scalar value);
 
     // Solves A x = source in place, using x as initial guess.
-    LinearSolveResult solve(std::vector<Scalar>& x, const LinearSolverSettings& settings) const;
+    // amg_cache (optional, AmgCg only) keeps the AMG hierarchy between calls; it is rebuilt
+    // when it gets old or the CG iteration count grows noticeably.
+    LinearSolveResult solve(std::vector<Scalar>& x, const LinearSolverSettings& settings,
+                            AmgCache* amg_cache = nullptr) const;
+
+    // Optional precomputed pattern (must belong to the same mesh) for fast CSR conversion.
+    const CsrPattern* pattern = nullptr;
 
     std::vector<Scalar> diag;
     std::vector<Scalar> lower;

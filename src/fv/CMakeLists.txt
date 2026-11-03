@@ -1,6 +1,7 @@
 add_library(cfd_fv STATIC
     src/fv_geometry.cpp
     src/ldu_matrix.cpp
+    src/amg.cpp
     src/flow_solver.cpp
     src/scalar_transport.cpp
     src/wall_distance.cpp

@@ -12,6 +12,7 @@ add_executable(cfd_tests
     test_scalar_transport.cpp
     test_case_config.cpp
     test_case_runner.cpp
+    test_amg.cpp
 )
 target_link_libraries(cfd_tests PRIVATE cfd::core cfd::mesh cfd::fv cfd::case GTest::gtest_main)
 cfd_target_defaults(cfd_tests)

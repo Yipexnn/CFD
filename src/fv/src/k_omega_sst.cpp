@@ -180,7 +180,7 @@ std::pair<Scalar, Scalar> KOmegaSst::correct(const FlowSolver& flow, Scalar dt) 
         omega_wall[p] += std::sqrt(omega_vis * omega_vis + omega_log * omega_log);
 
         const Vec3& n = geo_->unit_normals()[f];
-        Vec3 ut = u[p] - flow.boundary_condition(static_cast<Label>(b)).velocity;
+        Vec3 ut = u[p] - flow.boundary_velocity(static_cast<Label>(f));
         ut -= ut.dot(n) * n;
         const Scalar mag_grad_uw = ut.norm() / y;
 

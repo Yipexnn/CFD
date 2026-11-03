@@ -67,6 +67,7 @@ LinearSolveResult solve_scalar(const FvGeometry& geo, const std::vector<Scalar>&
 
     const std::vector<Vec3> grad = scalar_gradient(geo, field, eq.boundary);
     LduMatrix a(m);
+    a.pattern = &geo.csr_pattern();
     std::vector<Scalar> divergence(nc, 0.0);
 
     for (std::size_t f = 0; f < nif; ++f) {

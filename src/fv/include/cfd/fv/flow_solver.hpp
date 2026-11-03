@@ -5,6 +5,7 @@
 #include <cfd/fv/ldu_matrix.hpp>
 #include <cfd/fv/turbulence_model.hpp>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -34,7 +35,7 @@ struct FlowSettings {
     int n_non_orth_correctors = 0;
     int n_piso_correctors = 2;
     LinearSolverSettings u_solver{LinearSolverType::BiCgStab, 1e-10, 0.1, 1000};
-    LinearSolverSettings p_solver{LinearSolverType::ConjugateGradient, 1e-10, 0.01, 2000};
+    LinearSolverSettings p_solver{LinearSolverType::AmgCg, 1e-10, 0.01, 500};
 };
 
 struct Residuals {
@@ -68,6 +69,10 @@ public:
     Residuals piso_step(Scalar dt);
 
     void set_uniform_velocity(const Vec3& u);
+
+    // Per-face velocity for a velocity-inlet or wall patch (e.g. a parabolic inlet
+    // profile); values are ordered like the patch faces. Throws on size mismatch.
+    void set_boundary_velocity_profile(const std::string& patch, std::vector<Vec3> velocities);
 
     // Couples an eddy-viscosity model (not owned; nullptr = laminar). The model is
     // corrected after every SIMPLE iteration / PISO step.
@@ -119,8 +124,10 @@ private:
     FvGeometry geo_;
     FlowSettings settings_;
     std::vector<BoundaryCondition> patch_bcs_;
+    std::vector<Vec3> fixed_velocity_; // per boundary face: inlet / wall velocity
     bool has_fixed_pressure_ = false;
     TurbulenceModel* turbulence_ = nullptr;
+    std::shared_ptr<AmgCache> p_amg_ = std::make_shared<AmgCache>(); // pressure AMG reuse
 
     std::vector<Vec3> u_;
     std::vector<Vec3> u_old_;

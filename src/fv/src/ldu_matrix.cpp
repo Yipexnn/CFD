@@ -1,6 +1,7 @@
 #include <Eigen/IterativeLinearSolvers>
 #include <Eigen/SparseCore>
 #include <algorithm>
+#include <cfd/fv/amg.hpp>
 #include <cfd/fv/ldu_matrix.hpp>
 #include <cmath>
 #include <numeric>
@@ -95,8 +96,8 @@ void LduMatrix::set_reference(Label cell, Scalar value) {
     diag[c] += diag[c];
 }
 
-LinearSolveResult LduMatrix::solve(std::vector<Scalar>& x,
-                                   const LinearSolverSettings& settings) const {
+LinearSolveResult LduMatrix::solve(std::vector<Scalar>& x, const LinearSolverSettings& settings,
+                                   AmgCache* amg_cache) const {
     LinearSolveResult result;
     const std::size_t n = diag.size();
     if (x.size() != n) {
@@ -108,20 +109,32 @@ LinearSolveResult LduMatrix::solve(std::vector<Scalar>& x,
         return result;
     }
 
-    // Assemble CSR.
-    std::vector<Eigen::Triplet<Scalar, int>> triplets;
-    triplets.reserve(n + 2 * upper.size());
-    for (std::size_t c = 0; c < n; ++c) {
-        triplets.emplace_back(static_cast<int>(c), static_cast<int>(c), diag[c]);
-    }
-    const auto& own = mesh_->owner();
-    const auto& nei = mesh_->neighbour();
-    for (std::size_t f = 0; f < upper.size(); ++f) {
-        triplets.emplace_back(own[f], nei[f], upper[f]);
-        triplets.emplace_back(nei[f], own[f], lower[f]);
-    }
+    // Assemble CSR (fast path with a precomputed pattern).
     SparseMatrix a(static_cast<int>(n), static_cast<int>(n));
-    a.setFromTriplets(triplets.begin(), triplets.end());
+    if (pattern != nullptr) {
+        a = pattern->structure;
+        Scalar* v = a.valuePtr();
+        for (std::size_t c = 0; c < n; ++c) {
+            v[pattern->diag_pos[c]] = diag[c];
+        }
+        for (std::size_t f = 0; f < upper.size(); ++f) {
+            v[pattern->upper_pos[f]] = upper[f];
+            v[pattern->lower_pos[f]] = lower[f];
+        }
+    } else {
+        std::vector<Eigen::Triplet<Scalar, int>> triplets;
+        triplets.reserve(n + 2 * upper.size());
+        for (std::size_t c = 0; c < n; ++c) {
+            triplets.emplace_back(static_cast<int>(c), static_cast<int>(c), diag[c]);
+        }
+        const auto& own = mesh_->owner();
+        const auto& nei = mesh_->neighbour();
+        for (std::size_t f = 0; f < upper.size(); ++f) {
+            triplets.emplace_back(own[f], nei[f], upper[f]);
+            triplets.emplace_back(nei[f], own[f], lower[f]);
+        }
+        a.setFromTriplets(triplets.begin(), triplets.end());
+    }
 
     const Eigen::Map<const EigenVector> b(source.data(), static_cast<Eigen::Index>(n));
     Eigen::Map<EigenVector> xv(x.data(), static_cast<Eigen::Index>(n));
@@ -136,7 +149,41 @@ LinearSolveResult LduMatrix::solve(std::vector<Scalar>& x,
         r0_norm;
     const Scalar eigen_tol = b_norm > k_small ? std::clamp(target / b_norm, 1e-15, 1.0) : 1e-15;
 
-    if (settings.type == LinearSolverType::ConjugateGradient) {
+    if (settings.type == LinearSolverType::AmgCg) {
+        AmgPreconditioner local;
+        AmgPreconditioner* amg = &local;
+        bool fresh = true;
+        if (amg_cache != nullptr) {
+            if (!amg_cache->amg || amg_cache->age >= amg_cache->max_age) {
+                amg_cache->amg = std::make_unique<AmgPreconditioner>();
+                amg_cache->amg->setup(a);
+                amg_cache->age = 0;
+            } else {
+                fresh = false;
+            }
+            amg = amg_cache->amg.get();
+        } else {
+            local.setup(a);
+        }
+        EigenVector xs = xv;
+        KrylovResult kr = pcg(a, b, xs, *amg, eigen_tol * b_norm, settings.max_iterations);
+        if (amg_cache != nullptr) {
+            if (fresh) {
+                amg_cache->setup_iterations = std::max(kr.iterations, 1);
+            } else if (kr.iterations > 2 * amg_cache->setup_iterations + 2) {
+                // Stale hierarchy: rebuild and solve again from the current iterate.
+                amg_cache->amg->setup(a);
+                const KrylovResult more =
+                    pcg(a, b, xs, *amg_cache->amg, eigen_tol * b_norm, settings.max_iterations);
+                kr.iterations += more.iterations;
+                amg_cache->age = 0;
+                amg_cache->setup_iterations = std::max(more.iterations, 1);
+            }
+            ++amg_cache->age;
+        }
+        xv = xs;
+        result.iterations = kr.iterations;
+    } else if (settings.type == LinearSolverType::ConjugateGradient) {
         Eigen::ConjugateGradient<SparseMatrix, Eigen::Lower | Eigen::Upper,
                                  Eigen::IncompleteCholesky<Scalar>>
             solver;
@@ -156,6 +203,51 @@ LinearSolveResult LduMatrix::solve(std::vector<Scalar>& x,
 
     result.final_residual = normalised_residual(x);
     return result;
+}
+
+AmgCache::AmgCache() = default;
+AmgCache::~AmgCache() = default;
+
+CsrPattern build_csr_pattern(const mesh::Mesh& mesh) {
+    const auto n = static_cast<int>(mesh.n_cells());
+    const auto nif = static_cast<std::size_t>(mesh.n_internal_faces());
+    const auto& own = mesh.owner();
+    const auto& nei = mesh.neighbour();
+    std::vector<Eigen::Triplet<Scalar, int>> t;
+    t.reserve(static_cast<std::size_t>(n) + 2 * nif);
+    for (int c = 0; c < n; ++c) {
+        t.emplace_back(c, c, 0.0);
+    }
+    for (std::size_t f = 0; f < nif; ++f) {
+        t.emplace_back(own[f], nei[f], 0.0);
+        t.emplace_back(nei[f], own[f], 0.0);
+    }
+    CsrPattern p;
+    p.structure.resize(n, n);
+    p.structure.setFromTriplets(t.begin(), t.end());
+    p.structure.makeCompressed();
+
+    const int* outer = p.structure.outerIndexPtr();
+    const int* inner = p.structure.innerIndexPtr();
+    auto find = [&](int row, int col) {
+        for (int k = outer[row]; k < outer[row + 1]; ++k) {
+            if (inner[k] == col) {
+                return k;
+            }
+        }
+        throw std::logic_error("build_csr_pattern: entry not found");
+    };
+    p.diag_pos.resize(static_cast<std::size_t>(n));
+    for (int c = 0; c < n; ++c) {
+        p.diag_pos[static_cast<std::size_t>(c)] = find(c, c);
+    }
+    p.upper_pos.resize(nif);
+    p.lower_pos.resize(nif);
+    for (std::size_t f = 0; f < nif; ++f) {
+        p.upper_pos[f] = find(own[f], nei[f]);
+        p.lower_pos[f] = find(nei[f], own[f]);
+    }
+    return p;
 }
 
 } // namespace cfd::fv
