@@ -15,6 +15,7 @@ option(CFD_BUILD_APP "Build the cfd command-line application" ON)
 option(CFD_BUILD_TESTS "Build the unit tests" ON)
 option(CFD_ENABLE_OPENMP "Enable OpenMP parallelism" ON)
 option(CFD_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
+option(CFD_BUILD_VALIDATION "Build validation programs (slow benchmark cases)" ON)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 include(CfdTargetDefaults)
@@ -32,6 +33,10 @@ add_subdirectory(src/case)
 
 if(CFD_BUILD_APP)
     add_subdirectory(src/app)
+endif()
+
+if(CFD_BUILD_VALIDATION)
+    add_subdirectory(validation)
 endif()
 
 if(CFD_BUILD_TESTS)
