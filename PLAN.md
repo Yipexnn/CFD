@@ -33,7 +33,7 @@ Goal: realistic 3D CFD desktop application, running locally on Windows.
    - Validation: channel Re_τ 395 (DNS) and 2000 (wall functions); backward-facing step deferred (needs AMG)
 4. ✅ **Case I/O** – JSON case files, VTU output, checkpoint/restart → details: [docs/phase4.md](docs/phase4.md), format: [docs/case_format.md](docs/case_format.md)
 4b. ✅ **Performance** – AMG-preconditioned CG pressure solver (~5× faster, mesh-independent iteration counts), limited linear upwind, laminar backward-facing step validation → details: [docs/performance.md](docs/performance.md)
-5. **GUI** – geometry viewer, primitives (box/cylinder/sphere), mesh settings, BC assignment, run with live residuals, post-processing (slices, contours, streamlines, vectors)
+5. ✅ **GUI** (manual Windows test pending) – geometry viewer, primitives (box/cylinder/sphere), mesh settings, BC assignment, run with live residuals, post-processing (slices, contours, streamlines, vectors) → details: [docs/phase5.md](docs/phase5.md)
 6. **Real geometry** – STL/STEP import, auto meshing, boundary-layer (prism) cells
 7. **Later** – heat transfer, compressible, multiphase, GPU, MPI
 

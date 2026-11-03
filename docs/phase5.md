@@ -25,18 +25,19 @@ Goal: a desktop application to set up, run and post-process cases without editin
   - mesh + fields → `vtkUnstructuredGrid` conversion (polyhedral cells)
 
 ## Build / CI
+- Windows GUI dependencies: release-only triplet `x64-windows-static-md-release` (host = target), VTK overlay port without Qt Quick (`vcpkg/ports/vtk`). The first build takes ~2.5 h on CI and is cached afterwards (later builds ~5 min).
 - presets:
-  - `windows-msvc-gui-{debug,release}` (vcpkg feature `gui`)
+  - `windows-msvc-gui-{dev,release}` (vcpkg feature `gui`; dev = RelWithDebInfo)
   - `linux-system-gui` (system Qt5/VTK/Eigen/json/gtest, no vcpkg)
 - CI jobs:
   - `linux-gui`: apt packages, fast
-  - `windows-gui`: vcpkg Qt6 + VTK. The first build is slow (~1–2 h), then cached.
+  - `windows-gui` (own workflow, never cancelled mid-build): vcpkg Qt6 + VTK, cached.
 - Local checks run headless under Xvfb with screenshots.
 
 ## Definition of Done
-- [ ] `cfd_gui` builds on Windows (Qt6) and Linux (Qt5)
-- [ ] Open/edit/save case files; box mesh preview; Gmsh import
-- [ ] Run/stop with live residuals and field updates
-- [ ] Post-processing: surface, slice, contours, vectors, streamlines, colour bar
-- [ ] Unit tests for case serialization and VTK conversion
+- [x] `cfd_gui` builds on Windows (Qt6, vcpkg) and Linux (Qt5, system packages)
+- [x] Open/edit/save case files; box mesh preview; Gmsh import
+- [x] Run/stop with live residuals and field updates
+- [x] Post-processing: surface, slice, contours, vectors, streamlines, colour bar
+- [x] Unit tests for case serialization and VTK conversion
 - [ ] User tested on Windows (manual)
