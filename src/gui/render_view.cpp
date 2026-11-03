@@ -367,6 +367,27 @@ void RenderView::rebuild() {
 }
 
 void RenderView::reset_camera() {
+    // Quasi-2D domains (one thin direction) are viewed along that direction, 3D domains
+    // from an isometric angle.
+    const double ext[3] = {bounds_[1] - bounds_[0], bounds_[3] - bounds_[2],
+                           bounds_[5] - bounds_[4]};
+    const double largest = std::max({ext[0], ext[1], ext[2]});
+    int thin = -1;
+    for (int i = 0; i < 3; ++i) {
+        if (ext[i] < 0.1 * largest) {
+            thin = i;
+        }
+    }
+    if (thin >= 0) {
+        set_view_direction(thin, true);
+        return;
+    }
+    vtkCamera* cam = renderer_->GetActiveCamera();
+    const double c[3] = {0.5 * (bounds_[0] + bounds_[1]), 0.5 * (bounds_[2] + bounds_[3]),
+                         0.5 * (bounds_[4] + bounds_[5])};
+    cam->SetFocalPoint(c);
+    cam->SetPosition(c[0] + 1.0, c[1] + 0.8, c[2] + 1.2);
+    cam->SetViewUp(0.0, 1.0, 0.0);
     renderer_->ResetCamera();
     render();
 }
@@ -379,7 +400,11 @@ void RenderView::set_view_direction(int axis, bool positive) {
     pos[std::clamp(axis, 0, 2)] += positive ? 1.0 : -1.0;
     cam->SetFocalPoint(c);
     cam->SetPosition(pos);
-    cam->SetViewUp(axis == 1 ? 0.0 : 0.0, axis == 1 ? 0.0 : 1.0, axis == 1 ? 1.0 : 0.0);
+    if (axis == 1) {
+        cam->SetViewUp(0.0, 0.0, 1.0);
+    } else {
+        cam->SetViewUp(0.0, 1.0, 0.0);
+    }
     renderer_->ResetCamera();
     render();
 }

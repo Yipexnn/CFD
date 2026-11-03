@@ -48,11 +48,35 @@ FlowSolver::FlowSolver(const Mesh& mesh, std::map<std::string, BoundaryCondition
     for (std::size_t b = 0; b < fixed_velocity_.size(); ++b) {
         fixed_velocity_[b] = bc(static_cast<Label>(b)).velocity;
     }
+    check_mass_balance();
     const auto nc = static_cast<std::size_t>(mesh.n_cells());
     u_.assign(nc, Vec3::Zero());
     u_old_ = u_;
     p_.assign(nc, 0.0);
     compute_initial_flux();
+}
+
+void FlowSolver::check_mass_balance() const {
+    if (has_fixed_pressure_) {
+        return;
+    }
+    const Mesh& m = geo_.mesh();
+    const auto nif = static_cast<std::size_t>(m.n_internal_faces());
+    Scalar net = 0.0;
+    Scalar total = 0.0;
+    for (std::size_t b = 0; b < fixed_velocity_.size(); ++b) {
+        const FlowBoundary kind = bc(static_cast<Label>(b)).kind;
+        if (kind == FlowBoundary::VelocityInlet || kind == FlowBoundary::Wall) {
+            const Scalar flux = fixed_velocity_[b].dot(m.face_area_vectors()[nif + b]);
+            net += flux;
+            total += std::abs(flux);
+        }
+    }
+    if (std::abs(net) > 1e-9 * std::max(total, 1e-300) && std::abs(net) > 1e-300) {
+        throw std::invalid_argument(
+            "FlowSolver: the prescribed inflow is not balanced by outflow and there is no "
+            "pressure outlet (mass cannot be conserved); add a pressure_outlet boundary");
+    }
 }
 
 const BoundaryCondition& FlowSolver::bc(Label boundary_face_index) const {
@@ -112,6 +136,7 @@ void FlowSolver::set_boundary_velocity_profile(const std::string& patch,
     }
     std::copy(velocities.begin(), velocities.end(),
               fixed_velocity_.begin() + static_cast<std::ptrdiff_t>(start));
+    check_mass_balance();
     compute_initial_flux();
 }
 

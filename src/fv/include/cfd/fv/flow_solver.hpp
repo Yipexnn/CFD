@@ -122,6 +122,8 @@ private:
     void compute_initial_flux();
 
     const BoundaryCondition& bc(Label boundary_face_index) const;
+    // Throws if the prescribed boundary flux is not balanced and no pressure outlet exists.
+    void check_mass_balance() const;
 
     FvGeometry geo_;
     FlowSettings settings_;

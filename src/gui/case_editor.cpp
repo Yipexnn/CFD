@@ -527,9 +527,20 @@ cases::CaseConfig CaseEditor::config() const {
 }
 
 void CaseEditor::set_patches(const std::vector<PatchInfo>& patches) {
-    // Keep the values currently in the table before the rows are rebuilt.
+    // Keep the values currently in the table before the rows are rebuilt. Rows that only
+    // show the default for their (possibly outdated) patch type are not stored, so they
+    // pick up the default of the new patch type instead.
     for (std::size_t row = 0; row < patches_.size(); ++row) {
-        config_.boundaries[patches_[row].name] = read_boundary_row(static_cast<int>(row));
+        const fv::BoundaryCondition bc = read_boundary_row(static_cast<int>(row));
+        const fv::BoundaryCondition def = default_boundary(patches_[row].type);
+        const bool is_default =
+            bc.kind == def.kind && (bc.velocity - def.velocity).norm() < 1e-14 &&
+            bc.pressure == def.pressure && bc.turbulence_intensity == def.turbulence_intensity &&
+            bc.viscosity_ratio == def.viscosity_ratio;
+        const bool explicit_entry = config_.boundaries.count(patches_[row].name) > 0;
+        if (explicit_entry || !is_default) {
+            config_.boundaries[patches_[row].name] = bc;
+        }
     }
     patches_ = patches;
     rebuild_boundary_table();
