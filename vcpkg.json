@@ -6,5 +6,36 @@
     "nlohmann-json",
     "gtest"
   ],
-  "builtin-baseline": "af839a44c17a927468f35c7a65e200aeba337da4"
+  "builtin-baseline": "af839a44c17a927468f35c7a65e200aeba337da4",
+  "features": {
+    "gui": {
+      "description": "Qt/VTK desktop application (cfd_gui)",
+      "dependencies": [
+        {
+          "name": "qtbase",
+          "default-features": false,
+          "features": [
+            "gui",
+            "widgets",
+            "opengl",
+            "png",
+            "freetype",
+            "harfbuzz",
+            "doubleconversion",
+            "pcre2",
+            "thread",
+            "concurrent",
+            "network"
+          ]
+        },
+        {
+          "name": "vtk",
+          "default-features": false,
+          "features": [
+            "qt"
+          ]
+        }
+      ]
+    }
+  }
 }

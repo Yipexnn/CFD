@@ -1,6 +1,10 @@
 {
   "version": 6,
-  "cmakeMinimumRequired": { "major": 3, "minor": 25, "patch": 0 },
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 25,
+    "patch": 0
+  },
   "configurePresets": [
     {
       "name": "base",
@@ -16,8 +20,15 @@
       "name": "windows-base",
       "hidden": true,
       "inherits": "base",
-      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" },
-      "architecture": { "value": "x64", "strategy": "external" },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      },
+      "architecture": {
+        "value": "x64",
+        "strategy": "external"
+      },
       "cacheVariables": {
         "CMAKE_CXX_COMPILER": "cl",
         "VCPKG_TARGET_TRIPLET": "x64-windows-static-md"
@@ -27,7 +38,11 @@
       "name": "linux-base",
       "hidden": true,
       "inherits": "base",
-      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      },
       "cacheVariables": {
         "CMAKE_CXX_COMPILER": "g++"
       }
@@ -36,42 +51,141 @@
       "name": "windows-msvc-debug",
       "displayName": "Windows MSVC Debug",
       "inherits": "windows-base",
-      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
     },
     {
       "name": "windows-msvc-release",
       "displayName": "Windows MSVC Release",
       "inherits": "windows-base",
-      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
     },
     {
       "name": "linux-gcc-debug",
       "displayName": "Linux GCC Debug",
       "inherits": "linux-base",
-      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
     },
     {
       "name": "linux-gcc-release",
       "displayName": "Linux GCC Release",
       "inherits": "linux-base",
-      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "windows-msvc-gui-debug",
+      "displayName": "Windows MSVC Debug + GUI",
+      "inherits": "windows-msvc-debug",
+      "cacheVariables": {
+        "CFD_BUILD_GUI": "ON",
+        "VCPKG_MANIFEST_FEATURES": "gui"
+      }
+    },
+    {
+      "name": "windows-msvc-gui-release",
+      "displayName": "Windows MSVC Release + GUI",
+      "inherits": "windows-msvc-release",
+      "cacheVariables": {
+        "CFD_BUILD_GUI": "ON",
+        "VCPKG_MANIFEST_FEATURES": "gui"
+      }
+    },
+    {
+      "name": "linux-system-gui",
+      "displayName": "Linux system packages + GUI (no vcpkg)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_CXX_COMPILER": "g++",
+        "CFD_BUILD_GUI": "ON"
+      }
     }
   ],
   "buildPresets": [
-    { "name": "windows-msvc-debug", "configurePreset": "windows-msvc-debug" },
-    { "name": "windows-msvc-release", "configurePreset": "windows-msvc-release" },
-    { "name": "linux-gcc-debug", "configurePreset": "linux-gcc-debug" },
-    { "name": "linux-gcc-release", "configurePreset": "linux-gcc-release" }
+    {
+      "name": "windows-msvc-debug",
+      "configurePreset": "windows-msvc-debug"
+    },
+    {
+      "name": "windows-msvc-release",
+      "configurePreset": "windows-msvc-release"
+    },
+    {
+      "name": "linux-gcc-debug",
+      "configurePreset": "linux-gcc-debug"
+    },
+    {
+      "name": "linux-gcc-release",
+      "configurePreset": "linux-gcc-release"
+    },
+    {
+      "name": "windows-msvc-gui-debug",
+      "configurePreset": "windows-msvc-gui-debug"
+    },
+    {
+      "name": "windows-msvc-gui-release",
+      "configurePreset": "windows-msvc-gui-release"
+    },
+    {
+      "name": "linux-system-gui",
+      "configurePreset": "linux-system-gui"
+    }
   ],
   "testPresets": [
     {
       "name": "test-base",
       "hidden": true,
-      "output": { "outputOnFailure": true }
+      "output": {
+        "outputOnFailure": true
+      }
     },
-    { "name": "windows-msvc-debug", "inherits": "test-base", "configurePreset": "windows-msvc-debug" },
-    { "name": "windows-msvc-release", "inherits": "test-base", "configurePreset": "windows-msvc-release" },
-    { "name": "linux-gcc-debug", "inherits": "test-base", "configurePreset": "linux-gcc-debug" },
-    { "name": "linux-gcc-release", "inherits": "test-base", "configurePreset": "linux-gcc-release" }
+    {
+      "name": "windows-msvc-debug",
+      "inherits": "test-base",
+      "configurePreset": "windows-msvc-debug"
+    },
+    {
+      "name": "windows-msvc-release",
+      "inherits": "test-base",
+      "configurePreset": "windows-msvc-release"
+    },
+    {
+      "name": "linux-gcc-debug",
+      "inherits": "test-base",
+      "configurePreset": "linux-gcc-debug"
+    },
+    {
+      "name": "linux-gcc-release",
+      "inherits": "test-base",
+      "configurePreset": "linux-gcc-release"
+    },
+    {
+      "name": "windows-msvc-gui-debug",
+      "configurePreset": "windows-msvc-gui-debug",
+      "inherits": "test-base"
+    },
+    {
+      "name": "windows-msvc-gui-release",
+      "configurePreset": "windows-msvc-gui-release",
+      "inherits": "test-base"
+    },
+    {
+      "name": "linux-system-gui",
+      "configurePreset": "linux-system-gui",
+      "inherits": "test-base"
+    }
   ]
 }

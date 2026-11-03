@@ -81,3 +81,37 @@ jobs:
           clang-format --version
           find src tests \( -name '*.hpp' -o -name '*.cpp' \) -print0 \
             | xargs -0 clang-format --dry-run --Werror
+
+  # GUI on Linux with system Qt 5 / VTK 9.1 packages (fast), including a headless smoke run.
+  linux-gui:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install packages
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ninja-build libvtk9-dev libvtk9-qt-dev qtbase5-dev \
+            libeigen3-dev nlohmann-json3-dev libgtest-dev xvfb libgl1-mesa-dri xauth
+
+      - name: Configure
+        run: cmake --preset linux-system-gui -DCFD_WARNINGS_AS_ERRORS=ON
+
+      - name: Build
+        run: cmake --build --preset linux-system-gui
+
+      - name: Test
+        run: ctest --preset linux-system-gui
+
+      - name: GUI smoke test (headless)
+        run: |
+          xvfb-run -a -s "-screen 0 1600x1000x24" \
+            ./build/linux-system-gui/src/gui/cfd_gui examples/cavity.json --run \
+            --show slice,vectors --screenshot gui-view.png --window-screenshot gui-window.png --quit
+          test -s gui-view.png && test -s gui-window.png
+
+      - name: Upload screenshots
+        uses: actions/upload-artifact@v4
+        with:
+          name: gui-screenshots
+          path: gui-*.png

@@ -1,0 +1,65 @@
+name: GUI (Windows)
+
+# Separate workflow so a long first-time Qt/VTK build is never cancelled by new pushes:
+# runs queue (latest pending wins) instead of cancelling the one in progress.
+on:
+  push:
+    branches: [main, "claude/**"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # GUI on Windows with vcpkg Qt 6 + VTK (first build is slow; binaries are cached).
+  windows-gui:
+    runs-on: windows-latest
+    timeout-minutes: 340
+    env:
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/.vcpkg-cache
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Set up CMake and Ninja
+        uses: lukka/get-cmake@latest
+
+      - name: Set up vcpkg
+        shell: bash
+        run: |
+          baseline=$(jq -r '."builtin-baseline"' vcpkg.json)
+          git clone https://github.com/microsoft/vcpkg "$RUNNER_TEMP/vcpkg"
+          git -C "$RUNNER_TEMP/vcpkg" checkout "$baseline"
+          "$RUNNER_TEMP/vcpkg/bootstrap-vcpkg.bat" -disableMetrics
+          echo "VCPKG_ROOT=$RUNNER_TEMP/vcpkg" >> "$GITHUB_ENV"
+          mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
+
+      - name: Restore vcpkg binaries
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: vcpkg-gui-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
+          restore-keys: vcpkg-gui-${{ runner.os }}-
+
+      - name: Configure (builds Qt and VTK on a cache miss)
+        run: cmake --preset windows-msvc-gui-release -DCFD_WARNINGS_AS_ERRORS=ON
+
+      # Save right after the expensive dependency build, even if later steps fail.
+      - name: Save vcpkg binaries
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: vcpkg-gui-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}-${{ github.run_id }}
+
+      - name: Build
+        run: cmake --build --preset windows-msvc-gui-release
+
+      - name: Test
+        run: ctest --preset windows-msvc-gui-release

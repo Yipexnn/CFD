@@ -68,10 +68,31 @@ cfd --version | --info | --help
 Results are written as `.vtu` files (open with ParaView) plus `residuals.csv` and a
 `checkpoint.bin` for restarts (`"restart": "results/<case>/checkpoint.bin"`).
 
+## Desktop GUI (`cfd_gui`)
+
+Set up, run and post-process cases interactively (Qt + VTK):
+- left: case editor (mesh, physics, boundaries, solver, output)
+- centre: 3D view; right: post-processing (field, slice, contours, vectors, streamlines)
+- bottom: live residual plot and log
+- File → Open/Save case (JSON); Run → Generate mesh / Run / Stop
+
+Build it with the GUI presets (vcpkg builds Qt 6 and VTK the first time — expect 1–2 hours and
+~20 GB of disk; later builds reuse the binaries):
+- CLion: enable the preset `windows-msvc-gui-debug` or `windows-msvc-gui-release` (Settings → Build, Execution, Deployment → CMake), then build the `cfd_gui` target.
+- Command line (Developer PowerShell): `cmake --preset windows-msvc-gui-release` then `cmake --build --preset windows-msvc-gui-release`.
+- Linux with system packages: `sudo apt install libvtk9-dev libvtk9-qt-dev qtbase5-dev libeigen3-dev nlohmann-json3-dev libgtest-dev`, then `cmake --preset linux-system-gui && cmake --build --preset linux-system-gui`.
+
+Scriptable options (also used by CI): `cfd_gui case.json --run --show slice,vectors,streamlines --field p --screenshot view.png --quit`.
+
 ## Project layout
 
 - `src/core` – core library (`cfd::core`)
 - `src/app` – CLI application (`cfd`)
+- `src/gui` – desktop application (`cfd_gui`)
+- `src/case` – case files and runner
+- `src/fv` – finite-volume solver
+- `src/mesh` – mesh, Gmsh reader, VTU writer
+- `validation` – benchmark programs
 - `tests` – unit tests
 - `cmake` – CMake helper modules
 - `docs` – documentation

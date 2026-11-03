@@ -1,5 +1,6 @@
 add_library(cfd_case STATIC
     src/case_config.cpp
+    src/case_writer.cpp
     src/case_runner.cpp
 )
 add_library(cfd::case ALIAS cfd_case)

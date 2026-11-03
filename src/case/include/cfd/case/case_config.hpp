@@ -69,4 +69,10 @@ struct CaseConfig {
                                     const std::filesystem::path& base_directory = {});
 [[nodiscard]] CaseConfig load_case(const std::filesystem::path& file);
 
+// Serialises a CaseConfig to pretty-printed JSON (indent 2), the inverse of parse_case.
+// base_directory is not written.
+[[nodiscard]] std::string case_to_json(const CaseConfig& config);
+// Throws std::runtime_error if the file cannot be written.
+void save_case(const CaseConfig& config, const std::filesystem::path& file);
+
 } // namespace cfd::cases
