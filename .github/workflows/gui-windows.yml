@@ -44,8 +44,8 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
-          key: vcpkg-gui-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
-          restore-keys: vcpkg-gui-${{ runner.os }}-
+          key: vcpkg-gui2-${{ runner.os }}-${{ hashFiles('vcpkg.json', 'CMakePresets.json', 'vcpkg/ports/**') }}
+          restore-keys: vcpkg-gui2-${{ runner.os }}-
 
       - name: Configure (builds Qt and VTK on a cache miss)
         run: cmake --preset windows-msvc-gui-release -DCFD_WARNINGS_AS_ERRORS=ON
@@ -56,7 +56,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
-          key: vcpkg-gui-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}-${{ github.run_id }}
+          key: vcpkg-gui2-${{ runner.os }}-${{ hashFiles('vcpkg.json', 'CMakePresets.json', 'vcpkg/ports/**') }}-${{ github.run_id }}
 
       - name: Build
         run: cmake --build --preset windows-msvc-gui-release

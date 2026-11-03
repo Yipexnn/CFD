@@ -80,21 +80,29 @@
       }
     },
     {
-      "name": "windows-msvc-gui-debug",
-      "displayName": "Windows MSVC Debug + GUI",
-      "inherits": "windows-msvc-debug",
+      "name": "windows-msvc-gui-dev",
+      "displayName": "Windows MSVC RelWithDebInfo + GUI (debuggable)",
+      "inherits": "windows-base",
       "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
         "CFD_BUILD_GUI": "ON",
-        "VCPKG_MANIFEST_FEATURES": "gui"
+        "VCPKG_MANIFEST_FEATURES": "gui",
+        "VCPKG_TARGET_TRIPLET": "x64-windows-static-md-release",
+        "VCPKG_HOST_TRIPLET": "x64-windows-static-md-release",
+        "VCPKG_OVERLAY_PORTS": "${sourceDir}/vcpkg/ports"
       }
     },
     {
       "name": "windows-msvc-gui-release",
       "displayName": "Windows MSVC Release + GUI",
-      "inherits": "windows-msvc-release",
+      "inherits": "windows-base",
       "cacheVariables": {
         "CFD_BUILD_GUI": "ON",
-        "VCPKG_MANIFEST_FEATURES": "gui"
+        "VCPKG_MANIFEST_FEATURES": "gui",
+        "CMAKE_BUILD_TYPE": "Release",
+        "VCPKG_TARGET_TRIPLET": "x64-windows-static-md-release",
+        "VCPKG_HOST_TRIPLET": "x64-windows-static-md-release",
+        "VCPKG_OVERLAY_PORTS": "${sourceDir}/vcpkg/ports"
       }
     },
     {
@@ -132,8 +140,8 @@
       "configurePreset": "linux-gcc-release"
     },
     {
-      "name": "windows-msvc-gui-debug",
-      "configurePreset": "windows-msvc-gui-debug"
+      "name": "windows-msvc-gui-dev",
+      "configurePreset": "windows-msvc-gui-dev"
     },
     {
       "name": "windows-msvc-gui-release",
@@ -173,8 +181,8 @@
       "configurePreset": "linux-gcc-release"
     },
     {
-      "name": "windows-msvc-gui-debug",
-      "configurePreset": "windows-msvc-gui-debug",
+      "name": "windows-msvc-gui-dev",
+      "configurePreset": "windows-msvc-gui-dev",
       "inherits": "test-base"
     },
     {

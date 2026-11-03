@@ -76,9 +76,9 @@ Set up, run and post-process cases interactively (Qt + VTK):
 - bottom: live residual plot and log
 - File → Open/Save case (JSON); Run → Generate mesh / Run / Stop
 
-Build it with the GUI presets (vcpkg builds Qt 6 and VTK the first time — expect 1–2 hours and
+Build it with the GUI presets (vcpkg builds Qt 6 and VTK the first time — expect about 1–2 hours (release-only Qt/VTK, no Qt Quick) and
 ~20 GB of disk; later builds reuse the binaries):
-- CLion: enable the preset `windows-msvc-gui-debug` or `windows-msvc-gui-release` (Settings → Build, Execution, Deployment → CMake), then build the `cfd_gui` target.
+- CLion: enable the preset `windows-msvc-gui-dev` (RelWithDebInfo, debuggable) or `windows-msvc-gui-release` (Settings → Build, Execution, Deployment → CMake), then build the `cfd_gui` target.
 - Command line (Developer PowerShell): `cmake --preset windows-msvc-gui-release` then `cmake --build --preset windows-msvc-gui-release`.
 - Linux with system packages: `sudo apt install libvtk9-dev libvtk9-qt-dev qtbase5-dev libeigen3-dev nlohmann-json3-dev libgtest-dev`, then `cmake --preset linux-system-gui && cmake --build --preset linux-system-gui`.
 
