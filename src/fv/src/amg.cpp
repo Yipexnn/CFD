@@ -15,7 +15,7 @@ std::vector<int> aggregate(const CsrMatrix& a, const DenseVector& diag, Scalar t
                            int& n_aggregates) {
     const auto n = static_cast<int>(a.rows());
     std::vector<int> agg(static_cast<std::size_t>(n), -1);
-    auto strong = [&](int i, int j, Scalar v) {
+    auto strong = [&](Eigen::Index i, Eigen::Index j, Scalar v) {
         return i != j && std::abs(v) > theta * std::sqrt(std::abs(diag[i] * diag[j]));
     };
 
@@ -55,7 +55,7 @@ std::vector<int> aggregate(const CsrMatrix& a, const DenseVector& diag, Scalar t
         }
         Scalar best = 0.0;
         for (CsrMatrix::InnerIterator it(a, i); it; ++it) {
-            const int j = it.col();
+            const auto j = static_cast<int>(it.col());
             if (strong(i, j, it.value()) && pass1[static_cast<std::size_t>(j)] >= 0 &&
                 std::abs(it.value()) > best) {
                 best = std::abs(it.value());
