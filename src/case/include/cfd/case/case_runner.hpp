@@ -11,6 +11,8 @@ struct LocalMesh;
 
 namespace cfd::cases {
 
+using core::Label;
+
 struct RunResult {
     int steps = 0;          // SIMPLE iterations (steady) or time steps (transient)
     Scalar time = 0.0;      // simulated time (transient)
@@ -23,6 +25,20 @@ struct RunResult {
 // Builds the case mesh: box generator, Gmsh file or (MeshSource::Geometry) Gmsh run in
 // <output directory>/mesh. Throws on failure.
 [[nodiscard]] mesh::Mesh build_mesh(const CaseConfig& config);
+
+// Contents of a checkpoint file (global cell / face order).
+struct CheckpointData {
+    int step = 0;
+    Scalar time = 0.0;
+    std::vector<Vec3> u;
+    std::vector<Scalar> p;
+    std::vector<Scalar> phi;           // face flux
+    std::vector<Scalar> k, omega, nut; // empty without turbulence model
+    std::vector<Scalar> boundary_nut;
+};
+// Reads a checkpoint; n_cells / n_faces / n_boundary_faces must match the mesh.
+[[nodiscard]] CheckpointData read_checkpoint_file(const std::filesystem::path& file, Label n_cells,
+                                                  Label n_faces, Label n_boundary_faces);
 
 // Called after every step; return false to stop the run (e.g. GUI "stop" button).
 using ProgressCallback = std::function<bool(int step, Scalar time, const fv::Residuals& residuals)>;

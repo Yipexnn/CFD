@@ -12,6 +12,7 @@
 class QAction;
 class QLabel;
 class QPlainTextEdit;
+class QSpinBox;
 
 namespace cfd::gui {
 
@@ -20,6 +21,8 @@ class PostPanel;
 class RenderView;
 class ResidualPlot;
 class SolverWorker;
+class MpiRunner;
+struct FieldSet;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -37,6 +40,8 @@ public:
     void start_run();
     void stop_run();
     [[nodiscard]] bool is_running() const;
+    // Number of MPI processes for runs (1 = in-process serial run).
+    void set_processes(int n);
 
     void set_display(const DisplaySettings& settings);
     [[nodiscard]] DisplaySettings display() const { return display_; }
@@ -65,6 +70,8 @@ private:
     void on_progress(int step, double time, double ux, double uy, double uz, double p, double k,
                      double omega, double continuity);
     void on_snapshot();
+    void show_fields(const FieldSet& fields, int step, double time);
+    void on_mpi_finished(bool ok, const QString& message, const QString& result_file);
     void on_finished(bool ok, const QString& message, const QString& result_file);
 
     CaseEditor* editor_ = nullptr;
@@ -77,6 +84,8 @@ private:
     QAction* run_action_ = nullptr;
     QAction* stop_action_ = nullptr;
     QAction* mesh_action_ = nullptr;
+    QSpinBox* processes_ = nullptr;
+    MpiRunner* mpi_ = nullptr;
 
     QThread worker_thread_;
     SolverWorker* worker_ = nullptr;

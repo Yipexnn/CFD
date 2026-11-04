@@ -1,10 +1,12 @@
 #include "main_window.hpp"
 
 #include "case_editor.hpp"
+#include "mpi_runner.hpp"
 #include "post_panel.hpp"
 #include "render_view.hpp"
 #include "residual_plot.hpp"
 #include "solver_worker.hpp"
+#include "vtk_convert.hpp"
 
 #include <QAction>
 #include <QApplication>
@@ -19,6 +21,7 @@
 #include <QMessageBox>
 #include <QPixmap>
 #include <QPlainTextEdit>
+#include <QSpinBox>
 #include <QStatusBar>
 #include <QToolBar>
 #include <QVBoxLayout>
@@ -79,6 +82,12 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(worker_, &SolverWorker::snapshot_ready, this, &MainWindow::on_snapshot);
     connect(worker_, &SolverWorker::finished, this, &MainWindow::on_finished);
     worker_thread_.start();
+
+    mpi_ = new MpiRunner(this);
+    connect(mpi_, &MpiRunner::progress, this, &MainWindow::on_progress);
+    connect(mpi_, &MpiRunner::output, this,
+            [this](const QString& line) { log_->appendPlainText(line); });
+    connect(mpi_, &MpiRunner::finished, this, &MainWindow::on_mpi_finished);
 
     connect(post_, &PostPanel::settings_changed, this,
             [this](const DisplaySettings& s) { set_display(s); });
@@ -158,6 +167,12 @@ void MainWindow::build_actions() {
         add(run, "Generate &mesh", QKeySequence("Ctrl+M"), [this] { generate_mesh(); }, true);
     run_action_ = add(run, "&Run", QKeySequence("Ctrl+R"), [this] { start_run(); }, true);
     stop_action_ = add(run, "S&top", QKeySequence("Ctrl+T"), [this] { stop_run(); }, true);
+    tb->addWidget(new QLabel(" Processes ", this));
+    processes_ = new QSpinBox(this);
+    processes_->setRange(1, 256);
+    processes_->setValue(1);
+    processes_->setToolTip("1: run inside the GUI; N > 1: mpiexec -n N cfd run (needs MPI)");
+    tb->addWidget(processes_);
 
     QMenu* view = menuBar()->addMenu("&View");
     tb->addSeparator();
@@ -340,6 +355,20 @@ void MainWindow::start_run() {
     update_actions();
     log(QString("Starting %1 run")
             .arg(c.solver.mode == cases::SolverMode::Steady ? "steady" : "transient"));
+    if (processes_->value() > 1) {
+        QString error;
+        if (!mpi_->start(c, processes_->value(), error)) {
+            running_ = false;
+            update_actions();
+            log("Parallel run: " + error);
+            emit run_finished(false);
+            return;
+        }
+        log(QString("Running on %1 processes (results in %2)")
+                .arg(processes_->value())
+                .arg(mpi_->output_directory()));
+        return;
+    }
     SolverWorker* w = worker_;
     std::shared_ptr<const mesh::Mesh> mesh = std::make_shared<const mesh::Mesh>(*mesh_);
     QMetaObject::invokeMethod(w, [w, c, mesh] { w->run(c, mesh); }, Qt::QueuedConnection);
@@ -348,6 +377,7 @@ void MainWindow::start_run() {
 void MainWindow::stop_run() {
     if (running_) {
         worker_->stop();
+        mpi_->stop();
         log("Stop requested");
     }
 }
@@ -367,13 +397,47 @@ void MainWindow::on_progress(int step, double time, double ux, double uy, double
                          .arg(continuity, 0, 'e', 2));
 }
 
+void MainWindow::set_processes(int n) {
+    processes_->setValue(n);
+}
+
 void MainWindow::on_snapshot() {
     const RunSnapshot s = worker_->latest_snapshot();
-    if (!mesh_ || s.fields.u.size() != static_cast<std::size_t>(mesh_->n_cells())) {
+    show_fields(s.fields, s.step, s.time);
+}
+
+void MainWindow::on_mpi_finished(bool ok, const QString& message, const QString& result_file) {
+    if (ok && mesh_) {
+        try {
+            const cases::CheckpointData d = cases::read_checkpoint_file(
+                (QDir(mpi_->output_directory()).filePath("checkpoint.bin")).toStdString(),
+                mesh_->n_cells(), mesh_->n_faces(), mesh_->n_boundary_faces());
+            FieldSet f;
+            f.u = d.u;
+            f.p = d.p;
+            f.k = d.k;
+            f.omega = d.omega;
+            f.nut = d.nut;
+            show_fields(f, d.step, d.time);
+        } catch (const std::exception& e) {
+            log(QString("Cannot load parallel results: %1").arg(e.what()));
+        }
+    }
+    running_ = false;
+    update_actions();
+    log(message);
+    if (!result_file.isEmpty()) {
+        log(QString("Results written to %1").arg(result_file));
+    }
+    emit run_finished(ok);
+}
+
+void MainWindow::show_fields(const FieldSet& fields, int step, double time) {
+    if (!mesh_ || fields.u.size() != static_cast<std::size_t>(mesh_->n_cells())) {
         return;
     }
-    view_->set_fields(s.fields);
-    post_->set_fields(scalar_field_names(s.fields));
+    view_->set_fields(fields);
+    post_->set_fields(scalar_field_names(fields));
     if (!fields_seen_) {
         fields_seen_ = true;
         DisplaySettings d = display_;
@@ -385,9 +449,8 @@ void MainWindow::on_snapshot() {
     }
     const auto [lo, hi] = view_->field_range();
     post_->set_range(lo, hi);
-    view_->set_title(QString("Step %1%2")
-                         .arg(s.step)
-                         .arg(s.time > 0.0 ? QString("  t = %1").arg(s.time) : QString()));
+    view_->set_title(
+        QString("Step %1%2").arg(step).arg(time > 0.0 ? QString("  t = %1").arg(time) : QString()));
 }
 
 void MainWindow::on_finished(bool ok, const QString& message, const QString& result_file) {
@@ -429,6 +492,7 @@ bool MainWindow::save_window_screenshot(const QString& file) {
 void MainWindow::closeEvent(QCloseEvent* event) {
     if (running_) {
         worker_->stop();
+        mpi_->stop();
     }
     event->accept();
 }

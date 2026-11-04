@@ -32,7 +32,9 @@ int main(int argc, char* argv[]) {
     const QCommandLineOption shot_opt("screenshot", "Save a 3D view screenshot.", "file");
     const QCommandLineOption wshot_opt("window-screenshot", "Save a window screenshot.", "file");
     const QCommandLineOption quit_opt("quit", "Quit after the other actions.");
-    parser.addOptions({run_opt, show_opt, field_opt, axis_opt, shot_opt, wshot_opt, quit_opt});
+    const QCommandLineOption np_opt("processes", "MPI processes for --run (default 1).", "n");
+    parser.addOptions(
+        {run_opt, show_opt, field_opt, axis_opt, shot_opt, wshot_opt, quit_opt, np_opt});
     parser.process(app);
 
     cfd::gui::MainWindow window;
@@ -41,6 +43,9 @@ int main(int argc, char* argv[]) {
     const QStringList positional = parser.positionalArguments();
     if (!positional.isEmpty()) {
         window.open_case(positional.front());
+    }
+    if (parser.isSet(np_opt)) {
+        window.set_processes(parser.value(np_opt).toInt());
     }
 
     auto finish = [&] {

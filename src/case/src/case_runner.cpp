@@ -365,8 +365,8 @@ void CaseRunner::write_checkpoint(const std::filesystem::path& file) const {
     }
 }
 
-void CaseRunner::read_checkpoint(const std::filesystem::path& file) {
-    const mesh::Mesh& g = *global_mesh_;
+CheckpointData read_checkpoint_file(const std::filesystem::path& file, Label n_cells, Label n_faces,
+                                    Label n_boundary_faces) {
     std::ifstream in(file, std::ios::binary);
     if (!in) {
         throw std::runtime_error("Checkpoint: cannot open " + file.string());
@@ -378,39 +378,51 @@ void CaseRunner::read_checkpoint(const std::filesystem::path& file) {
     }
     const auto nc = read_pod<std::int64_t>(in);
     const auto nf = read_pod<std::int64_t>(in);
-    if (nc != g.n_cells() || nf != g.n_faces()) {
+    if (nc != n_cells || nf != n_faces) {
         throw std::runtime_error("Checkpoint: mesh size mismatch (" + std::to_string(nc) +
-                                 " cells in file, " + std::to_string(g.n_cells()) + " in mesh)");
+                                 " cells in file, " + std::to_string(n_cells) + " in mesh)");
     }
-    const auto step = read_pod<std::int64_t>(in);
-    const auto time = read_pod<Scalar>(in);
+    CheckpointData d;
+    d.step = static_cast<int>(read_pod<std::int64_t>(in));
+    d.time = read_pod<Scalar>(in);
     const auto has_turbulence = read_pod<std::uint8_t>(in);
-
     const auto ncs = static_cast<std::size_t>(nc);
     auto read_vector = [&](std::size_t n) {
         std::vector<Scalar> v(n);
         read_array(in, v.data(), n);
         return v;
     };
-    const std::vector<Scalar> u = read_vector(3 * ncs);
-    const std::vector<Scalar> p = read_vector(ncs);
-    const std::vector<Scalar> phi = read_vector(static_cast<std::size_t>(nf));
-    const parallel::LocalMesh* lm = local_.get();
+    d.u = to_vec3(read_vector(3 * ncs));
+    d.p = read_vector(ncs);
+    d.phi = read_vector(static_cast<std::size_t>(nf));
     if (has_turbulence != 0) {
-        const std::vector<Scalar> k = read_vector(ncs);
-        const std::vector<Scalar> omega = read_vector(ncs);
-        const std::vector<Scalar> nut = read_vector(ncs);
-        const std::vector<Scalar> nut_b =
-            read_vector(static_cast<std::size_t>(g.n_boundary_faces()));
-        if (sst_) {
-            sst_->set_fields(scatter_cells(lm, k, 1), scatter_cells(lm, omega, 1),
-                             scatter_cells(lm, nut, 1), scatter_faces(lm, g, nut_b, false, true));
+        d.k = read_vector(ncs);
+        d.omega = read_vector(ncs);
+        d.nut = read_vector(ncs);
+        d.boundary_nut = read_vector(static_cast<std::size_t>(n_boundary_faces));
+    }
+    return d;
+}
+
+void CaseRunner::read_checkpoint(const std::filesystem::path& file) {
+    const mesh::Mesh& g = *global_mesh_;
+    CheckpointData d = read_checkpoint_file(file, g.n_cells(), g.n_faces(), g.n_boundary_faces());
+    const parallel::LocalMesh* lm = local_.get();
+    if (!d.k.empty() && sst_) {
+        sst_->set_fields(scatter_cells(lm, d.k, 1), scatter_cells(lm, d.omega, 1),
+                         scatter_cells(lm, d.nut, 1),
+                         scatter_faces(lm, g, d.boundary_nut, false, true));
+    }
+    std::vector<Scalar> u_flat(3 * d.u.size());
+    for (std::size_t c = 0; c < d.u.size(); ++c) {
+        for (int i = 0; i < 3; ++i) {
+            u_flat[3 * c + static_cast<std::size_t>(i)] = d.u[c][i];
         }
     }
-    flow_->set_state(to_vec3(scatter_cells(lm, u, 3)), scatter_cells(lm, p, 1),
-                     scatter_faces(lm, g, phi, true, false));
-    step_ = static_cast<int>(step);
-    time_ = time;
+    flow_->set_state(to_vec3(scatter_cells(lm, u_flat, 3)), scatter_cells(lm, d.p, 1),
+                     scatter_faces(lm, g, d.phi, true, false));
+    step_ = d.step;
+    time_ = d.time;
 }
 
 Vec3 CaseRunner::force(const std::string& patch) const {
@@ -483,6 +495,7 @@ RunResult CaseRunner::run(const ProgressCallback& progress) {
         result.final_residuals = r;
         log << step_ << ',' << time_ << ',' << r.u.x() << ',' << r.u.y() << ',' << r.u.z() << ','
             << r.p << ',' << r.k << ',' << r.omega << ',' << r.continuity << '\n';
+        log.flush(); // followed live (e.g. by the GUI for parallel runs)
 
         if (o.write_interval > 0 && step_ % o.write_interval == 0) {
             std::ostringstream name;
