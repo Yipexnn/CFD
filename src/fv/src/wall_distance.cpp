@@ -12,7 +12,9 @@ std::vector<Scalar> wall_distance(const FvGeometry& geo, const std::vector<char>
     const auto nf = static_cast<std::size_t>(m.n_faces());
     const auto nif = static_cast<std::size_t>(m.n_internal_faces());
 
-    if (std::none_of(is_wall_face.begin(), is_wall_face.end(), [](char c) { return c != 0; })) {
+    const bool any_wall =
+        std::any_of(is_wall_face.begin(), is_wall_face.end(), [](char c) { return c != 0; });
+    if (geo.comm().max(any_wall ? 1.0 : 0.0) < 0.5) {
         return std::vector<Scalar>(nc, std::numeric_limits<Scalar>::max() / 1e10);
     }
 

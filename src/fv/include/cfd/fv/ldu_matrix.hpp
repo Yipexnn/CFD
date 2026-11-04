@@ -2,6 +2,7 @@
 
 #include <Eigen/SparseCore>
 #include <cfd/mesh/mesh.hpp>
+#include <cfd/parallel/halo.hpp>
 #include <memory>
 #include <string>
 #include <utility>
@@ -93,6 +94,11 @@ public:
 
     // Optional precomputed pattern (must belong to the same mesh) for fast CSR conversion.
     const CsrPattern* pattern = nullptr;
+    // Decomposed mesh (optional): only the owned rows [0, n_owned) are part of the global
+    // system; ghost values of x are taken from their owners (halo exchange). Residual norms
+    // are global and solve() uses distributed Krylov solvers (CG / BiCGStab with a
+    // block-Jacobi AMG or Jacobi preconditioner). Must outlive the matrix.
+    const parallel::Halo* halo = nullptr;
 
     std::vector<Scalar> diag;
     std::vector<Scalar> lower;
@@ -100,6 +106,13 @@ public:
     std::vector<Scalar> source;
 
 private:
+    [[nodiscard]] std::size_t n_owned() const {
+        return halo != nullptr ? static_cast<std::size_t>(halo->n_owned) : diag.size();
+    }
+    LinearSolveResult solve_distributed(std::vector<Scalar>& x,
+                                        const LinearSolverSettings& settings,
+                                        AmgCache* amg_cache) const;
+
     const mesh::Mesh* mesh_;
 };
 

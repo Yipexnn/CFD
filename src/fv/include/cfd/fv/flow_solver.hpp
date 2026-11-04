@@ -64,8 +64,11 @@ public:
     // Boundary conditions are looked up by patch name. Patches without an entry use a
     // default derived from the mesh patch type (wall -> no-slip wall, symmetry ->
     // symmetry, outlet -> pressure outlet p = 0). Throws if a patch has no usable default.
+    //
+    // halo (optional, must outlive the solver): mesh is one part of a decomposed mesh; the
+    // halo patch is handled internally and all norms, residuals and forces are global.
     FlowSolver(const Mesh& mesh, std::map<std::string, BoundaryCondition> conditions,
-               FlowSettings settings);
+               FlowSettings settings, const parallel::Halo* halo = nullptr);
 
     // One steady SIMPLE iteration.
     Residuals simple_iteration();

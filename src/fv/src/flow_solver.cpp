@@ -30,15 +30,22 @@ BoundaryCondition default_condition(const mesh::Patch& patch) {
 } // namespace
 
 FlowSolver::FlowSolver(const Mesh& mesh, std::map<std::string, BoundaryCondition> conditions,
-                       FlowSettings settings)
-    : geo_(mesh), settings_(std::move(settings)) {
-    for (const auto& patch : mesh.patches()) {
+                       FlowSettings settings, const parallel::Halo* halo)
+    : geo_(mesh, halo), settings_(std::move(settings)) {
+    for (std::size_t i = 0; i < mesh.patches().size(); ++i) {
+        const auto& patch = mesh.patches()[i];
+        if (halo != nullptr && static_cast<int>(i) == halo->halo_patch) {
+            patch_bcs_.push_back({FlowBoundary::Empty, Vec3::Zero(), 0.0});
+            continue;
+        }
         const auto it = conditions.find(patch.name);
         patch_bcs_.push_back(it != conditions.end() ? it->second : default_condition(patch));
         if (patch_bcs_.back().kind == FlowBoundary::PressureOutlet && patch.n_faces > 0) {
             has_fixed_pressure_ = true;
         }
     }
+    // Pressure level fixed anywhere in the global domain?
+    has_fixed_pressure_ = geo_.comm().max(has_fixed_pressure_ ? 1.0 : 0.0) > 0.5;
     for (const auto& [name, condition] : conditions) {
         if (mesh.find_patch(name) == nullptr) {
             throw std::invalid_argument("FlowSolver: unknown patch '" + name + "'");
@@ -66,12 +73,15 @@ void FlowSolver::check_mass_balance() const {
     Scalar total = 0.0;
     for (std::size_t b = 0; b < fixed_velocity_.size(); ++b) {
         const FlowBoundary kind = bc(static_cast<Label>(b)).kind;
-        if (kind == FlowBoundary::VelocityInlet || kind == FlowBoundary::Wall) {
+        if ((kind == FlowBoundary::VelocityInlet || kind == FlowBoundary::Wall) &&
+            geo_.owned_face(nif + b)) {
             const Scalar flux = fixed_velocity_[b].dot(m.face_area_vectors()[nif + b]);
             net += flux;
             total += std::abs(flux);
         }
     }
+    net = geo_.comm().sum(net);
+    total = geo_.comm().sum(total);
     if (std::abs(net) > 1e-9 * std::max(total, 1e-300) && std::abs(net) > 1e-300) {
         throw std::invalid_argument(
             "FlowSolver: the prescribed inflow is not balanced by outflow and there is no "
@@ -202,6 +212,7 @@ std::vector<Mat3> FlowSolver::velocity_gradient() const {
     for (std::size_t c = 0; c < nc; ++c) {
         grad[c] /= vol[c];
     }
+    geo_.exchange(grad);
     return grad;
 }
 
@@ -245,6 +256,7 @@ std::vector<Vec3> FlowSolver::pressure_gradient() const {
         }
         previous = grad;
     }
+    geo_.exchange(grad);
     return grad;
 }
 
@@ -266,6 +278,9 @@ PatchForce FlowSolver::patch_force(const std::string& patch) const {
     for (Label i = 0; i < pp->n_faces; ++i) {
         const auto f = static_cast<std::size_t>(pp->start_face + i);
         const auto o = static_cast<std::size_t>(m.owner()[f]);
+        if (!geo_.owned_face(f)) {
+            continue;
+        }
         const BoundaryCondition& c = bc(static_cast<Label>(f - nif));
         const Scalar p_f = c.kind == FlowBoundary::PressureOutlet
                                ? c.pressure
@@ -276,6 +291,11 @@ PatchForce FlowSolver::patch_force(const std::string& patch) const {
             force.viscous += nu_f * dc[f] * (u_[o] - fixed_velocity_[f - nif]);
         }
     }
+    std::array<Scalar, 6> sums{force.pressure.x(), force.pressure.y(), force.pressure.z(),
+                               force.viscous.x(),  force.viscous.y(),  force.viscous.z()};
+    geo_.comm().sum(sums.data(), sums.size());
+    force.pressure = Vec3(sums[0], sums[1], sums[2]);
+    force.viscous = Vec3(sums[3], sums[4], sums[5]);
     return force;
 }
 
@@ -291,13 +311,13 @@ Scalar FlowSolver::continuity_error() const {
             div[static_cast<std::size_t>(m.neighbour()[f])] -= phi_[f];
         }
     }
-    Scalar sum = 0.0;
-    Scalar volume = 0.0;
-    for (std::size_t c = 0; c < nc; ++c) {
-        sum += std::abs(div[c]);
-        volume += m.cell_volumes()[c];
+    std::array<Scalar, 2> sums{0.0, 0.0};
+    for (std::size_t c = 0; c < static_cast<std::size_t>(geo_.n_owned()); ++c) {
+        sums[0] += std::abs(div[c]);
+        sums[1] += m.cell_volumes()[c];
     }
-    return volume > 0.0 ? sum / volume : 0.0;
+    geo_.comm().sum(sums.data(), sums.size());
+    return sums[1] > 0.0 ? sums[0] / sums[1] : 0.0;
 }
 
 void FlowSolver::assemble_momentum(MomentumSystem& sys, Scalar dt, bool relax) const {
@@ -363,6 +383,7 @@ void FlowSolver::assemble_momentum(MomentumSystem& sys, Scalar dt, bool relax) c
                 limit(static_cast<std::size_t>(nei[f]), f);
             }
         }
+        geo_.exchange(limiter);
     }
     const std::vector<Scalar>* nut = turbulence_ != nullptr ? &turbulence_->nut() : nullptr;
     const std::vector<Scalar>* nut_b =
@@ -516,6 +537,8 @@ Scalar FlowSolver::pressure_correction(const MomentumSystem& sys, bool relax_p) 
         for (std::size_t c = 0; c < nc; ++c) {
             rau[c] = vol[c] / sys.diag[c].mean();
         }
+        geo_.exchange(hbya);
+        geo_.exchange(rau);
     }
 
     // Predicted face flux.
@@ -549,6 +572,7 @@ Scalar FlowSolver::pressure_correction(const MomentumSystem& sys, bool relax_p) 
     // Pressure equation: -div(rAU grad p) = -div(phiHbyA).
     LduMatrix eq(m);
     eq.pattern = &geo_.csr_pattern();
+    eq.halo = geo_.halo();
     for (std::size_t f = 0; f < nif; ++f) {
         const auto p = static_cast<std::size_t>(own[f]);
         const auto n = static_cast<std::size_t>(nei[f]);
@@ -570,7 +594,7 @@ Scalar FlowSolver::pressure_correction(const MomentumSystem& sys, bool relax_p) 
             eq.source[p] += coeff * c.pressure;
         }
     }
-    if (!has_fixed_pressure_) {
+    if (!has_fixed_pressure_ && geo_.comm().is_root() && geo_.n_owned() > 0) {
         eq.set_reference(0, 0.0);
     }
 
@@ -629,6 +653,7 @@ Scalar FlowSolver::pressure_correction(const MomentumSystem& sys, bool relax_p) 
 Residuals FlowSolver::simple_iteration() {
     MomentumSystem sys{LduMatrix(geo_.mesh()), {}, {}};
     sys.base.pattern = &geo_.csr_pattern();
+    sys.base.halo = geo_.halo();
     assemble_momentum(sys, 0.0, true);
     Residuals res;
     res.u = solve_momentum(sys);
@@ -657,6 +682,7 @@ Residuals FlowSolver::piso_step(Scalar dt) {
     u_old_ = u_;
     MomentumSystem sys{LduMatrix(geo_.mesh()), {}, {}};
     sys.base.pattern = &geo_.csr_pattern();
+    sys.base.halo = geo_.halo();
     assemble_momentum(sys, dt, false);
     Residuals res;
     res.u = solve_momentum(sys);

@@ -32,3 +32,16 @@ if(CFD_BUILD_GUI)
     vtk_module_autoinit(TARGETS cfd_gui_tests MODULES ${VTK_LIBRARIES})
     gtest_discover_tests(cfd_gui_tests DISCOVERY_MODE PRE_TEST)
 endif()
+
+# Parallel tests: run with mpiexec on 2 and 4 processes.
+if(CFD_ENABLE_MPI)
+    find_package(MPI REQUIRED COMPONENTS CXX)
+    add_executable(cfd_mpi_tests mpi/main.cpp mpi/test_parallel_solver.cpp)
+    target_link_libraries(cfd_mpi_tests PRIVATE cfd::fv cfd::parallel cfd::case GTest::gtest)
+    cfd_target_defaults(cfd_mpi_tests)
+    foreach(n 2 4)
+        add_test(NAME cfd_mpi_tests_np${n}
+                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${n} ${MPIEXEC_PREFLAGS}
+                         $<TARGET_FILE:cfd_mpi_tests> ${MPIEXEC_POSTFLAGS})
+    endforeach()
+endif()

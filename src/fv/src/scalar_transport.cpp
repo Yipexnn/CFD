@@ -41,6 +41,7 @@ std::vector<Vec3> scalar_gradient(const FvGeometry& geo, const std::vector<Scala
     for (std::size_t c = 0; c < nc; ++c) {
         grad[c] /= m.cell_volumes()[c];
     }
+    geo.exchange(grad);
     return grad;
 }
 
@@ -68,6 +69,7 @@ LinearSolveResult solve_scalar(const FvGeometry& geo, const std::vector<Scalar>&
     const std::vector<Vec3> grad = scalar_gradient(geo, field, eq.boundary);
     LduMatrix a(m);
     a.pattern = &geo.csr_pattern();
+    a.halo = geo.halo();
     std::vector<Scalar> divergence(nc, 0.0);
 
     for (std::size_t f = 0; f < nif; ++f) {

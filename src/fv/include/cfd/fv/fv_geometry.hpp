@@ -20,9 +20,33 @@ using mesh::Mesh;
 //   phi_f = weight * phi_P + (1 - weight) * phi_N
 class FvGeometry {
 public:
-    explicit FvGeometry(const Mesh& mesh);
+    // halo (optional, must outlive the geometry): the mesh is one part of a decomposed mesh.
+    explicit FvGeometry(const Mesh& mesh, const parallel::Halo* halo = nullptr);
 
     [[nodiscard]] const Mesh& mesh() const { return *mesh_; }
+    [[nodiscard]] const parallel::Halo* halo() const { return halo_; }
+    [[nodiscard]] const parallel::Comm& comm() const {
+        return halo_ != nullptr ? *halo_->comm : parallel::Comm::self();
+    }
+    // Number of owned cells (all cells without a halo).
+    [[nodiscard]] Label n_owned() const {
+        return halo_ != nullptr ? halo_->n_owned : mesh_->n_cells();
+    }
+    // True if a boundary face (global face index) belongs to an owned cell; sums over
+    // boundary faces must skip the others to avoid double counting.
+    [[nodiscard]] bool owned_face(std::size_t face) const {
+        return mesh_->owner()[face] < n_owned();
+    }
+    // Updates the ghost cells (no-op without a halo).
+    template <typename T> void exchange(std::vector<T>& values) const {
+        if (halo_ != nullptr) {
+            halo_->exchange(values);
+        }
+    }
+    // Is the boundary face part of the halo patch? (indexed by f - n_internal_faces)
+    [[nodiscard]] bool halo_face(std::size_t boundary_face) const {
+        return halo_ != nullptr && boundary_patch_[boundary_face] == halo_->halo_patch;
+    }
     [[nodiscard]] const std::vector<Scalar>& weights() const { return weights_; }
     [[nodiscard]] const std::vector<Scalar>& delta_coeffs() const { return delta_coeffs_; }
     [[nodiscard]] const std::vector<Vec3>& corrections() const { return corrections_; }
@@ -37,6 +61,7 @@ public:
 
 private:
     const Mesh* mesh_;
+    const parallel::Halo* halo_ = nullptr;
     std::vector<Scalar> weights_;
     std::vector<Scalar> delta_coeffs_;
     std::vector<Vec3> corrections_;

@@ -51,6 +51,8 @@ KOmegaSst::KOmegaSst(const FlowSolver& flow, SstSettings settings)
         }
     }
 
+    k_inlet = geo_->comm().max(k_inlet);
+    omega_inlet = geo_->comm().max(omega_inlet);
     const Scalar k0 = settings_.k_init > 0.0 ? settings_.k_init : (k_inlet > 0.0 ? k_inlet : 1e-4);
     const Scalar omega0 = settings_.omega_init > 0.0
                               ? settings_.omega_init

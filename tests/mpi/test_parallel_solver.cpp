@@ -1,0 +1,124 @@
+#include <algorithm>
+#include <cfd/fv/flow_solver.hpp>
+#include <cfd/fv/k_omega_sst.hpp>
+#include <cfd/mesh/box_mesher.hpp>
+#include <cfd/parallel/decomposition.hpp>
+#include <cmath>
+#include <gtest/gtest.h>
+#include <utility>
+
+using cfd::core::Scalar;
+using cfd::core::Vec3;
+using namespace cfd::fv;
+namespace par = cfd::parallel;
+
+namespace {
+
+const par::Comm& comm() {
+    return par::Comm::world();
+}
+
+// Max |a - b| over the owned cells of all ranks.
+Scalar max_difference(const par::LocalMesh& lm, const std::vector<Vec3>& local,
+                      const std::vector<Vec3>& global) {
+    Scalar d = 0.0;
+    for (cfd::core::Label c = 0; c < lm.halo.n_owned; ++c) {
+        const auto g = static_cast<std::size_t>(lm.global_cell[static_cast<std::size_t>(c)]);
+        d = std::max(d, (local[static_cast<std::size_t>(c)] - global[g]).norm());
+    }
+    return comm().max(d);
+}
+
+TEST(ParallelSolver, RunsOnSeveralProcesses) {
+    EXPECT_GE(comm().size(), 2) << "run with mpiexec -n 2 or more";
+}
+
+TEST(ParallelSolver, CavityMatchesSerial) {
+    cfd::mesh::BoxSpec spec;
+    spec.nx = 24;
+    spec.ny = 24;
+    spec.nz = 1;
+    spec.max = Vec3(1.0, 1.0, 0.1);
+    spec.patch_types[4] = cfd::mesh::PatchType::Symmetry;
+    spec.patch_types[5] = cfd::mesh::PatchType::Symmetry;
+    const auto global = cfd::mesh::make_box_mesh(spec);
+    const std::map<std::string, BoundaryCondition> bcs{
+        {"ymax", {FlowBoundary::Wall, Vec3(1, 0, 0), 0.0}}};
+    FlowSettings settings;
+    settings.nu = 0.01;
+    settings.convection = ConvectionScheme::LimitedLinearUpwind;
+
+    FlowSolver serial(global, bcs, settings);
+    (void)serial.solve_steady(1e-9, 3000);
+
+    const auto parts = par::partition_rcb(global, comm().size());
+    const auto lm = par::decompose(global, parts, comm().rank(), comm());
+    FlowSolver parallel(lm.mesh, bcs, settings, &lm.halo);
+    const int its = parallel.solve_steady(1e-9, 3000);
+    EXPECT_LT(its, 3000);
+
+    Scalar u_max = 0.0;
+    for (const auto& u : serial.velocity()) {
+        u_max = std::max(u_max, u.norm());
+    }
+    EXPECT_LT(max_difference(lm, parallel.velocity(), serial.velocity()), 1e-5 * u_max);
+    // Pressure is only defined up to a constant (no outlet): compare gradients via forces.
+    const Vec3 fs = serial.patch_force("ymax").total();
+    const Vec3 fp = parallel.patch_force("ymax").total();
+    EXPECT_LT((fs - fp).norm(), 1e-5 * fs.norm());
+}
+
+// Fully developed half channel with k-omega SST and wall functions (Re_tau = 2000),
+// split along y so that processor boundaries cross the boundary layer.
+TEST(ParallelSolver, SstChannelMatchesSerial) {
+    cfd::mesh::BoxSpec spec;
+    spec.nx = 1;
+    spec.ny = 24;
+    spec.nz = 1;
+    spec.max = Vec3(0.1, 1.0, 0.1);
+    const auto global = cfd::mesh::make_box_mesh(spec);
+    const BoundaryCondition empty{FlowBoundary::Empty, Vec3::Zero(), 0.0};
+    const std::map<std::string, BoundaryCondition> bcs{
+        {"xmin", empty},
+        {"xmax", empty},
+        {"zmin", empty},
+        {"zmax", empty},
+        {"ymax", {FlowBoundary::Symmetry, Vec3::Zero(), 0.0}}};
+    FlowSettings settings;
+    settings.nu = 1.0 / 2000.0;
+    settings.body_force = Vec3(1.0, 0.0, 0.0);
+    settings.alpha_u = 0.95;
+    settings.alpha_p = 0.5;
+
+    auto solve = [&](FlowSolver& flow) {
+        KOmegaSst sst(flow, SstSettings{1.0, 10.0});
+        flow.set_uniform_velocity(Vec3(15.0, 0.0, 0.0));
+        flow.set_turbulence_model(&sst);
+        int it = 0;
+        while (it < 20000 && flow.simple_iteration().max() > 1e-8) {
+            ++it;
+        }
+        flow.set_turbulence_model(nullptr);
+        return std::make_pair(it, sst.k());
+    };
+    FlowSolver serial(global, bcs, settings);
+    const auto [serial_its, serial_k] = solve(serial);
+    ASSERT_LT(serial_its, 20000);
+
+    const auto parts = par::partition_rcb(global, comm().size());
+    const auto lm = par::decompose(global, parts, comm().rank(), comm());
+    FlowSolver parallel(lm.mesh, bcs, settings, &lm.halo);
+    const auto [parallel_its, parallel_k] = solve(parallel);
+    EXPECT_LT(parallel_its, 20000);
+
+    EXPECT_LT(max_difference(lm, parallel.velocity(), serial.velocity()), 1e-5 * 20.0);
+    Scalar dk = 0.0;
+    for (cfd::core::Label c = 0; c < lm.halo.n_owned; ++c) {
+        const auto g = static_cast<std::size_t>(lm.global_cell[static_cast<std::size_t>(c)]);
+        dk = std::max(dk, std::abs(parallel_k[static_cast<std::size_t>(c)] - serial_k[g]) /
+                              serial_k[g]);
+    }
+    EXPECT_LT(comm().max(dk), 1e-4);
+}
+
+} // namespace

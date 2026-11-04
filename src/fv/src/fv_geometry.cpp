@@ -13,7 +13,8 @@ constexpr Scalar k_min_cos = 0.05;
 
 } // namespace
 
-FvGeometry::FvGeometry(const Mesh& mesh) : mesh_(&mesh), pattern_(build_csr_pattern(mesh)) {
+FvGeometry::FvGeometry(const Mesh& mesh, const parallel::Halo* halo)
+    : mesh_(&mesh), halo_(halo), pattern_(build_csr_pattern(mesh)) {
     const auto nf = static_cast<std::size_t>(mesh.n_faces());
     const auto nif = static_cast<std::size_t>(mesh.n_internal_faces());
     const auto& owner = mesh.owner();

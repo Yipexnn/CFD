@@ -1,6 +1,7 @@
 #include <Eigen/IterativeLinearSolvers>
 #include <Eigen/SparseCore>
 #include <algorithm>
+#include <array>
 #include <cfd/fv/amg.hpp>
 #include <cfd/fv/ldu_matrix.hpp>
 #include <cmath>
@@ -63,15 +64,20 @@ Scalar LduMatrix::normalised_residual(const std::vector<Scalar>& x) const {
 }
 
 std::pair<Scalar, Scalar> LduMatrix::residual_norms(const std::vector<Scalar>& x) const {
-    const std::size_t n = diag.size();
-    if (n == 0) {
+    const std::size_t n = n_owned();
+    const parallel::Comm& comm = halo != nullptr ? *halo->comm : parallel::Comm::self();
+    if (comm.sum(static_cast<Label>(n)) == 0) {
         return {0.0, 0.0};
     }
     std::vector<Scalar> ax;
     multiply(x, ax);
 
     // A * xRef with xRef = mean(x): row sums times the mean.
-    const Scalar x_ref = std::accumulate(x.begin(), x.end(), 0.0) / static_cast<Scalar>(n);
+    std::array<Scalar, 2> mean{
+        std::accumulate(x.begin(), x.begin() + static_cast<std::ptrdiff_t>(n), 0.0),
+        static_cast<Scalar>(n)};
+    comm.sum(mean.data(), mean.size());
+    const Scalar x_ref = mean[0] / mean[1];
     std::vector<Scalar> row_sum(diag);
     const auto& own = mesh_->owner();
     const auto& nei = mesh_->neighbour();
@@ -87,7 +93,9 @@ std::pair<Scalar, Scalar> LduMatrix::residual_norms(const std::vector<Scalar>& x
         res += std::abs(source[c] - ax[c]);
         norm += std::abs(ax[c] - ax_ref) + std::abs(source[c] - ax_ref);
     }
-    return {res, norm};
+    std::array<Scalar, 2> norms{res, norm};
+    comm.sum(norms.data(), norms.size());
+    return {norms[0], norms[1]};
 }
 
 void LduMatrix::set_reference(Label cell, Scalar value) {
@@ -98,6 +106,9 @@ void LduMatrix::set_reference(Label cell, Scalar value) {
 
 LinearSolveResult LduMatrix::solve(std::vector<Scalar>& x, const LinearSolverSettings& settings,
                                    AmgCache* amg_cache) const {
+    if (halo != nullptr && halo->parallel()) {
+        return solve_distributed(x, settings, amg_cache);
+    }
     LinearSolveResult result;
     const std::size_t n = diag.size();
     if (x.size() != n) {
@@ -201,6 +212,181 @@ LinearSolveResult LduMatrix::solve(std::vector<Scalar>& x, const LinearSolverSet
         result.iterations = static_cast<int>(solver.iterations());
     }
 
+    result.final_residual = normalised_residual(x);
+    return result;
+}
+
+LinearSolveResult LduMatrix::solve_distributed(std::vector<Scalar>& x,
+                                               const LinearSolverSettings& settings,
+                                               AmgCache* amg_cache) const {
+    const parallel::Comm& comm = *halo->comm;
+    const std::size_t n = diag.size();
+    const std::size_t no = n_owned();
+    if (x.size() != n) {
+        throw std::invalid_argument("LduMatrix::solve: size mismatch");
+    }
+    halo->exchange(x);
+    LinearSolveResult result;
+    result.initial_residual = normalised_residual(x);
+    result.final_residual = result.initial_residual;
+    if (result.initial_residual < settings.tolerance) {
+        return result;
+    }
+
+    // Local CSR (owned and ghost rows); the owned block is used by the preconditioners.
+    SparseMatrix a(static_cast<int>(n), static_cast<int>(n));
+    {
+        std::vector<Eigen::Triplet<Scalar, int>> triplets;
+        triplets.reserve(n + 2 * upper.size());
+        for (std::size_t c = 0; c < n; ++c) {
+            triplets.emplace_back(static_cast<int>(c), static_cast<int>(c), diag[c]);
+        }
+        const auto& own = mesh_->owner();
+        const auto& nei = mesh_->neighbour();
+        for (std::size_t f = 0; f < upper.size(); ++f) {
+            triplets.emplace_back(own[f], nei[f], upper[f]);
+            triplets.emplace_back(nei[f], own[f], lower[f]);
+        }
+        a.setFromTriplets(triplets.begin(), triplets.end());
+    }
+    const auto ino = static_cast<Eigen::Index>(no);
+    const CsrMatrix a_owned = a.topLeftCorner(ino, ino);
+
+    std::vector<Scalar> work(x);
+    const auto multiply_owned = [&](const EigenVector& v, EigenVector& y) {
+        std::copy(v.data(), v.data() + ino, work.begin());
+        halo->exchange(work);
+        const Eigen::Map<const EigenVector> w(work.data(), static_cast<Eigen::Index>(n));
+        y = (a * w).head(ino);
+    };
+    const auto dot = [&](const EigenVector& u, const EigenVector& v) { return comm.sum(u.dot(v)); };
+
+    const EigenVector b = Eigen::Map<const EigenVector>(source.data(), ino);
+    EigenVector xv = Eigen::Map<const EigenVector>(x.data(), ino);
+    EigenVector ax(ino);
+    multiply_owned(xv, ax);
+    EigenVector r = b - ax;
+    const Scalar r0_norm = std::sqrt(dot(r, r));
+    const Scalar target =
+        std::max(settings.rel_tolerance,
+                 settings.tolerance / std::max(result.initial_residual, k_small)) *
+        r0_norm;
+
+    const bool symmetric = settings.type != LinearSolverType::BiCgStab;
+    AmgPreconditioner local_amg;
+    const AmgPreconditioner* amg = nullptr;
+    bool fresh = true;
+    if (symmetric) {
+        if (settings.type == LinearSolverType::AmgCg && amg_cache != nullptr) {
+            if (!amg_cache->amg || amg_cache->age >= amg_cache->max_age) {
+                amg_cache->amg = std::make_unique<AmgPreconditioner>();
+                amg_cache->amg->setup(a_owned);
+                amg_cache->age = 0;
+            } else {
+                fresh = false;
+            }
+            amg = amg_cache->amg.get();
+        } else {
+            local_amg.setup(a_owned);
+            amg = &local_amg;
+        }
+    }
+    EigenVector inv_diag(ino);
+    for (Eigen::Index c = 0; c < ino; ++c) {
+        const Scalar d = diag[static_cast<std::size_t>(c)];
+        inv_diag[c] = std::abs(d) > k_small ? 1.0 / d : 1.0;
+    }
+
+    int iterations = 0;
+    if (symmetric) {
+        auto pcg_run = [&](const AmgPreconditioner& m) {
+            int its = 0;
+            EigenVector z(ino);
+            EigenVector q(ino);
+            m.apply(r, z);
+            EigenVector p = z;
+            Scalar rz = dot(r, z);
+            while (its < settings.max_iterations && std::sqrt(dot(r, r)) > target) {
+                multiply_owned(p, q);
+                const Scalar pq = dot(p, q);
+                if (std::abs(pq) < 1e-300) {
+                    break;
+                }
+                const Scalar alpha = rz / pq;
+                xv += alpha * p;
+                r -= alpha * q;
+                ++its;
+                m.apply(r, z);
+                const Scalar rz_new = dot(r, z);
+                p = z + (rz_new / rz) * p;
+                rz = rz_new;
+            }
+            return its;
+        };
+        iterations = pcg_run(*amg);
+        if (amg_cache != nullptr && settings.type == LinearSolverType::AmgCg) {
+            // The decision must be identical on all ranks: use the global maximum.
+            const int its = static_cast<int>(comm.max(static_cast<Scalar>(iterations)));
+            if (fresh) {
+                amg_cache->setup_iterations = std::max(its, 1);
+            } else if (its > 2 * amg_cache->setup_iterations + 2) {
+                amg_cache->amg->setup(a_owned);
+                const int more = pcg_run(*amg_cache->amg);
+                iterations += more;
+                amg_cache->age = 0;
+                amg_cache->setup_iterations = std::max(more, 1);
+            }
+            ++amg_cache->age;
+        }
+    } else {
+        // Jacobi-preconditioned BiCGStab.
+        const EigenVector r_hat = r;
+        EigenVector p = EigenVector::Zero(ino);
+        EigenVector v = EigenVector::Zero(ino);
+        EigenVector p_hat(ino);
+        EigenVector s(ino);
+        EigenVector s_hat(ino);
+        EigenVector t(ino);
+        Scalar rho = 1.0;
+        Scalar alpha = 1.0;
+        Scalar omega = 1.0;
+        while (iterations < settings.max_iterations && std::sqrt(dot(r, r)) > target) {
+            const Scalar rho_new = dot(r_hat, r);
+            if (std::abs(rho_new) < 1e-300) {
+                break;
+            }
+            const Scalar beta = (rho_new / rho) * (alpha / omega);
+            p = r + beta * (p - omega * v);
+            p_hat = inv_diag.cwiseProduct(p);
+            multiply_owned(p_hat, v);
+            const Scalar rv = dot(r_hat, v);
+            if (std::abs(rv) < 1e-300) {
+                break;
+            }
+            alpha = rho_new / rv;
+            s = r - alpha * v;
+            ++iterations;
+            if (std::sqrt(dot(s, s)) <= target) {
+                xv += alpha * p_hat;
+                r = s;
+                break;
+            }
+            s_hat = inv_diag.cwiseProduct(s);
+            multiply_owned(s_hat, t);
+            const Scalar tt = dot(t, t);
+            omega = tt > 1e-300 ? dot(t, s) / tt : 0.0;
+            xv += alpha * p_hat + omega * s_hat;
+            r = s - omega * t;
+            rho = rho_new;
+            if (omega == 0.0) {
+                break;
+            }
+        }
+    }
+
+    std::copy(xv.data(), xv.data() + ino, x.begin());
+    halo->exchange(x);
+    result.iterations = iterations;
     result.final_residual = normalised_residual(x);
     return result;
 }

@@ -24,10 +24,11 @@ struct Halo {
 
     [[nodiscard]] bool parallel() const { return comm->parallel(); }
 
-    // Copies owned values into the neighbours' ghost cells. T must be trivially copyable
-    // (Scalar, Vec3, Matrix3d, ...); values.size() must be the local cell count.
+    // Copies owned values into the neighbours' ghost cells. T must be a plain value type
+    // that can be copied bytewise (Scalar, Vec3, Matrix3d, ...); values.size() must be the
+    // local cell count.
     template <typename T> void exchange(std::vector<T>& values) const {
-        static_assert(std::is_trivially_copyable_v<T>);
+        static_assert(std::is_standard_layout_v<T> && std::is_trivially_destructible_v<T>);
         if (neighbours.empty()) {
             return;
         }
@@ -40,7 +41,8 @@ struct Halo {
             send[i].resize(nb.send.size() * sizeof(T));
             for (std::size_t k = 0; k < nb.send.size(); ++k) {
                 std::memcpy(send[i].data() + k * sizeof(T),
-                            &values[static_cast<std::size_t>(nb.send[k])], sizeof(T));
+                            static_cast<const void*>(&values[static_cast<std::size_t>(nb.send[k])]),
+                            sizeof(T));
             }
             recv[i].resize(nb.recv.size() * sizeof(T));
         }
@@ -48,7 +50,7 @@ struct Halo {
         for (std::size_t i = 0; i < neighbours.size(); ++i) {
             const Neighbour& nb = neighbours[i];
             for (std::size_t k = 0; k < nb.recv.size(); ++k) {
-                std::memcpy(&values[static_cast<std::size_t>(nb.recv[k])],
+                std::memcpy(static_cast<void*>(&values[static_cast<std::size_t>(nb.recv[k])]),
                             recv[i].data() + k * sizeof(T), sizeof(T));
             }
         }
