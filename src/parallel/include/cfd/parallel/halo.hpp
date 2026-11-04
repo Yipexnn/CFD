@@ -55,6 +55,36 @@ struct Halo {
             }
         }
     }
+
+    // Reverse of exchange(): adds the ghost values of the neighbours to the owned cells they
+    // copy (e.g. overlapping Schwarz corrections).
+    void reverse_add(std::vector<Scalar>& values) const {
+        if (neighbours.empty()) {
+            return;
+        }
+        std::vector<int> peers;
+        std::vector<std::vector<char>> send(neighbours.size());
+        std::vector<std::vector<char>> recv(neighbours.size());
+        for (std::size_t i = 0; i < neighbours.size(); ++i) {
+            const Neighbour& nb = neighbours[i];
+            peers.push_back(nb.rank);
+            send[i].resize(nb.recv.size() * sizeof(Scalar));
+            for (std::size_t k = 0; k < nb.recv.size(); ++k) {
+                std::memcpy(send[i].data() + k * sizeof(Scalar),
+                            &values[static_cast<std::size_t>(nb.recv[k])], sizeof(Scalar));
+            }
+            recv[i].resize(nb.send.size() * sizeof(Scalar));
+        }
+        comm->exchange(peers, send, recv);
+        for (std::size_t i = 0; i < neighbours.size(); ++i) {
+            const Neighbour& nb = neighbours[i];
+            for (std::size_t k = 0; k < nb.send.size(); ++k) {
+                Scalar v = 0.0;
+                std::memcpy(&v, recv[i].data() + k * sizeof(Scalar), sizeof(Scalar));
+                values[static_cast<std::size_t>(nb.send[k])] += v;
+            }
+        }
+    }
 };
 
 } // namespace cfd::parallel

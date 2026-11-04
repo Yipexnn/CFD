@@ -48,16 +48,20 @@ void bisect(const std::vector<Vec3>& centres, std::vector<Label>& cells, std::si
 
 } // namespace
 
-std::vector<int> partition_rcb(const mesh::Mesh& mesh, int n_parts) {
+std::vector<int> partition_points(const std::vector<Vec3>& points, int n_parts) {
     if (n_parts < 1) {
         throw std::invalid_argument("partition_rcb: n_parts must be >= 1");
     }
-    const auto nc = static_cast<std::size_t>(mesh.n_cells());
-    std::vector<int> parts(nc, 0);
-    std::vector<Label> cells(nc);
+    const std::size_t n = points.size();
+    std::vector<int> parts(n, 0);
+    std::vector<Label> cells(n);
     std::iota(cells.begin(), cells.end(), Label{0});
-    bisect(mesh.cell_centres(), cells, 0, nc, 0, n_parts, parts);
+    bisect(points, cells, 0, n, 0, n_parts, parts);
     return parts;
+}
+
+std::vector<int> partition_rcb(const mesh::Mesh& mesh, int n_parts) {
+    return partition_points(mesh.cell_centres(), n_parts);
 }
 
 LocalMesh decompose(const mesh::Mesh& global, const std::vector<int>& parts, int part,

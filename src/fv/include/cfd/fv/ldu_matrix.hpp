@@ -96,8 +96,9 @@ public:
     const CsrPattern* pattern = nullptr;
     // Decomposed mesh (optional): only the owned rows [0, n_owned) are part of the global
     // system; ghost values of x are taken from their owners (halo exchange). Residual norms
-    // are global and solve() uses distributed Krylov solvers (CG / BiCGStab with a
-    // block-Jacobi AMG or Jacobi preconditioner). Must outlive the matrix.
+    // are global and solve() uses distributed Krylov solvers: CG with an overlapping additive
+    // Schwarz AMG preconditioner plus a coarse-space correction, or Jacobi-preconditioned
+    // BiCGStab. Must outlive the matrix.
     const parallel::Halo* halo = nullptr;
 
     std::vector<Scalar> diag;

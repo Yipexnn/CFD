@@ -13,6 +13,8 @@ inline const std::string k_halo_patch = "_halo";
 // Cell -> part assignment by recursive coordinate bisection of the cell centres
 // (balanced cell counts, deterministic).
 [[nodiscard]] std::vector<int> partition_rcb(const mesh::Mesh& mesh, int n_parts);
+// Same for a point set.
+[[nodiscard]] std::vector<int> partition_points(const std::vector<core::Vec3>& points, int n_parts);
 
 // Local mesh of one part: owned cells (ascending global index) followed by one layer of
 // ghost cells (face neighbours owned by other parts). All global patches are kept in order

@@ -141,8 +141,7 @@ void FlowSolver::set_boundary_velocity_profile(const std::string& patch,
     }
     const auto start = static_cast<std::size_t>(pt->start_face - m.n_internal_faces());
     // Look the condition up by patch (the patch may have no faces on this process).
-    const FlowBoundary kind =
-        patch_bcs_[static_cast<std::size_t>(pt - m.patches().data())].kind;
+    const FlowBoundary kind = patch_bcs_[static_cast<std::size_t>(pt - m.patches().data())].kind;
     if (kind != FlowBoundary::VelocityInlet && kind != FlowBoundary::Wall) {
         throw std::invalid_argument("FlowSolver: velocity profile needs an inlet or wall patch");
     }

@@ -1,9 +1,11 @@
+#include <Eigen/Dense>
 #include <Eigen/IterativeLinearSolvers>
 #include <Eigen/SparseCore>
 #include <algorithm>
 #include <array>
 #include <cfd/fv/amg.hpp>
 #include <cfd/fv/ldu_matrix.hpp>
+#include <cfd/parallel/decomposition.hpp>
 #include <cmath>
 #include <numeric>
 #include <stdexcept>
@@ -12,10 +14,13 @@ namespace cfd::fv {
 
 namespace {
 
+using core::Vec3;
 using SparseMatrix = Eigen::SparseMatrix<Scalar, Eigen::RowMajor, int>;
 using EigenVector = Eigen::Matrix<Scalar, Eigen::Dynamic, 1>;
 
 constexpr Scalar k_small = 1e-20;
+// Coarse-space aggregates per process of the parallel pressure preconditioner.
+constexpr int k_coarse_aggregates = 16;
 
 } // namespace
 
@@ -235,7 +240,17 @@ LinearSolveResult LduMatrix::solve_distributed(std::vector<Scalar>& x,
 
     // Local CSR (owned and ghost rows); the owned block is used by the preconditioners.
     SparseMatrix a(static_cast<int>(n), static_cast<int>(n));
-    {
+    if (pattern != nullptr) {
+        a = pattern->structure;
+        Scalar* v = a.valuePtr();
+        for (std::size_t c = 0; c < n; ++c) {
+            v[pattern->diag_pos[c]] = diag[c];
+        }
+        for (std::size_t f = 0; f < upper.size(); ++f) {
+            v[pattern->upper_pos[f]] = upper[f];
+            v[pattern->lower_pos[f]] = lower[f];
+        }
+    } else {
         std::vector<Eigen::Triplet<Scalar, int>> triplets;
         triplets.reserve(n + 2 * upper.size());
         for (std::size_t c = 0; c < n; ++c) {
@@ -250,7 +265,18 @@ LinearSolveResult LduMatrix::solve_distributed(std::vector<Scalar>& x,
         a.setFromTriplets(triplets.begin(), triplets.end());
     }
     const auto ino = static_cast<Eigen::Index>(no);
-    const CsrMatrix a_owned = a.topLeftCorner(ino, ino);
+    const bool symmetric = settings.type != LinearSolverType::BiCgStab;
+    // Overlapping (additive Schwarz) preconditioner matrix: owned + ghost rows, ghost rows with
+    // the full diagonal of their owner, i.e. the principal submatrix of the global matrix.
+    CsrMatrix a_ext;
+    if (symmetric) {
+        a_ext = a;
+        std::vector<Scalar> full_diag(diag);
+        halo->exchange(full_diag);
+        for (std::size_t c = no; c < n; ++c) {
+            a_ext.coeffRef(static_cast<int>(c), static_cast<int>(c)) = full_diag[c];
+        }
+    }
 
     std::vector<Scalar> work(x);
     const auto multiply_owned = [&](const EigenVector& v, EigenVector& y) {
@@ -272,7 +298,6 @@ LinearSolveResult LduMatrix::solve_distributed(std::vector<Scalar>& x,
                  settings.tolerance / std::max(result.initial_residual, k_small)) *
         r0_norm;
 
-    const bool symmetric = settings.type != LinearSolverType::BiCgStab;
     AmgPreconditioner local_amg;
     const AmgPreconditioner* amg = nullptr;
     bool fresh = true;
@@ -280,14 +305,14 @@ LinearSolveResult LduMatrix::solve_distributed(std::vector<Scalar>& x,
         if (settings.type == LinearSolverType::AmgCg && amg_cache != nullptr) {
             if (!amg_cache->amg || amg_cache->age >= amg_cache->max_age) {
                 amg_cache->amg = std::make_unique<AmgPreconditioner>();
-                amg_cache->amg->setup(a_owned);
+                amg_cache->amg->setup(a_ext);
                 amg_cache->age = 0;
             } else {
                 fresh = false;
             }
             amg = amg_cache->amg.get();
         } else {
-            local_amg.setup(a_owned);
+            local_amg.setup(a_ext);
             amg = &local_amg;
         }
     }
@@ -297,13 +322,76 @@ LinearSolveResult LduMatrix::solve_distributed(std::vector<Scalar>& x,
         inv_diag[c] = std::abs(d) > k_small ? 1.0 / d : 1.0;
     }
 
+    // Two-level preconditioner: block-Jacobi AMG plus an additive coarse correction
+    // (z += Z E^-1 Z^T r, E = Z^T A Z) on k_aggregates aggregates of every process, which
+    // restores the global low-frequency coupling that the block-Jacobi AMG misses.
+    const int n_procs = comm.size();
+    const int n_agg = std::max(1, std::min(k_coarse_aggregates, static_cast<int>(no)));
+    const int n_coarse = n_procs * k_coarse_aggregates;
+    std::vector<Label> aggregate(n, 0);
+    Eigen::LDLT<Eigen::MatrixXd> coarse;
+    if (symmetric) {
+        std::vector<Vec3> centres(mesh_->cell_centres().begin(),
+                                  mesh_->cell_centres().begin() + static_cast<std::ptrdiff_t>(no));
+        const std::vector<int> local_agg = parallel::partition_points(centres, n_agg);
+        for (std::size_t c = 0; c < no; ++c) {
+            aggregate[c] = comm.rank() * k_coarse_aggregates + local_agg[c];
+        }
+        halo->exchange(aggregate);
+        std::vector<Scalar> e(
+            static_cast<std::size_t>(n_coarse) * static_cast<std::size_t>(n_coarse), 0.0);
+        const int* outer = a.outerIndexPtr();
+        const int* inner = a.innerIndexPtr();
+        const Scalar* val = a.valuePtr();
+        for (std::size_t row = 0; row < no; ++row) {
+            const auto i = static_cast<std::size_t>(aggregate[row]);
+            for (int k = outer[row]; k < outer[row + 1]; ++k) {
+                const auto j =
+                    static_cast<std::size_t>(aggregate[static_cast<std::size_t>(inner[k])]);
+                e[i * static_cast<std::size_t>(n_coarse) + j] += val[k];
+            }
+        }
+        comm.sum(e.data(), e.size());
+        Eigen::MatrixXd ec = Eigen::Map<const Eigen::MatrixXd>(e.data(), n_coarse, n_coarse);
+        for (Eigen::Index i = 0; i < n_coarse; ++i) {
+            if (ec(i, i) == 0.0) {
+                ec(i, i) = 1.0; // unused aggregate (process with fewer cells)
+            }
+        }
+        coarse.compute(0.5 * (ec + ec.transpose()));
+    }
+    const auto coarse_correct = [&](const EigenVector& res, EigenVector& z) {
+        std::vector<Scalar> zr(static_cast<std::size_t>(n_coarse), 0.0);
+        for (std::size_t c = 0; c < no; ++c) {
+            zr[static_cast<std::size_t>(aggregate[c])] += res[static_cast<Eigen::Index>(c)];
+        }
+        comm.sum(zr.data(), zr.size());
+        const Eigen::VectorXd y =
+            coarse.solve(Eigen::Map<const Eigen::VectorXd>(zr.data(), n_coarse));
+        for (std::size_t c = 0; c < no; ++c) {
+            z[static_cast<Eigen::Index>(c)] += y[aggregate[c]];
+        }
+    };
+
     int iterations = 0;
     if (symmetric) {
-        auto pcg_run = [&](const AmgPreconditioner& m) {
+        auto pcg_run = [&](const AmgPreconditioner& amg_m) {
+            std::vector<Scalar> ext(n);
+            EigenVector z_ext(static_cast<Eigen::Index>(n));
+            const auto m_apply = [&](const EigenVector& res, EigenVector& z) {
+                std::copy(res.data(), res.data() + ino, ext.begin());
+                halo->exchange(ext);
+                amg_m.apply(Eigen::Map<const EigenVector>(ext.data(), static_cast<Eigen::Index>(n)),
+                            z_ext);
+                std::copy(z_ext.data(), z_ext.data() + z_ext.size(), ext.begin());
+                halo->reverse_add(ext);
+                z = Eigen::Map<const EigenVector>(ext.data(), ino);
+                coarse_correct(res, z);
+            };
             int its = 0;
             EigenVector z(ino);
             EigenVector q(ino);
-            m.apply(r, z);
+            m_apply(r, z);
             EigenVector p = z;
             Scalar rz = dot(r, z);
             while (its < settings.max_iterations && std::sqrt(dot(r, r)) > target) {
@@ -316,7 +404,7 @@ LinearSolveResult LduMatrix::solve_distributed(std::vector<Scalar>& x,
                 xv += alpha * p;
                 r -= alpha * q;
                 ++its;
-                m.apply(r, z);
+                m_apply(r, z);
                 const Scalar rz_new = dot(r, z);
                 p = z + (rz_new / rz) * p;
                 rz = rz_new;
@@ -330,7 +418,7 @@ LinearSolveResult LduMatrix::solve_distributed(std::vector<Scalar>& x,
             if (fresh) {
                 amg_cache->setup_iterations = std::max(its, 1);
             } else if (its > 2 * amg_cache->setup_iterations + 2) {
-                amg_cache->amg->setup(a_owned);
+                amg_cache->amg->setup(a_ext);
                 const int more = pcg_run(*amg_cache->amg);
                 iterations += more;
                 amg_cache->age = 0;
