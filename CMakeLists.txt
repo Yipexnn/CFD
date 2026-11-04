@@ -30,6 +30,7 @@ endif()
 add_subdirectory(src/core)
 add_subdirectory(src/mesh)
 add_subdirectory(src/fv)
+add_subdirectory(src/geometry)
 add_subdirectory(src/case)
 
 if(CFD_BUILD_APP)
