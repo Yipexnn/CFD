@@ -17,8 +17,9 @@ add_executable(cfd_tests
     test_forces.cpp
     test_geometry.cpp
     test_case_geometry.cpp
+    test_decomposition.cpp
 )
-target_link_libraries(cfd_tests PRIVATE cfd::core cfd::mesh cfd::fv cfd::geometry cfd::case GTest::gtest_main)
+target_link_libraries(cfd_tests PRIVATE cfd::core cfd::mesh cfd::fv cfd::parallel cfd::geometry cfd::case GTest::gtest_main)
 cfd_target_defaults(cfd_tests)
 
 include(GoogleTest)
