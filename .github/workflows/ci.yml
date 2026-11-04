@@ -57,6 +57,22 @@ jobs:
           key: vcpkg-${{ runner.os }}-${{ matrix.preset }}-${{ hashFiles('vcpkg.json') }}
           restore-keys: vcpkg-${{ runner.os }}-${{ matrix.preset }}-
 
+      # Gmsh executable for the geometry tests (they are skipped without it).
+      - name: Install Gmsh (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq gmsh
+
+      - name: Install Gmsh (Windows)
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        shell: bash
+        run: |
+          curl -sSfL -o "$RUNNER_TEMP/gmsh.zip" https://gmsh.info/bin/Windows/gmsh-4.13.1-Windows64.zip
+          unzip -q "$RUNNER_TEMP/gmsh.zip" -d "$RUNNER_TEMP/gmsh"
+          exe=$(find "$RUNNER_TEMP/gmsh" -name gmsh.exe | head -1)
+          echo "CFD_GMSH=$(cygpath -w "$exe")" >> "$GITHUB_ENV"
+          "$exe" --version
+
       - name: Configure
         run: cmake --preset ${{ matrix.preset }} -DCFD_WARNINGS_AS_ERRORS=ON
 
@@ -92,7 +108,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq ninja-build libvtk9-dev libvtk9-qt-dev qtbase5-dev \
-            libeigen3-dev nlohmann-json3-dev libgtest-dev xvfb libgl1-mesa-dri xauth
+            libeigen3-dev nlohmann-json3-dev libgtest-dev xvfb libgl1-mesa-dri xauth gmsh
 
       - name: Configure
         run: cmake --preset linux-system-gui -DCFD_WARNINGS_AS_ERRORS=ON
@@ -109,6 +125,11 @@ jobs:
             ./build/linux-system-gui/src/gui/cfd_gui examples/cavity.json --run \
             --show slice,vectors --screenshot gui-view.png --window-screenshot gui-window.png --quit
           test -s gui-view.png && test -s gui-window.png
+          xvfb-run -a -s "-screen 0 1600x1000x24" \
+            ./build/linux-system-gui/src/gui/cfd_gui examples/cylinder_2d.json --run \
+            --window-screenshot gui-cylinder.png --quit
+          test -s gui-cylinder.png
+          grep -q cylinder_Cx examples/results/cylinder_2d/forces.csv
 
       - name: Upload screenshots
         uses: actions/upload-artifact@v4

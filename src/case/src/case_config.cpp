@@ -92,10 +92,125 @@ mesh::PatchType parse_patch_type(const std::string& s, const std::string& path) 
     fail(path, "unknown patch type '" + s + "' (wall, inlet, outlet, symmetry, patch)");
 }
 
+bool get_bool(const json& j, const std::string& key, const std::string& path, bool def) {
+    if (!j.contains(key)) {
+        return def;
+    }
+    if (!j[key].is_boolean()) {
+        fail(path + "." + key, "expected true or false");
+    }
+    return j[key].get<bool>();
+}
+
+geometry::Body parse_body(const json& j, const std::string& path) {
+    geometry::Body b;
+    const std::string type = get_string(j, "type", path, "");
+    if (type == "box") {
+        check_keys(j, path, {"type", "min", "max", "patch"});
+        b.kind = geometry::Body::Kind::Box;
+        b.a = get_vec3(j, "min", path, b.a);
+        b.b = get_vec3(j, "max", path, b.b);
+    } else if (type == "cylinder") {
+        check_keys(j, path, {"type", "base", "axis", "radius", "patch"});
+        b.kind = geometry::Body::Kind::Cylinder;
+        b.a = get_vec3(j, "base", path, b.a);
+        b.b = get_vec3(j, "axis", path, Vec3(0, 0, 1));
+        b.radius = get_number(j, "radius", path, 0.0);
+    } else if (type == "sphere") {
+        check_keys(j, path, {"type", "centre", "radius", "patch"});
+        b.kind = geometry::Body::Kind::Sphere;
+        b.a = get_vec3(j, "centre", path, b.a);
+        b.radius = get_number(j, "radius", path, 0.0);
+    } else if (type == "file") {
+        check_keys(j, path, {"type", "file", "patch"});
+        b.kind = geometry::Body::Kind::File;
+        b.file = get_string(j, "file", path, "");
+        if (b.file.empty()) {
+            fail(path + ".file", "required for file bodies");
+        }
+    } else {
+        fail(path + ".type", "unknown body type '" + type + "' (box, cylinder, sphere, file)");
+    }
+    if (b.kind != geometry::Body::Kind::Box && b.kind != geometry::Body::Kind::File &&
+        !(b.radius > 0.0)) {
+        fail(path + ".radius", "must be positive");
+    }
+    b.patch = get_string(j, "patch", path, b.patch);
+    return b;
+}
+
+geometry::GeometrySpec parse_geometry(const json& j, const std::string& path) {
+    check_keys(j, path,
+               {"type", "min", "max", "bodies", "internal", "two_d", "size", "size_near",
+                "refine_distance", "boundary_layer", "quads", "domain_patches", "patches"});
+    geometry::GeometrySpec g;
+    g.domain_min = get_vec3(j, "min", path, g.domain_min);
+    g.domain_max = get_vec3(j, "max", path, g.domain_max);
+    if (j.contains("bodies")) {
+        if (!j["bodies"].is_array()) {
+            fail(path + ".bodies", "expected an array");
+        }
+        for (std::size_t i = 0; i < j["bodies"].size(); ++i) {
+            g.bodies.push_back(
+                parse_body(j["bodies"][i], path + ".bodies[" + std::to_string(i) + "]"));
+        }
+    }
+    g.internal = get_bool(j, "internal", path, g.internal);
+    g.two_d = get_bool(j, "two_d", path, g.two_d);
+    g.size = get_number(j, "size", path, g.size);
+    g.size_near = get_number(j, "size_near", path, g.size_near);
+    g.refine_distance = get_number(j, "refine_distance", path, g.refine_distance);
+    g.quads = get_bool(j, "quads", path, g.quads);
+    if (!(g.size > 0.0)) {
+        fail(path + ".size", "must be positive");
+    }
+    if (j.contains("boundary_layer")) {
+        const json& bl = j["boundary_layer"];
+        const std::string blp = path + ".boundary_layer";
+        check_keys(bl, blp, {"layers", "first", "ratio"});
+        g.bl_layers = get_int(bl, "layers", blp, g.bl_layers);
+        g.bl_first = get_number(bl, "first", blp, g.bl_first);
+        g.bl_ratio = get_number(bl, "ratio", blp, g.bl_ratio);
+    }
+    if (j.contains("domain_patches")) {
+        const json& dp = j["domain_patches"];
+        const std::array<std::string, 6> faces{"xmin", "xmax", "ymin", "ymax", "zmin", "zmax"};
+        check_keys(dp, path + ".domain_patches", {faces.begin(), faces.end()});
+        for (std::size_t i = 0; i < faces.size(); ++i) {
+            g.domain_patch_names[i] =
+                get_string(dp, faces[i], path + ".domain_patches", g.domain_patch_names[i]);
+        }
+    }
+    if (j.contains("patches")) {
+        if (!j["patches"].is_array()) {
+            fail(path + ".patches", "expected an array");
+        }
+        for (std::size_t i = 0; i < j["patches"].size(); ++i) {
+            const json& ps = j["patches"][i];
+            const std::string pp = path + ".patches[" + std::to_string(i) + "]";
+            check_keys(ps, pp, {"name", "min", "max"});
+            geometry::PatchSelector sel;
+            sel.name = get_string(ps, "name", pp, "");
+            if (sel.name.empty()) {
+                fail(pp + ".name", "required");
+            }
+            sel.min = get_vec3(ps, "min", pp, sel.min);
+            sel.max = get_vec3(ps, "max", pp, sel.max);
+            g.patches.push_back(sel);
+        }
+    }
+    return g;
+}
+
 MeshConfig parse_mesh(const json& j) {
     const std::string path = "mesh";
     MeshConfig m;
     const std::string type = get_string(j, "type", path, "box");
+    if (type == "geometry") {
+        m.source = MeshSource::Geometry;
+        m.geometry = parse_geometry(j, path);
+        return m;
+    }
     if (type == "gmsh") {
         check_keys(j, path, {"type", "file"});
         m.source = MeshSource::Gmsh;
@@ -106,7 +221,7 @@ MeshConfig parse_mesh(const json& j) {
         return m;
     }
     if (type != "box") {
-        fail(path + ".type", "unknown mesh type '" + type + "' (box, gmsh)");
+        fail(path + ".type", "unknown mesh type '" + type + "' (box, gmsh, geometry)");
     }
     check_keys(j, path, {"type", "cells", "min", "max", "grading", "patch_types"});
     m.source = MeshSource::Box;
@@ -151,7 +266,8 @@ MeshConfig parse_mesh(const json& j) {
 
 fv::BoundaryCondition parse_boundary(const json& j, const std::string& path) {
     check_keys(j, path,
-               {"type", "velocity", "pressure", "turbulence_intensity", "viscosity_ratio"});
+               {"type", "velocity", "pressure", "turbulence_intensity", "viscosity_ratio",
+                "profile", "profile_axes"});
     fv::BoundaryCondition bc;
     const std::string type = get_string(j, "type", path, "");
     if (type == "velocity_inlet") {
@@ -188,7 +304,8 @@ CaseConfig parse_case(const std::string& json_text, const std::filesystem::path&
         throw std::runtime_error(std::string("Case file: invalid JSON: ") + e.what());
     }
     check_keys(root, "case",
-               {"name", "mesh", "physics", "boundaries", "initial", "solver", "output", "restart"});
+               {"name", "mesh", "physics", "boundaries", "initial", "solver", "output", "forces",
+                "restart"});
 
     CaseConfig c;
     c.base_directory = base_directory;
@@ -224,7 +341,22 @@ CaseConfig parse_case(const std::string& json_text, const std::filesystem::path&
             fail("boundaries", "expected an object");
         }
         for (const auto& [name, value] : b.items()) {
-            c.boundaries[name] = parse_boundary(value, "boundaries." + name);
+            const std::string path = "boundaries." + name;
+            c.boundaries[name] = parse_boundary(value, path);
+            const std::string profile = get_string(value, "profile", path, "uniform");
+            if (profile == "parabolic") {
+                if (c.boundaries[name].kind != fv::FlowBoundary::VelocityInlet) {
+                    fail(path + ".profile", "only for velocity_inlet");
+                }
+                InletProfile ip;
+                ip.axes = get_string(value, "profile_axes", path, ip.axes);
+                if (ip.axes.empty() || ip.axes.find_first_not_of("xyz") != std::string::npos) {
+                    fail(path + ".profile_axes", "expected axis letters, e.g. \"y\" or \"yz\"");
+                }
+                c.profiles[name] = ip;
+            } else if (profile != "uniform") {
+                fail(path + ".profile", "unknown profile '" + profile + "' (uniform, parabolic)");
+            }
         }
     }
 
@@ -288,6 +420,29 @@ CaseConfig parse_case(const std::string& json_text, const std::filesystem::path&
         c.output.log_interval = get_int(o, "log_interval", "output", c.output.log_interval);
         c.output.checkpoint_interval =
             get_int(o, "checkpoint_interval", "output", c.output.checkpoint_interval);
+    }
+
+    if (root.contains("forces")) {
+        const json& f = root["forces"];
+        check_keys(f, "forces", {"patches", "density", "reference_velocity", "reference_area"});
+        if (!f.contains("patches") || !f["patches"].is_array()) {
+            fail("forces.patches", "expected an array of patch names");
+        }
+        for (const auto& name : f["patches"]) {
+            if (!name.is_string()) {
+                fail("forces.patches", "expected an array of patch names");
+            }
+            c.forces.patches.push_back(name.get<std::string>());
+        }
+        c.forces.density = get_number(f, "density", "forces", c.forces.density);
+        c.forces.reference_velocity =
+            get_number(f, "reference_velocity", "forces", c.forces.reference_velocity);
+        c.forces.reference_area =
+            get_number(f, "reference_area", "forces", c.forces.reference_area);
+        if (!(c.forces.density > 0.0) || !(c.forces.reference_velocity > 0.0) ||
+            !(c.forces.reference_area > 0.0)) {
+            fail("forces", "density and reference values must be positive");
+        }
     }
 
     if (root.contains("restart")) {

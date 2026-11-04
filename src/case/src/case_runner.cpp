@@ -6,6 +6,7 @@
 #include <cstring>
 #include <fstream>
 #include <iomanip>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 
@@ -42,13 +43,92 @@ void read_array(std::istream& in, double* data, std::size_t n) {
 
 } // namespace
 
+mesh::Mesh build_mesh(const CaseConfig& config) {
+    switch (config.mesh.source) {
+    case MeshSource::Gmsh:
+        return mesh::read_gmsh(config.resolve(config.mesh.file));
+    case MeshSource::Geometry: {
+        geometry::GeometrySpec spec = config.mesh.geometry;
+        for (auto& body : spec.bodies) {
+            if (body.kind == geometry::Body::Kind::File) {
+                body.file = config.resolve(body.file);
+            }
+        }
+        const std::string gmsh = geometry::find_gmsh();
+        if (gmsh.empty()) {
+            throw std::runtime_error("Gmsh executable not found (install Gmsh and add it to "
+                                     "PATH or set CFD_GMSH)");
+        }
+        return geometry::generate_mesh(spec, config.resolve(config.output.directory) / "mesh",
+                                       gmsh);
+    }
+    case MeshSource::Box:
+        break;
+    }
+    return mesh::make_box_mesh(config.mesh.box);
+}
+
+namespace {
+
+using core::Label;
+
+// u = peak * prod_a 4 s (1 - s) over the patch bounding box.
+std::vector<Vec3> parabolic_profile(const mesh::Mesh& mesh, const mesh::Patch& patch,
+                                    const Vec3& peak, const std::string& axes) {
+    const auto& cf = mesh.face_centres();
+    Vec3 lo = Vec3::Constant(std::numeric_limits<Scalar>::max());
+    Vec3 hi = -lo;
+    for (Label q = 0; q < patch.n_faces; ++q) {
+        for (Label pt : mesh.face(patch.start_face + q)) {
+            const Vec3& x = mesh.points()[static_cast<std::size_t>(pt)];
+            lo = lo.cwiseMin(x);
+            hi = hi.cwiseMax(x);
+        }
+    }
+    std::vector<Vec3> u;
+    u.reserve(static_cast<std::size_t>(patch.n_faces));
+    for (Label q = 0; q < patch.n_faces; ++q) {
+        const Vec3& x = cf[static_cast<std::size_t>(patch.start_face + q)];
+        Scalar shape = 1.0;
+        for (const char a : axes) {
+            const auto d = static_cast<Eigen::Index>(a - 'x');
+            const Scalar extent = hi[d] - lo[d];
+            const Scalar s = extent > 0.0 ? (x[d] - lo[d]) / extent : 0.5;
+            shape *= 4.0 * s * (1.0 - s);
+        }
+        u.push_back(peak * shape);
+    }
+    return u;
+}
+
+} // namespace
+
 CaseRunner::CaseRunner(CaseConfig config) : config_(std::move(config)) {
-    if (config_.mesh.source == MeshSource::Gmsh) {
-        mesh_ = std::make_unique<mesh::Mesh>(mesh::read_gmsh(config_.resolve(config_.mesh.file)));
-    } else {
-        mesh_ = std::make_unique<mesh::Mesh>(mesh::make_box_mesh(config_.mesh.box));
+    mesh_ = std::make_unique<mesh::Mesh>(build_mesh(config_));
+    setup();
+}
+
+CaseRunner::CaseRunner(CaseConfig config, mesh::Mesh mesh)
+    : config_(std::move(config)), mesh_(std::make_unique<mesh::Mesh>(std::move(mesh))) {
+    setup();
+}
+
+void CaseRunner::setup() {
+    for (const auto& name : config_.forces.patches) {
+        if (mesh_->find_patch(name) == nullptr) {
+            throw std::runtime_error("forces: unknown patch '" + name + "'");
+        }
     }
     flow_ = std::make_unique<fv::FlowSolver>(*mesh_, config_.boundaries, config_.solver.flow);
+    for (const auto& [name, profile] : config_.profiles) {
+        const mesh::Patch* patch = mesh_->find_patch(name);
+        const auto bc = config_.boundaries.find(name);
+        if (patch == nullptr || bc == config_.boundaries.end()) {
+            throw std::runtime_error("profile: unknown inlet patch '" + name + "'");
+        }
+        flow_->set_boundary_velocity_profile(
+            name, parabolic_profile(*mesh_, *patch, bc->second.velocity, profile.axes));
+    }
     flow_->set_uniform_velocity(config_.initial.velocity);
     if (config_.turbulence == TurbulenceKind::KOmegaSst) {
         fv::SstSettings sst_settings;
@@ -152,14 +232,46 @@ void CaseRunner::read_checkpoint(const std::filesystem::path& file) {
     time_ = time;
 }
 
+Vec3 CaseRunner::force(const std::string& patch) const {
+    return config_.forces.density * flow_->patch_force(patch).total();
+}
+
 RunResult CaseRunner::run(const ProgressCallback& progress) {
     const std::filesystem::path dir = output_directory();
     std::filesystem::create_directories(dir);
-    std::ofstream log(dir / "residuals.csv", step_ > 0 ? std::ios::app : std::ios::trunc);
+    const auto mode = step_ > 0 ? std::ios::app : std::ios::trunc;
+    std::ofstream log(dir / "residuals.csv", mode);
     if (step_ == 0) {
         log << "step,time,Ux,Uy,Uz,p,k,omega,continuity\n";
     }
     log << std::setprecision(6) << std::scientific;
+    const ForcesConfig& fc = config_.forces;
+    std::ofstream forces_log;
+    if (!fc.patches.empty()) {
+        forces_log.open(dir / "forces.csv", mode);
+        if (step_ == 0) {
+            forces_log << "step,time";
+            for (const auto& name : fc.patches) {
+                for (const char* c : {"Fx", "Fy", "Fz", "Cx", "Cy", "Cz"}) {
+                    forces_log << ',' << name << '_' << c;
+                }
+            }
+            forces_log << '\n';
+        }
+        forces_log << std::setprecision(8) << std::scientific;
+    }
+    const Scalar dynamic_area =
+        0.5 * fc.density * fc.reference_velocity * fc.reference_velocity * fc.reference_area;
+    auto write_forces = [&]() {
+        forces_log << step_ << ',' << time_;
+        for (const auto& name : fc.patches) {
+            const Vec3 f = force(name);
+            forces_log << ',' << f.x() << ',' << f.y() << ',' << f.z() << ','
+                       << f.x() / dynamic_area << ',' << f.y() / dynamic_area << ','
+                       << f.z() / dynamic_area;
+        }
+        forces_log << '\n';
+    };
 
     const SolverConfig& s = config_.solver;
     const OutputConfig& o = config_.output;
@@ -190,6 +302,9 @@ RunResult CaseRunner::run(const ProgressCallback& progress) {
         if (o.checkpoint_interval > 0 && step_ % o.checkpoint_interval == 0) {
             write_checkpoint(dir / "checkpoint.bin");
         }
+        if (!fc.patches.empty() && (o.log_interval <= 0 || step_ % o.log_interval == 0)) {
+            write_forces();
+        }
         const bool keep_going = !progress || progress(step_, time_, r);
         if (steady && r.max() < s.tolerance) {
             result.converged = true;
@@ -204,6 +319,9 @@ RunResult CaseRunner::run(const ProgressCallback& progress) {
         result.converged = true;
     }
 
+    if (!fc.patches.empty() && o.log_interval > 0 && step_ % o.log_interval != 0) {
+        write_forces();
+    }
     result.steps = step_;
     result.time = time_;
     result.result_file = dir / (config_.name + ".vtu");

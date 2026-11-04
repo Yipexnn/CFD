@@ -40,6 +40,13 @@ struct FlowSettings {
     LinearSolverSettings p_solver{LinearSolverType::AmgCg, 1e-10, 0.01, 500};
 };
 
+// Kinematic force (per unit density) exerted by the fluid on a boundary patch.
+struct PatchForce {
+    Vec3 pressure = Vec3::Zero();
+    Vec3 viscous = Vec3::Zero();
+    [[nodiscard]] Vec3 total() const { return pressure + viscous; }
+};
+
 struct Residuals {
     Vec3 u = Vec3::Zero();   // initial normalised residual per velocity component
     Scalar p = 0.0;          // initial normalised pressure residual
@@ -105,6 +112,11 @@ public:
     // Gauss-linear gradients of the current fields.
     [[nodiscard]] std::vector<Eigen::Matrix3d> velocity_gradient() const;
     [[nodiscard]] std::vector<Vec3> pressure_gradient() const;
+
+    // Force on a patch: pressure (linearly extrapolated to the face) plus viscous wall
+    // shear nu_eff * dU/dn. Multiply by the density for the physical force. Throws if the
+    // patch does not exist.
+    [[nodiscard]] PatchForce patch_force(const std::string& patch) const;
 
     // Volume-weighted mean |div(phi)| / total volume.
     [[nodiscard]] Scalar continuity_error() const;

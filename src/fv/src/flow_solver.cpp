@@ -248,6 +248,37 @@ std::vector<Vec3> FlowSolver::pressure_gradient() const {
     return grad;
 }
 
+PatchForce FlowSolver::patch_force(const std::string& patch) const {
+    const Mesh& m = geo_.mesh();
+    const mesh::Patch* pp = m.find_patch(patch);
+    if (pp == nullptr) {
+        throw std::invalid_argument("patch_force: unknown patch '" + patch + "'");
+    }
+    const auto nif = static_cast<std::size_t>(m.n_internal_faces());
+    const auto& sf = m.face_area_vectors();
+    const auto& cf = m.face_centres();
+    const auto& cc = m.cell_centres();
+    const auto& dc = geo_.delta_coeffs();
+    const std::vector<Vec3> grad_p = pressure_gradient();
+    const std::vector<Scalar>* nut_b =
+        turbulence_ != nullptr ? &turbulence_->boundary_nut() : nullptr;
+    PatchForce force;
+    for (Label i = 0; i < pp->n_faces; ++i) {
+        const auto f = static_cast<std::size_t>(pp->start_face + i);
+        const auto o = static_cast<std::size_t>(m.owner()[f]);
+        const BoundaryCondition& c = bc(static_cast<Label>(f - nif));
+        const Scalar p_f = c.kind == FlowBoundary::PressureOutlet
+                               ? c.pressure
+                               : p_[o] + grad_p[o].dot(cf[f] - cc[o]);
+        force.pressure += p_f * sf[f];
+        if (c.kind == FlowBoundary::Wall || c.kind == FlowBoundary::VelocityInlet) {
+            const Scalar nu_f = settings_.nu + (nut_b != nullptr ? (*nut_b)[f - nif] : 0.0);
+            force.viscous += nu_f * dc[f] * (u_[o] - fixed_velocity_[f - nif]);
+        }
+    }
+    return force;
+}
+
 Scalar FlowSolver::continuity_error() const {
     const Mesh& m = geo_.mesh();
     const auto nc = static_cast<std::size_t>(m.n_cells());

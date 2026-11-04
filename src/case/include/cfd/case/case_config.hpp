@@ -3,6 +3,7 @@
 #include <array>
 #include <cfd/fv/flow_solver.hpp>
 #include <cfd/fv/k_omega_sst.hpp>
+#include <cfd/geometry/geometry.hpp>
 #include <cfd/mesh/box_mesher.hpp>
 #include <filesystem>
 #include <map>
@@ -15,14 +16,29 @@ namespace cfd::cases {
 using core::Scalar;
 using core::Vec3;
 
-enum class MeshSource { Box, Gmsh };
+enum class MeshSource { Box, Gmsh, Geometry };
 enum class TurbulenceKind { Laminar, KOmegaSst };
 enum class SolverMode { Steady, Transient };
 
 struct MeshConfig {
     MeshSource source = MeshSource::Box;
-    mesh::BoxSpec box;          // source == Box (patch types from "patches")
-    std::filesystem::path file; // source == Gmsh (relative to the case file)
+    mesh::BoxSpec box;               // source == Box (patch types from "patches")
+    std::filesystem::path file;      // source == Gmsh (relative to the case file)
+    geometry::GeometrySpec geometry; // source == Geometry (body files relative to the case)
+};
+
+// Parabolic velocity-inlet profile: u = velocity * prod_a 4 s_a (1 - s_a), with s_a the
+// normalised coordinate across the patch bounding box along each listed axis.
+struct InletProfile {
+    std::string axes = "y"; // e.g. "y" (2D channel) or "yz" (rectangular duct)
+};
+
+// Force monitor: force on the listed patches, written to forces.csv.
+struct ForcesConfig {
+    std::vector<std::string> patches;
+    Scalar density = 1.0;            // forces = density * kinematic force
+    Scalar reference_velocity = 1.0; // coefficients C = F / (0.5 rho U^2 A)
+    Scalar reference_area = 1.0;
 };
 
 struct InitialConfig {
@@ -53,6 +69,8 @@ struct CaseConfig {
     MeshConfig mesh;
     TurbulenceKind turbulence = TurbulenceKind::Laminar;
     std::map<std::string, fv::BoundaryCondition> boundaries;
+    std::map<std::string, InletProfile> profiles; // patch -> parabolic inlet profile
+    ForcesConfig forces;
     InitialConfig initial;
     SolverConfig solver;
     OutputConfig output;

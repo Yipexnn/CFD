@@ -35,7 +35,7 @@ Top-level keys: `name`, `mesh` (required), `physics`, `boundaries`, `initial`,
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `type` | string | `"box"` | `"box"` (structured hex mesh) or `"gmsh"` (Gmsh 4.1 file). |
+| `type` | string | `"box"` | `"box"` (structured hex mesh), `"gmsh"` (Gmsh 4.1 file) or `"geometry"` (auto meshing with Gmsh, see below). |
 | `file` | string | required for gmsh | Gmsh `.msh` file. Only valid with `type: "gmsh"`. |
 | `cells` | [int, int, int] | `[1, 1, 1]` | Cells per direction, each >= 1. Box only. |
 | `min` | [num, num, num] | `[0, 0, 0]` | Box corner. Box only. |
@@ -44,6 +44,38 @@ Top-level keys: `name`, `mesh` (required), `physics`, `boundaries`, `initial`,
 | `patch_types` | object | all `"wall"` | Keys `xmin`, `xmax`, `ymin`, `ymax`, `zmin`, `zmax`. Values: `wall`, `inlet`, `outlet`, `symmetry`, `patch`. Box only. |
 
 Gmsh meshes accept only `type` and `file`; box meshes accept only the keys above.
+
+### Geometry (auto meshing)
+
+`"type": "geometry"` writes a Gmsh script, runs the Gmsh executable (`CFD_GMSH` or `gmsh` on
+`PATH`) in `<output directory>/mesh` and reads the result.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `min`, `max` | [num, num, num] | `[0,0,0]`, `[1,1,1]` | Flow domain box (external flow). |
+| `bodies` | array | `[]` | Solid bodies subtracted from the box (see below). |
+| `internal` | bool | `false` | Internal flow: the fluid is the single STEP `file` body; its surfaces are `walls` unless a `patches` selector claims them. |
+| `two_d` | bool | `false` | 2D: geometry in the plane z = `min.z`, extruded by one cell layer to `max.z` (use `empty` on the z patches). Box and cylinder bodies only. |
+| `size` | number | `0.05` | Maximum cell size. |
+| `size_near` | number | `0` | Cell size at body surfaces (<= 0: `size`). |
+| `refine_distance` | number | `0` | Distance over which `size_near` grows to `size`. |
+| `boundary_layer` | object | none | `layers`, `first` (first cell height), `ratio` (growth). Quad layers around bodies, 2D only. |
+| `quads` | bool | `true` | 2D: recombine into quads (hex cells after extrusion). |
+| `domain_patches` | object | face names | Patch names of the box faces `xmin` ... `zmax`. Equal names are merged. |
+| `patches` | array | `[]` | `{"name", "min", "max"}`: every boundary surface inside the box gets this patch name. |
+
+Bodies:
+
+| `type` | Keys |
+|---|---|
+| `box` | `min`, `max` |
+| `cylinder` | `base` (centre of the base), `axis` (vector, its length = height; default `[0,0,1]`; 2D: disk at `base`), `radius` |
+| `sphere` | `centre`, `radius` |
+| `file` | `file`: `.stl` (closed triangulation) or `.step`/`.stp`, relative to the case file |
+
+Every body has `patch` (default `"obstacle"`); body patches are walls by default. Patch types of
+other patches follow their names (`inlet*`, `outlet*`, `wall*`, `sym*`), otherwise an entry in
+`boundaries` is required.
 
 ## Physics
 
@@ -64,6 +96,8 @@ Object keyed by patch name (`xmin` ... `zmax`). Each entry is an object with:
 | `pressure` | number | `0` | Outlet kinematic pressure (p / rho). |
 | `turbulence_intensity` | number | `0.05` | Inlet turbulence: k = 1.5 (I \|U\|)^2. |
 | `viscosity_ratio` | number | `10` | Inlet turbulence: nu_t / nu. |
+| `profile` | string | `"uniform"` | Velocity inlet: `"parabolic"` = `velocity` * prod 4 s (1 - s) over the patch extent (peak = `velocity`). |
+| `profile_axes` | string | `"y"` | Axes of the parabolic profile, e.g. `"y"` (2D channel) or `"yz"` (rectangular duct). |
 
 Patches without an entry get a default from their patch type:
 
@@ -117,7 +151,21 @@ Written to `output.directory`:
 - `<name>_<step>.vtu`: intermediate results (`write_interval > 0`).
 - `<name>.vtu`: final result (cell data U, p and, with SST, k, omega, nut, yPlus).
 - `residuals.csv`: step, time, Ux, Uy, Uz, p, k, omega, continuity.
+- `forces.csv`: step, time and per force patch Fx, Fy, Fz, Cx, Cy, Cz.
+- `mesh/`: Gmsh script, mesh and log (geometry meshes).
 - `checkpoint.bin`: restart file (fields, face flux, step and time).
+
+## Forces
+
+Optional top-level object; forces on the listed patches are written to `forces.csv`
+(every `log_interval` steps and at the end).
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `patches` | [string] | required | Patches to integrate (pressure + viscous). |
+| `density` | number | `1` | Force = density * kinematic force. |
+| `reference_velocity` | number | `1` | Coefficients C = F / (0.5 rho U^2 A). |
+| `reference_area` | number | `1` | Reference area A (2D: diameter * depth). |
 
 ## Restart
 

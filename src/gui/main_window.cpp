@@ -22,6 +22,7 @@
 #include <QStatusBar>
 #include <QToolBar>
 #include <QVBoxLayout>
+#include <cfd/case/case_runner.hpp>
 #include <cfd/core/version.hpp>
 #include <cfd/mesh/box_mesher.hpp>
 #include <cfd/mesh/gmsh_reader.hpp>
@@ -297,11 +298,20 @@ bool MainWindow::generate_mesh() {
     }
     try {
         const cases::CaseConfig c = current_config();
-        if (c.mesh.source == cases::MeshSource::Gmsh) {
-            mesh_ = std::make_unique<mesh::Mesh>(mesh::read_gmsh(c.resolve(c.mesh.file)));
-        } else {
-            mesh_ = std::make_unique<mesh::Mesh>(mesh::make_box_mesh(c.mesh.box));
+        if (c.mesh.source == cases::MeshSource::Geometry) {
+            log("Meshing with Gmsh...");
+            QApplication::setOverrideCursor(Qt::WaitCursor);
+            QApplication::processEvents();
         }
+        struct CursorGuard {
+            bool active;
+            ~CursorGuard() {
+                if (active) {
+                    QApplication::restoreOverrideCursor();
+                }
+            }
+        } guard{c.mesh.source == cases::MeshSource::Geometry};
+        mesh_ = std::make_unique<mesh::Mesh>(cases::build_mesh(c));
         editor_->set_patches(patches_of(*mesh_));
         view_->set_mesh(*mesh_);
         view_->set_title(QString("Mesh: %1 cells, %2 patches")
@@ -331,7 +341,8 @@ void MainWindow::start_run() {
     log(QString("Starting %1 run")
             .arg(c.solver.mode == cases::SolverMode::Steady ? "steady" : "transient"));
     SolverWorker* w = worker_;
-    QMetaObject::invokeMethod(w, [w, c] { w->run(c); }, Qt::QueuedConnection);
+    std::shared_ptr<const mesh::Mesh> mesh = std::make_shared<const mesh::Mesh>(*mesh_);
+    QMetaObject::invokeMethod(w, [w, c, mesh] { w->run(c, mesh); }, Qt::QueuedConnection);
 }
 
 void MainWindow::stop_run() {

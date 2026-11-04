@@ -34,6 +34,15 @@ const Patch* Mesh::find_patch(const std::string& name) const {
     return it == patches_.end() ? nullptr : &*it;
 }
 
+void Mesh::set_patch_type(const std::string& name, PatchType type) {
+    const auto it = std::find_if(patches_.begin(), patches_.end(),
+                                 [&](const Patch& p) { return p.name == name; });
+    if (it == patches_.end()) {
+        throw std::invalid_argument("Mesh: unknown patch '" + name + "'");
+    }
+    it->type = type;
+}
+
 void Mesh::validate() const {
     const Label nf = n_faces();
     if (face_point_offsets_.size() != static_cast<std::size_t>(nf) + 1 ||

@@ -397,6 +397,23 @@ std::string quote_arg(const std::string& s) {
     return "\"" + s + "\"";
 }
 
+// Environment variable or empty (MSVC deprecates std::getenv).
+std::string env_var(const char* name) {
+#ifdef _MSC_VER
+    char* buffer = nullptr;
+    std::size_t size = 0;
+    if (_dupenv_s(&buffer, &size, name) != 0 || buffer == nullptr) {
+        return {};
+    }
+    std::string value(buffer);
+    std::free(buffer);
+    return value;
+#else
+    const char* value = std::getenv(name);
+    return value != nullptr ? value : "";
+#endif
+}
+
 std::string read_tail(const std::filesystem::path& file, std::size_t max_chars) {
     std::ifstream in(file);
     std::stringstream ss;
@@ -412,7 +429,7 @@ std::string write_geo(const GeometrySpec& spec) {
 }
 
 std::string find_gmsh() {
-    if (const char* env = std::getenv("CFD_GMSH"); env != nullptr && *env != '\0') {
+    if (std::string env = env_var("CFD_GMSH"); !env.empty()) {
         return env;
     }
 #ifdef _WIN32
@@ -422,11 +439,7 @@ std::string find_gmsh() {
     const char sep = ':';
     const char* names[] = {"gmsh"};
 #endif
-    const char* path = std::getenv("PATH");
-    if (path == nullptr) {
-        return {};
-    }
-    std::stringstream ss(path);
+    std::stringstream ss(env_var("PATH"));
     std::string dir;
     while (std::getline(ss, dir, sep)) {
         for (const char* n : names) {
@@ -470,7 +483,15 @@ mesh::Mesh generate_mesh(const GeometrySpec& spec, const std::filesystem::path& 
         throw std::runtime_error("Gmsh failed (exit code " + std::to_string(rc) + "):\n" +
                                  read_tail(log, 2000));
     }
-    return mesh::read_gmsh(msh);
+    mesh::Mesh mesh = mesh::read_gmsh(msh);
+    // Body surfaces are no-slip walls unless the name says otherwise.
+    for (const Body& body : spec.bodies) {
+        const mesh::Patch* patch = mesh.find_patch(body.patch);
+        if (patch != nullptr && patch->type == mesh::PatchType::Patch) {
+            mesh.set_patch_type(body.patch, mesh::PatchType::Wall);
+        }
+    }
+    return mesh;
 }
 
 } // namespace cfd::geometry

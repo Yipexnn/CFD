@@ -30,11 +30,13 @@ void SolverWorker::take_snapshot(const cases::CaseRunner& runner) {
     emit snapshot_ready();
 }
 
-void SolverWorker::run(const cases::CaseConfig& config) {
+void SolverWorker::run(const cases::CaseConfig& config,
+                       const std::shared_ptr<const mesh::Mesh>& mesh) {
     stop_requested_ = false;
     running_ = true;
     try {
-        cases::CaseRunner runner(config);
+        cases::CaseRunner runner =
+            mesh ? cases::CaseRunner(config, *mesh) : cases::CaseRunner(config);
         emit started(runner.mesh().n_cells());
         auto last = std::chrono::steady_clock::now();
         auto last_progress = last - std::chrono::seconds(1);

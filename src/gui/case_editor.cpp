@@ -1,5 +1,6 @@
 #include "case_editor.hpp"
 
+#include <QCheckBox>
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QDoubleValidator>
@@ -168,6 +169,36 @@ fv::BoundaryCondition default_boundary(mesh::PatchType type) {
     return bc;
 }
 
+constexpr std::array<const char*, 4> kBodyTypeNames{"box", "cylinder", "sphere", "file"};
+constexpr std::array<geometry::Body::Kind, 4> kBodyKinds{
+    geometry::Body::Kind::Box, geometry::Body::Kind::Cylinder, geometry::Body::Kind::Sphere,
+    geometry::Body::Kind::File};
+enum BodyColumn { kBodyType, kBodyA, kBodyB, kBodyRadius, kBodyFile, kBodyPatch, kBodyColumns };
+
+QString vec_text(const core::Vec3& v) {
+    return QStringLiteral("%1 %2 %3")
+        .arg(v.x(), 0, 'g', 12)
+        .arg(v.y(), 0, 'g', 12)
+        .arg(v.z(), 0, 'g', 12);
+}
+
+// "x y z" or "x, y, z"; missing or invalid components are 0.
+core::Vec3 parse_vec_text(const QString& text) {
+    QString t = text;
+    t.replace(QLatin1Char(','), QLatin1Char(' '));
+    const QStringList parts = t.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+    core::Vec3 v = core::Vec3::Zero();
+    for (int i = 0; i < 3 && i < parts.size(); ++i) {
+        v[i] = QLocale::c().toDouble(parts[i]);
+    }
+    return v;
+}
+
+QString table_text(const QTableWidget* table, int row, int col) {
+    const QTableWidgetItem* item = table->item(row, col);
+    return item != nullptr ? item->text().trimmed() : QString();
+}
+
 double table_double(const QTableWidget* table, int row, int col, double fallback) {
     const auto* spin = qobject_cast<QDoubleSpinBox*>(table->cellWidget(row, col));
     return spin ? spin->value() : fallback;
@@ -197,6 +228,7 @@ QWidget* CaseEditor::build_mesh_tab() {
     source_combo_ = new QComboBox(page);
     source_combo_->addItem(QStringLiteral("Box"));
     source_combo_->addItem(QStringLiteral("Gmsh file"));
+    source_combo_->addItem(QStringLiteral("Geometry (Gmsh auto mesh)"));
     auto* form = new QFormLayout;
     form->addRow(QStringLiteral("Source"), source_combo_);
     layout->addLayout(form);
@@ -277,6 +309,8 @@ QWidget* CaseEditor::build_mesh_tab() {
             gmsh_path_->setText(file);
         }
     });
+
+    mesh_stack_->addWidget(build_geometry_page(mesh_stack_));
 
     layout->addStretch();
     return page;
@@ -416,7 +450,10 @@ void CaseEditor::set_config(const cases::CaseConfig& cfg) {
     const mesh::BoxSpec& box = config_.mesh.box;
 
     // Mesh.
-    source_combo_->setCurrentIndex(config_.mesh.source == cases::MeshSource::Gmsh ? 1 : 0);
+    source_combo_->setCurrentIndex(config_.mesh.source == cases::MeshSource::Gmsh       ? 1
+                                   : config_.mesh.source == cases::MeshSource::Geometry ? 2
+                                                                                        : 0);
+    set_geometry(config_.mesh.geometry);
     cells_[0]->setValue(box.nx);
     cells_[1]->setValue(box.ny);
     cells_[2]->setValue(box.nz);
@@ -473,9 +510,12 @@ cases::CaseConfig CaseEditor::config() const {
     cases::CaseConfig cfg = config_;
 
     // Mesh.
-    cfg.mesh.source =
-        source_combo_->currentIndex() == 1 ? cases::MeshSource::Gmsh : cases::MeshSource::Box;
+    const int source = source_combo_->currentIndex();
+    cfg.mesh.source = source == 1   ? cases::MeshSource::Gmsh
+                      : source == 2 ? cases::MeshSource::Geometry
+                                    : cases::MeshSource::Box;
     cfg.mesh.file = to_path(gmsh_path_->text());
+    read_geometry(cfg.mesh.geometry);
     mesh::BoxSpec& box = cfg.mesh.box;
     box.nx = cells_[0]->value();
     box.ny = cells_[1]->value();
@@ -644,6 +684,193 @@ void CaseEditor::watch(QSpinBox* widget, bool mesh) {
 void CaseEditor::watch(QComboBox* widget, bool mesh) {
     connect(widget, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
             [this, mesh](int) { notify(mesh); });
+}
+
+void CaseEditor::watch(QCheckBox* widget, bool mesh) {
+    connect(widget, &QCheckBox::toggled, this, [this, mesh](bool) { notify(mesh); });
+}
+
+QWidget* CaseEditor::build_geometry_page(QWidget* parent) {
+    auto* page = new QWidget(parent);
+    auto* layout = new QVBoxLayout(page);
+
+    auto* domain = new QGroupBox(QStringLiteral("Domain"), page);
+    auto* domain_form = new QFormLayout(domain);
+    domain_form->addRow(QStringLiteral("Min"), make_vec_row(domain, geo_min_, -1e9, 1e9, 6));
+    domain_form->addRow(QStringLiteral("Max"), make_vec_row(domain, geo_max_, -1e9, 1e9, 6));
+    geo_two_d_ = new QCheckBox(QStringLiteral("2D (one extruded cell layer in z)"), domain);
+    geo_internal_ = new QCheckBox(QStringLiteral("Internal flow (fluid = STEP body)"), domain);
+    domain_form->addRow(geo_two_d_);
+    domain_form->addRow(geo_internal_);
+    layout->addWidget(domain);
+    for (std::size_t i = 0; i < 3; ++i) {
+        watch(geo_min_[i], true);
+        watch(geo_max_[i], true);
+    }
+    watch(geo_two_d_, true);
+    watch(geo_internal_, true);
+
+    auto* bodies = new QGroupBox(QStringLiteral("Bodies"), page);
+    auto* bodies_layout = new QVBoxLayout(bodies);
+    bodies_table_ = new QTableWidget(0, kBodyColumns, bodies);
+    bodies_table_->setHorizontalHeaderLabels(QStringList{
+        QStringLiteral("type"), QStringLiteral("min / base / centre"), QStringLiteral("max / axis"),
+        QStringLiteral("radius"), QStringLiteral("file"), QStringLiteral("patch")});
+    bodies_table_->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
+    bodies_table_->setMinimumHeight(120);
+    bodies_layout->addWidget(bodies_table_);
+    connect(bodies_table_, &QTableWidget::itemChanged, this,
+            [this](QTableWidgetItem*) { notify(true); });
+    auto* buttons = new QHBoxLayout;
+    auto* add = new QPushButton(QStringLiteral("Add primitive"), bodies);
+    auto* add_file = new QPushButton(QStringLiteral("Add STL/STEP..."), bodies);
+    auto* remove = new QPushButton(QStringLiteral("Remove"), bodies);
+    buttons->addWidget(add);
+    buttons->addWidget(add_file);
+    buttons->addWidget(remove);
+    bodies_layout->addLayout(buttons);
+    layout->addWidget(bodies);
+    connect(add, &QPushButton::clicked, this, [this] {
+        geometry::Body body;
+        body.kind = geometry::Body::Kind::Cylinder;
+        const core::Vec3 lo = get_vec(geo_min_);
+        const core::Vec3 hi = get_vec(geo_max_);
+        body.a = 0.5 * (lo + hi);
+        body.b = core::Vec3(0, 0, hi.z() - lo.z());
+        body.a.z() = lo.z();
+        body.radius = 0.1 * (hi - lo).head<2>().minCoeff();
+        add_body_row(body);
+        notify(true);
+    });
+    connect(add_file, &QPushButton::clicked, this, [this] {
+        const QString file =
+            QFileDialog::getOpenFileName(this, QStringLiteral("Select CAD geometry"), QString(),
+                                         QStringLiteral("CAD geometry (*.stl *.step *.stp)"));
+        if (!file.isEmpty()) {
+            geometry::Body body;
+            body.kind = geometry::Body::Kind::File;
+            body.file = to_path(file);
+            add_body_row(body);
+            notify(true);
+        }
+    });
+    connect(remove, &QPushButton::clicked, this, [this] {
+        const int row = bodies_table_->currentRow();
+        if (row >= 0) {
+            bodies_table_->removeRow(row);
+            notify(true);
+        }
+    });
+
+    auto* sizes = new QGroupBox(QStringLiteral("Mesh size"), page);
+    auto* sizes_form = new QFormLayout(sizes);
+    geo_size_ = make_number_edit(sizes, 1e-12, 1e12, 0.05);
+    geo_size_near_ = make_number_edit(sizes, 0.0, 1e12, 0.0);
+    geo_refine_ = make_number_edit(sizes, 0.0, 1e12, 0.0);
+    geo_bl_layers_ = make_int(sizes, 0, 100, 0);
+    geo_bl_first_ = make_number_edit(sizes, 0.0, 1e12, 0.0);
+    geo_bl_ratio_ = make_number_edit(sizes, 1.0, 10.0, 1.2);
+    geo_quads_ = new QCheckBox(QStringLiteral("Quads / hexes (2D)"), sizes);
+    sizes_form->addRow(QStringLiteral("Cell size"), geo_size_);
+    sizes_form->addRow(QStringLiteral("Size at bodies"), geo_size_near_);
+    sizes_form->addRow(QStringLiteral("Refinement distance"), geo_refine_);
+    sizes_form->addRow(QStringLiteral("Boundary layers (2D)"), geo_bl_layers_);
+    sizes_form->addRow(QStringLiteral("First layer height"), geo_bl_first_);
+    sizes_form->addRow(QStringLiteral("Growth ratio"), geo_bl_ratio_);
+    sizes_form->addRow(geo_quads_);
+    layout->addWidget(sizes);
+    for (QLineEdit* e : {geo_size_, geo_size_near_, geo_refine_, geo_bl_first_, geo_bl_ratio_}) {
+        watch(e, true);
+    }
+    watch(geo_bl_layers_, true);
+    watch(geo_quads_, true);
+
+    auto* names = new QGroupBox(QStringLiteral("Domain patch names"), page);
+    auto* names_form = new QFormLayout(names);
+    const std::array<const char*, 6> faces{"xmin", "xmax", "ymin", "ymax", "zmin", "zmax"};
+    for (std::size_t i = 0; i < faces.size(); ++i) {
+        geo_patch_names_[i] = new QLineEdit(names);
+        names_form->addRow(QString::fromLatin1(faces[i]), geo_patch_names_[i]);
+        watch(geo_patch_names_[i], true);
+    }
+    layout->addWidget(names);
+    layout->addStretch();
+    return page;
+}
+
+void CaseEditor::add_body_row(const geometry::Body& body) {
+    const UpdateScope scope(updating_);
+    const int row = bodies_table_->rowCount();
+    bodies_table_->insertRow(row);
+    auto* type = new QComboBox(bodies_table_);
+    add_items(type, kBodyTypeNames);
+    type->setCurrentIndex(index_of(kBodyKinds, body.kind));
+    bodies_table_->setCellWidget(row, kBodyType, type);
+    watch(type, true);
+    bodies_table_->setItem(row, kBodyA, new QTableWidgetItem(vec_text(body.a)));
+    bodies_table_->setItem(row, kBodyB, new QTableWidgetItem(vec_text(body.b)));
+    bodies_table_->setItem(row, kBodyRadius,
+                           new QTableWidgetItem(QString::number(body.radius, 'g', 12)));
+    bodies_table_->setItem(row, kBodyFile, new QTableWidgetItem(to_qstring(body.file)));
+    bodies_table_->setItem(row, kBodyPatch,
+                           new QTableWidgetItem(QString::fromStdString(body.patch)));
+}
+
+void CaseEditor::set_geometry(const geometry::GeometrySpec& spec) {
+    const UpdateScope scope(updating_);
+    set_vec(geo_min_, spec.domain_min);
+    set_vec(geo_max_, spec.domain_max);
+    geo_two_d_->setChecked(spec.two_d);
+    geo_internal_->setChecked(spec.internal);
+    geo_quads_->setChecked(spec.quads);
+    geo_size_->setText(QString::number(spec.size, 'g', 12));
+    geo_size_near_->setText(QString::number(spec.size_near, 'g', 12));
+    geo_refine_->setText(QString::number(spec.refine_distance, 'g', 12));
+    geo_bl_layers_->setValue(spec.bl_layers);
+    geo_bl_first_->setText(QString::number(spec.bl_first, 'g', 12));
+    geo_bl_ratio_->setText(QString::number(spec.bl_ratio, 'g', 12));
+    for (std::size_t i = 0; i < geo_patch_names_.size(); ++i) {
+        geo_patch_names_[i]->setText(QString::fromStdString(spec.domain_patch_names[i]));
+    }
+    bodies_table_->setRowCount(0);
+    for (const geometry::Body& body : spec.bodies) {
+        add_body_row(body);
+    }
+}
+
+void CaseEditor::read_geometry(geometry::GeometrySpec& spec) const {
+    spec.domain_min = get_vec(geo_min_);
+    spec.domain_max = get_vec(geo_max_);
+    spec.two_d = geo_two_d_->isChecked();
+    spec.internal = geo_internal_->isChecked();
+    spec.quads = geo_quads_->isChecked();
+    spec.size = parse_or(geo_size_, spec.size);
+    spec.size_near = parse_or(geo_size_near_, spec.size_near);
+    spec.refine_distance = parse_or(geo_refine_, spec.refine_distance);
+    spec.bl_layers = geo_bl_layers_->value();
+    spec.bl_first = parse_or(geo_bl_first_, spec.bl_first);
+    spec.bl_ratio = parse_or(geo_bl_ratio_, spec.bl_ratio);
+    for (std::size_t i = 0; i < geo_patch_names_.size(); ++i) {
+        const QString name = geo_patch_names_[i]->text().trimmed();
+        if (!name.isEmpty()) {
+            spec.domain_patch_names[i] = name.toStdString();
+        }
+    }
+    spec.bodies.clear();
+    for (int row = 0; row < bodies_table_->rowCount(); ++row) {
+        geometry::Body body;
+        const auto* type = qobject_cast<QComboBox*>(bodies_table_->cellWidget(row, kBodyType));
+        body.kind = type != nullptr ? kBodyKinds[current_index(type)] : body.kind;
+        body.a = parse_vec_text(table_text(bodies_table_, row, kBodyA));
+        body.b = parse_vec_text(table_text(bodies_table_, row, kBodyB));
+        body.radius = QLocale::c().toDouble(table_text(bodies_table_, row, kBodyRadius));
+        body.file = to_path(table_text(bodies_table_, row, kBodyFile));
+        const QString patch = table_text(bodies_table_, row, kBodyPatch);
+        if (!patch.isEmpty()) {
+            body.patch = patch.toStdString();
+        }
+        spec.bodies.push_back(body);
+    }
 }
 
 void CaseEditor::watch(QLineEdit* widget, bool mesh) {

@@ -6,7 +6,7 @@ See [PLAN.md](PLAN.md) and [Phase 0 details](docs/phase0.md).
 
 ## Status
 
-Phases 0–4 done: mesh core, laminar solver (SIMPLE/PISO), k-ω SST turbulence, JSON case files with VTU output and restart. Next: GUI (Phase 5).
+Phases 0–6 done: mesh core, laminar solver (SIMPLE/PISO), k-ω SST turbulence, JSON case files with VTU output and restart, AMG pressure solver, desktop GUI, geometry import and auto meshing (Gmsh) with force coefficients.
 
 ## Windows setup (CLion)
 
@@ -55,10 +55,19 @@ ctest --preset <preset>
 - On Linux, use the `linux-gcc-*` presets.
 - `VCPKG_ROOT` must be set.
 
+## Gmsh (geometry import / auto meshing)
+
+Cases with `"mesh": {"type": "geometry", ...}` (primitives, STL, STEP) are meshed by the
+Gmsh executable:
+- Windows: download the Gmsh SDK/zip from https://gmsh.info, unpack it and either add the folder
+  with `gmsh.exe` to `PATH` or set `CFD_GMSH=C:\path\to\gmsh.exe` (restart CLion / the GUI).
+- Linux: `sudo apt install gmsh`.
+
 ## Usage
 
 ```sh
 cfd run examples/cavity.json        # run a case file (see docs/case_format.md)
+cfd run examples/cylinder_2d.json   # cylinder benchmark (needs Gmsh), forces in forces.csv
 cfd mesh-box 10 10 10               # create a box mesh and print statistics
 cfd check-mesh mesh.msh             # check a Gmsh 4.1 mesh
 cfd run-cavity 32 100               # quick lid-driven cavity demo
@@ -92,6 +101,7 @@ Scriptable options (also used by CI): `cfd_gui case.json --run --show slice,vect
 - `src/case` – case files and runner
 - `src/fv` – finite-volume solver
 - `src/mesh` – mesh, Gmsh reader, VTU writer
+- `src/geometry` – geometry (primitives, STL/STEP) → Gmsh auto meshing
 - `validation` – benchmark programs
 - `tests` – unit tests
 - `cmake` – CMake helper modules

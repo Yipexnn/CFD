@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+class QCheckBox;
 class QComboBox;
 class QDoubleSpinBox;
 class QLineEdit;
@@ -66,6 +67,12 @@ private:
     void watch(QSpinBox* widget, bool mesh);
     void watch(QComboBox* widget, bool mesh);
     void watch(QLineEdit* widget, bool mesh);
+    void watch(QCheckBox* widget, bool mesh);
+
+    [[nodiscard]] QWidget* build_geometry_page(QWidget* parent);
+    void add_body_row(const geometry::Body& body);
+    void set_geometry(const geometry::GeometrySpec& spec);
+    void read_geometry(geometry::GeometrySpec& spec) const;
 
     // Mesh tab.
     QComboBox* source_combo_ = nullptr;
@@ -77,6 +84,20 @@ private:
     QTableWidget* box_table_ = nullptr;
     std::array<QComboBox*, 6> box_type_combos_{};
     QLineEdit* gmsh_path_ = nullptr;
+    // Geometry page (Gmsh auto meshing).
+    std::array<QDoubleSpinBox*, 3> geo_min_{};
+    std::array<QDoubleSpinBox*, 3> geo_max_{};
+    QCheckBox* geo_two_d_ = nullptr;
+    QCheckBox* geo_internal_ = nullptr;
+    QCheckBox* geo_quads_ = nullptr;
+    QLineEdit* geo_size_ = nullptr;
+    QLineEdit* geo_size_near_ = nullptr;
+    QLineEdit* geo_refine_ = nullptr;
+    QSpinBox* geo_bl_layers_ = nullptr;
+    QLineEdit* geo_bl_first_ = nullptr;
+    QLineEdit* geo_bl_ratio_ = nullptr;
+    std::array<QLineEdit*, 6> geo_patch_names_{};
+    QTableWidget* bodies_table_ = nullptr;
 
     // Physics tab.
     QDoubleSpinBox* nu_ = nullptr;

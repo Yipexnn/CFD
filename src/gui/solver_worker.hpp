@@ -36,7 +36,9 @@ public:
     void set_snapshot_interval(std::chrono::milliseconds interval) { interval_ = interval; }
 
 public slots:
-    void run(const cfd::cases::CaseConfig& config);
+    // mesh: pre-built case mesh (e.g. the preview), or nullptr to build it from the config.
+    void run(const cfd::cases::CaseConfig& config,
+             const std::shared_ptr<const cfd::mesh::Mesh>& mesh = nullptr);
 
 signals:
     void started(int n_cells);

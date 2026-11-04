@@ -45,6 +45,8 @@ public:
     [[nodiscard]] const std::vector<Label>& neighbour() const { return neighbour_; }
     [[nodiscard]] const std::vector<Patch>& patches() const { return patches_; }
     [[nodiscard]] const Patch* find_patch(const std::string& name) const;
+    // Changes the type of a patch (geometry is unaffected). Throws if the name is unknown.
+    void set_patch_type(const std::string& name, PatchType type);
 
     // Geometry (computed in the constructor).
     [[nodiscard]] const std::vector<Vec3>& face_centres() const { return face_centres_; }

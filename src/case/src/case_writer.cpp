@@ -1,3 +1,4 @@
+#include <array>
 #include <cfd/case/case_config.hpp>
 #include <fstream>
 #include <nlohmann/json.hpp>
@@ -57,8 +58,70 @@ const char* convection_name(fv::ConvectionScheme s) {
     return "linear_upwind";
 }
 
+ordered_json body_json(const geometry::Body& b) {
+    ordered_json j = ordered_json::object();
+    switch (b.kind) {
+    case geometry::Body::Kind::Box:
+        j["type"] = "box";
+        j["min"] = vec3_json(b.a);
+        j["max"] = vec3_json(b.b);
+        break;
+    case geometry::Body::Kind::Cylinder:
+        j["type"] = "cylinder";
+        j["base"] = vec3_json(b.a);
+        j["axis"] = vec3_json(b.b);
+        j["radius"] = b.radius;
+        break;
+    case geometry::Body::Kind::Sphere:
+        j["type"] = "sphere";
+        j["centre"] = vec3_json(b.a);
+        j["radius"] = b.radius;
+        break;
+    case geometry::Body::Kind::File:
+        j["type"] = "file";
+        j["file"] = b.file.generic_string();
+        break;
+    }
+    j["patch"] = b.patch;
+    return j;
+}
+
+ordered_json geometry_json(const geometry::GeometrySpec& g) {
+    ordered_json j = ordered_json::object();
+    j["type"] = "geometry";
+    j["min"] = vec3_json(g.domain_min);
+    j["max"] = vec3_json(g.domain_max);
+    ordered_json bodies = ordered_json::array();
+    for (const auto& b : g.bodies) {
+        bodies.push_back(body_json(b));
+    }
+    j["bodies"] = bodies;
+    j["internal"] = g.internal;
+    j["two_d"] = g.two_d;
+    j["size"] = g.size;
+    j["size_near"] = g.size_near;
+    j["refine_distance"] = g.refine_distance;
+    j["boundary_layer"] = {{"layers", g.bl_layers}, {"first", g.bl_first}, {"ratio", g.bl_ratio}};
+    j["quads"] = g.quads;
+    const std::array<const char*, 6> faces{"xmin", "xmax", "ymin", "ymax", "zmin", "zmax"};
+    ordered_json dp = ordered_json::object();
+    for (std::size_t i = 0; i < faces.size(); ++i) {
+        dp[faces[i]] = g.domain_patch_names[i];
+    }
+    j["domain_patches"] = dp;
+    ordered_json patches = ordered_json::array();
+    for (const auto& p : g.patches) {
+        patches.push_back({{"name", p.name}, {"min", vec3_json(p.min)}, {"max", vec3_json(p.max)}});
+    }
+    j["patches"] = patches;
+    return j;
+}
+
 ordered_json mesh_json(const MeshConfig& m) {
     ordered_json j = ordered_json::object();
+    if (m.source == MeshSource::Geometry) {
+        return geometry_json(m.geometry);
+    }
     if (m.source == MeshSource::Gmsh) {
         j["type"] = "gmsh";
         j["file"] = m.file.generic_string();
@@ -78,7 +141,8 @@ ordered_json mesh_json(const MeshConfig& m) {
     return j;
 }
 
-ordered_json boundaries_json(const std::map<std::string, fv::BoundaryCondition>& boundaries) {
+ordered_json boundaries_json(const std::map<std::string, fv::BoundaryCondition>& boundaries,
+                             const std::map<std::string, InletProfile>& profiles) {
     ordered_json j = ordered_json::object();
     for (const auto& [name, bc] : boundaries) {
         ordered_json b = ordered_json::object();
@@ -87,6 +151,11 @@ ordered_json boundaries_json(const std::map<std::string, fv::BoundaryCondition>&
         b["pressure"] = bc.pressure;
         b["turbulence_intensity"] = bc.turbulence_intensity;
         b["viscosity_ratio"] = bc.viscosity_ratio;
+        if (const auto it = profiles.find(name);
+            it != profiles.end() && bc.kind == fv::FlowBoundary::VelocityInlet) {
+            b["profile"] = "parabolic";
+            b["profile_axes"] = it->second.axes;
+        }
         j[name] = b;
     }
     return j;
@@ -107,7 +176,7 @@ std::string case_to_json(const CaseConfig& config) {
         config.turbulence == TurbulenceKind::KOmegaSst ? "kOmegaSST" : "laminar";
     root["physics"] = physics;
 
-    root["boundaries"] = boundaries_json(config.boundaries);
+    root["boundaries"] = boundaries_json(config.boundaries, config.profiles);
 
     ordered_json initial = ordered_json::object();
     initial["velocity"] = vec3_json(config.initial.velocity);
@@ -135,6 +204,15 @@ std::string case_to_json(const CaseConfig& config) {
     output["log_interval"] = config.output.log_interval;
     output["checkpoint_interval"] = config.output.checkpoint_interval;
     root["output"] = output;
+
+    if (!config.forces.patches.empty()) {
+        ordered_json forces = ordered_json::object();
+        forces["patches"] = config.forces.patches;
+        forces["density"] = config.forces.density;
+        forces["reference_velocity"] = config.forces.reference_velocity;
+        forces["reference_area"] = config.forces.reference_area;
+        root["forces"] = forces;
+    }
 
     if (config.restart) {
         root["restart"] = config.restart->generic_string();
