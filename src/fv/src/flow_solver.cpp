@@ -122,6 +122,13 @@ Scalar FlowSolver::boundary_pressure(Label face) const {
     return p_[static_cast<std::size_t>(m.owner()[static_cast<std::size_t>(face)])];
 }
 
+void FlowSolver::set_cell_acceleration(std::vector<Vec3> acceleration) {
+    if (!acceleration.empty() && acceleration.size() != u_.size()) {
+        throw std::invalid_argument("FlowSolver::set_cell_acceleration: size mismatch");
+    }
+    cell_acceleration_ = std::move(acceleration);
+}
+
 void FlowSolver::set_uniform_velocity(const Vec3& u) {
     std::fill(u_.begin(), u_.end(), u);
     u_old_ = u_;
@@ -451,6 +458,9 @@ void FlowSolver::assemble_momentum(MomentumSystem& sys, Scalar dt, bool relax) c
 
     for (std::size_t c = 0; c < nc; ++c) {
         sys.source[c] += settings_.body_force * vol[c];
+        if (!cell_acceleration_.empty()) {
+            sys.source[c] += cell_acceleration_[c] * vol[c];
+        }
         if (dt > 0.0) {
             const Scalar ddt = vol[c] / dt;
             a.diag[c] += ddt;

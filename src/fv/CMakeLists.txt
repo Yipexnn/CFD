@@ -6,6 +6,7 @@ add_library(cfd_fv STATIC
     src/scalar_transport.cpp
     src/wall_distance.cpp
     src/k_omega_sst.cpp
+    src/energy.cpp
 )
 add_library(cfd::fv ALIAS cfd_fv)
 

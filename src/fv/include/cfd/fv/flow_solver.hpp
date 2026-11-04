@@ -53,8 +53,9 @@ struct Residuals {
     Scalar continuity = 0.0; // volume-weighted |div(phi)| / total volume
     Scalar k = 0.0;          // turbulence equations (0 for laminar)
     Scalar omega = 0.0;
+    Scalar t = 0.0; // energy equation (0 without)
 
-    [[nodiscard]] Scalar max() const { return std::max({u.maxCoeff(), p, k, omega}); }
+    [[nodiscard]] Scalar max() const { return std::max({u.maxCoeff(), p, k, omega, t}); }
 };
 
 // Incompressible laminar Navier-Stokes solver (collocated FV, SIMPLE / PISO).
@@ -81,6 +82,10 @@ public:
     Residuals piso_step(Scalar dt);
 
     void set_uniform_velocity(const Vec3& u);
+
+    // Additional acceleration per cell [m/s^2] (e.g. Boussinesq buoyancy), added to the
+    // uniform body force. Empty clears it; otherwise the size must be the cell count.
+    void set_cell_acceleration(std::vector<Vec3> acceleration);
 
     // Per-face velocity for a velocity-inlet or wall patch (e.g. a parabolic inlet
     // profile); values are ordered like the patch faces. Throws on size mismatch.
@@ -142,6 +147,7 @@ private:
 
     FvGeometry geo_;
     FlowSettings settings_;
+    std::vector<Vec3> cell_acceleration_;
     std::vector<BoundaryCondition> patch_bcs_;
     std::vector<Vec3> fixed_velocity_; // per boundary face: inlet / wall velocity
     bool has_fixed_pressure_ = false;

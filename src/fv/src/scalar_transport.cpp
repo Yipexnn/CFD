@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <cfd/fv/scalar_transport.hpp>
+#include <cmath>
 #include <stdexcept>
 
 namespace cfd::fv {
@@ -11,9 +12,21 @@ std::vector<Scalar> boundary_values(const FvGeometry& geo, const std::vector<Sca
     const auto nb = static_cast<std::size_t>(m.n_boundary_faces());
     std::vector<Scalar> values(nb);
     for (std::size_t b = 0; b < nb; ++b) {
-        values[b] = bc[b].kind == ScalarBoundary::Kind::FixedValue
-                        ? bc[b].value
-                        : field[static_cast<std::size_t>(m.owner()[nif + b])];
+        const auto p = static_cast<std::size_t>(m.owner()[nif + b]);
+        switch (bc[b].kind) {
+        case ScalarBoundary::Kind::FixedValue:
+            values[b] = bc[b].value;
+            break;
+        case ScalarBoundary::Kind::ZeroGradient:
+            values[b] = field[p];
+            break;
+        case ScalarBoundary::Kind::FixedGradient: {
+            const Scalar dn = std::abs(
+                (m.face_centres()[nif + b] - m.cell_centres()[p]).dot(geo.unit_normals()[nif + b]));
+            values[b] = field[p] + bc[b].value * dn;
+            break;
+        }
+        }
     }
     return values;
 }
@@ -105,6 +118,11 @@ LinearSolveResult solve_scalar(const FvGeometry& geo, const std::vector<Scalar>&
             a.source[p] += (diff - std::min(flux, 0.0)) * b.value;
         } else {
             a.diag[p] += flux;
+            if (b.kind == ScalarBoundary::Kind::FixedGradient) {
+                const Scalar dn = std::abs((cf[f] - cc[p]).dot(geo.unit_normals()[f]));
+                a.source[p] +=
+                    eq.gamma_face[f] * b.value * geo.face_areas()[f] - flux * b.value * dn;
+            }
         }
     }
 

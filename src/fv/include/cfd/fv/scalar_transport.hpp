@@ -6,8 +6,10 @@
 
 namespace cfd::fv {
 
+// FixedGradient: value = outward normal gradient d(phi)/dn, i.e. the diffusive flux into
+// the domain per unit area is gamma * value.
 struct ScalarBoundary {
-    enum class Kind { FixedValue, ZeroGradient };
+    enum class Kind { FixedValue, ZeroGradient, FixedGradient };
     Kind kind = Kind::ZeroGradient;
     Scalar value = 0.0;
 };
