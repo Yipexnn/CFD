@@ -64,6 +64,16 @@
       }
     },
     {
+      "name": "windows-msvc-mpi-release",
+      "displayName": "Windows MSVC Release + MPI (MS-MPI)",
+      "inherits": "windows-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CFD_ENABLE_MPI": "ON",
+        "VCPKG_MANIFEST_FEATURES": "mpi"
+      }
+    },
+    {
       "name": "linux-gcc-debug",
       "displayName": "Linux GCC Debug",
       "inherits": "linux-base",
@@ -86,10 +96,11 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
         "CFD_BUILD_GUI": "ON",
-        "VCPKG_MANIFEST_FEATURES": "gui",
+        "VCPKG_MANIFEST_FEATURES": "gui;mpi",
         "VCPKG_TARGET_TRIPLET": "x64-windows-static-md-release",
         "VCPKG_HOST_TRIPLET": "x64-windows-static-md-release",
-        "VCPKG_OVERLAY_PORTS": "${sourceDir}/vcpkg/ports"
+        "VCPKG_OVERLAY_PORTS": "${sourceDir}/vcpkg/ports",
+        "CFD_ENABLE_MPI": "ON"
       }
     },
     {
@@ -98,16 +109,17 @@
       "inherits": "windows-base",
       "cacheVariables": {
         "CFD_BUILD_GUI": "ON",
-        "VCPKG_MANIFEST_FEATURES": "gui",
+        "VCPKG_MANIFEST_FEATURES": "gui;mpi",
         "CMAKE_BUILD_TYPE": "Release",
         "VCPKG_TARGET_TRIPLET": "x64-windows-static-md-release",
         "VCPKG_HOST_TRIPLET": "x64-windows-static-md-release",
-        "VCPKG_OVERLAY_PORTS": "${sourceDir}/vcpkg/ports"
+        "VCPKG_OVERLAY_PORTS": "${sourceDir}/vcpkg/ports",
+        "CFD_ENABLE_MPI": "ON"
       }
     },
     {
       "name": "linux-system-gui",
-      "displayName": "Linux system packages + GUI (no vcpkg)",
+      "displayName": "Linux system packages + GUI + MPI (no vcpkg)",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/${presetName}",
       "condition": {
@@ -118,7 +130,8 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_CXX_COMPILER": "g++",
-        "CFD_BUILD_GUI": "ON"
+        "CFD_BUILD_GUI": "ON",
+        "CFD_ENABLE_MPI": "ON"
       }
     }
   ],
@@ -130,6 +143,10 @@
     {
       "name": "windows-msvc-release",
       "configurePreset": "windows-msvc-release"
+    },
+    {
+      "name": "windows-msvc-mpi-release",
+      "configurePreset": "windows-msvc-mpi-release"
     },
     {
       "name": "linux-gcc-debug",
@@ -169,6 +186,11 @@
       "name": "windows-msvc-release",
       "inherits": "test-base",
       "configurePreset": "windows-msvc-release"
+    },
+    {
+      "name": "windows-msvc-mpi-release",
+      "inherits": "test-base",
+      "configurePreset": "windows-msvc-mpi-release"
     },
     {
       "name": "linux-gcc-debug",

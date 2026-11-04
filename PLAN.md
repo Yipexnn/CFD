@@ -35,7 +35,8 @@ Goal: realistic 3D CFD desktop application, running locally on Windows.
 4b. ✅ **Performance** – AMG-preconditioned CG pressure solver (~5× faster, mesh-independent iteration counts), limited linear upwind, laminar backward-facing step validation → details: [docs/performance.md](docs/performance.md)
 5. ✅ **GUI** (manual Windows test pending) – geometry viewer, primitives (box/cylinder/sphere), mesh settings, BC assignment, run with live residuals, post-processing (slices, contours, streamlines, vectors) → details: [docs/phase5.md](docs/phase5.md)
 6. ✅ **Real geometry** – STL/STEP import, Gmsh auto meshing, 2D boundary layers, forces, Schäfer–Turek cylinder validation (3D prism layers deferred) → details: [docs/phase6.md](docs/phase6.md)
-7. **Later** – heat transfer, compressible, multiphase, GPU, MPI
+7. ✅ **MPI** – domain decomposition (RCB, ghost cells), distributed solvers, parallel CLI and GUI runs → details: [docs/phase7.md](docs/phase7.md)
+8. **Later** – heat transfer, compressible, multiphase, GPU, parallel AMG
 
 ## Notes
 - Development environment is Linux; code stays portable. Windows build/test via CI; GUI tested on user's PC.

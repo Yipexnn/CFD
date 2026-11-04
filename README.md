@@ -6,7 +6,7 @@ See [PLAN.md](PLAN.md) and [Phase 0 details](docs/phase0.md).
 
 ## Status
 
-Phases 0–6 done: mesh core, laminar solver (SIMPLE/PISO), k-ω SST turbulence, JSON case files with VTU output and restart, AMG pressure solver, desktop GUI, geometry import and auto meshing (Gmsh) with force coefficients.
+Phases 0–7 done: mesh core, laminar solver (SIMPLE/PISO), k-ω SST turbulence, JSON case files with VTU output and restart, AMG pressure solver, desktop GUI, geometry import and auto meshing (Gmsh) with force coefficients, MPI parallel runs.
 
 ## Windows setup (CLion)
 
@@ -63,6 +63,15 @@ Gmsh executable:
   with `gmsh.exe` to `PATH` or set `CFD_GMSH=C:\path\to\gmsh.exe` (restart CLion / the GUI).
 - Linux: `sudo apt install gmsh`.
 
+## MPI (parallel runs)
+
+- Windows: install the MS-MPI runtime **10.1.12498.52** (`msmpisetup.exe` from Microsoft,
+  https://download.microsoft.com/download/7/2/7/72731ebb-b63c-4170-ade7-836966263a8f/msmpisetup.exe),
+  then use a GUI preset (MPI enabled) or `windows-msvc-mpi-release`. vcpkg fetches the SDK.
+- Linux: `sudo apt install libopenmpi-dev openmpi-bin` (the `linux-system-gui` preset enables MPI).
+- Run: `mpiexec -n 4 cfd run case.json`, or in the GUI set "Processes" in the toolbar.
+- Details and benchmarks: [docs/phase7.md](docs/phase7.md).
+
 ## Usage
 
 ```sh
@@ -89,7 +98,7 @@ Build it with the GUI presets (vcpkg builds Qt 6 and VTK the first time — expe
 ~20 GB of disk; later builds reuse the binaries):
 - CLion: enable the preset `windows-msvc-gui-dev` (RelWithDebInfo, debuggable) or `windows-msvc-gui-release` (Settings → Build, Execution, Deployment → CMake), then build the `cfd_gui` target.
 - Command line (Developer PowerShell): `cmake --preset windows-msvc-gui-release` then `cmake --build --preset windows-msvc-gui-release`.
-- Linux with system packages: `sudo apt install libvtk9-dev libvtk9-qt-dev qtbase5-dev libeigen3-dev nlohmann-json3-dev libgtest-dev`, then `cmake --preset linux-system-gui && cmake --build --preset linux-system-gui`.
+- Linux with system packages: `sudo apt install libvtk9-dev libvtk9-qt-dev qtbase5-dev libeigen3-dev nlohmann-json3-dev libgtest-dev libopenmpi-dev openmpi-bin`, then `cmake --preset linux-system-gui && cmake --build --preset linux-system-gui`.
 
 Scriptable options (also used by CI): `cfd_gui case.json --run --show slice,vectors,streamlines --field p --screenshot view.png --quit`.
 
@@ -102,6 +111,7 @@ Scriptable options (also used by CI): `cfd_gui case.json --run --show slice,vect
 - `src/fv` – finite-volume solver
 - `src/mesh` – mesh, Gmsh reader, VTU writer
 - `src/geometry` – geometry (primitives, STL/STEP) → Gmsh auto meshing
+- `src/parallel` – MPI wrapper, mesh decomposition, halo exchange
 - `validation` – benchmark programs
 - `tests` – unit tests
 - `cmake` – CMake helper modules

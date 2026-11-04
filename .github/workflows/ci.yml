@@ -108,10 +108,11 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq ninja-build libvtk9-dev libvtk9-qt-dev qtbase5-dev \
-            libeigen3-dev nlohmann-json3-dev libgtest-dev xvfb libgl1-mesa-dri xauth gmsh
+            libeigen3-dev nlohmann-json3-dev libgtest-dev xvfb libgl1-mesa-dri xauth gmsh \
+            libopenmpi-dev openmpi-bin
 
       - name: Configure
-        run: cmake --preset linux-system-gui -DCFD_WARNINGS_AS_ERRORS=ON
+        run: cmake --preset linux-system-gui -DCFD_WARNINGS_AS_ERRORS=ON -DMPIEXEC_PREFLAGS=--oversubscribe
 
       - name: Build
         run: cmake --build --preset linux-system-gui
@@ -130,6 +131,12 @@ jobs:
             --window-screenshot gui-cylinder.png --quit
           test -s gui-cylinder.png
           grep -q cylinder_Cx examples/results/cylinder_2d/forces.csv
+          rm -rf examples/results/cylinder_2d
+          CFD_MPIEXEC_FLAGS=--oversubscribe xvfb-run -a -s "-screen 0 1600x1000x24" \
+            ./build/linux-system-gui/src/gui/cfd_gui examples/cylinder_2d.json --processes 2 --run \
+            --window-screenshot gui-cylinder-mpi.png --quit
+          grep -q cylinder_Cx examples/results/cylinder_2d/forces.csv
+          mpiexec --oversubscribe -n 4 ./build/linux-system-gui/src/app/cfd run examples/cavity.json
 
       - name: Upload screenshots
         uses: actions/upload-artifact@v4

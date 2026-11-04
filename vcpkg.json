@@ -36,6 +36,15 @@
           ]
         }
       ]
+    },
+    "mpi": {
+      "description": "MPI parallel runs (MS-MPI on Windows, system MPI elsewhere)",
+      "dependencies": [
+        {
+          "name": "msmpi",
+          "platform": "windows"
+        }
+      ]
     }
   }
 }

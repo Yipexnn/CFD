@@ -40,6 +40,16 @@ jobs:
           echo "VCPKG_ROOT=$RUNNER_TEMP/vcpkg" >> "$GITHUB_ENV"
           mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
 
+      # vcpkg's msmpi port needs this exact MS-MPI runtime (mpiexec) installed system-wide.
+      - name: Install MS-MPI runtime
+        shell: pwsh
+        run: |
+          $setup = "$env:RUNNER_TEMP\msmpisetup.exe"
+          Invoke-WebRequest -Uri https://download.microsoft.com/download/7/2/7/72731ebb-b63c-4170-ade7-836966263a8f/msmpisetup.exe -OutFile $setup
+          Start-Process -FilePath $setup -ArgumentList '-unattend', '-force' -Wait
+          if (-not (Test-Path "C:\Program Files\Microsoft MPI\Bin\mpiexec.exe")) { throw "MS-MPI install failed" }
+          "C:\Program Files\Microsoft MPI\Bin" >> $env:GITHUB_PATH
+
       - name: Restore vcpkg binaries
         uses: actions/cache/restore@v4
         with:
