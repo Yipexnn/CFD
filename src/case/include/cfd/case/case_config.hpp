@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cfd/fv/energy.hpp>
 #include <cfd/fv/flow_solver.hpp>
 #include <cfd/fv/k_omega_sst.hpp>
 #include <cfd/geometry/geometry.hpp>
@@ -43,8 +44,19 @@ struct ForcesConfig {
 
 struct InitialConfig {
     Vec3 velocity = Vec3::Zero();
-    Scalar k = -1.0;     // <= 0: derived by the model
-    Scalar omega = -1.0; // <= 0: derived by the model
+    Scalar k = -1.0;                   // <= 0: derived by the model
+    Scalar omega = -1.0;               // <= 0: derived by the model
+    std::optional<Scalar> temperature; // default: energy t_ref
+};
+
+// Heat-flow monitor (energy equation): heat.csv with the heat flow into the fluid per patch,
+// Q = rho_cp * (kinematic heat flow) and Nu = Q_kin L / (alpha dT A).
+struct HeatConfig {
+    std::vector<std::string> patches;
+    Scalar rho_cp = 1.0;
+    Scalar reference_length = 1.0;
+    Scalar reference_delta_t = 1.0;
+    Scalar reference_area = 1.0;
 };
 
 struct SolverConfig {
@@ -70,6 +82,9 @@ struct CaseConfig {
     TurbulenceKind turbulence = TurbulenceKind::Laminar;
     std::map<std::string, fv::BoundaryCondition> boundaries;
     std::map<std::string, InletProfile> profiles; // patch -> parabolic inlet profile
+    std::optional<fv::EnergySettings> energy;     // energy equation enabled
+    std::map<std::string, fv::ThermalBoundary> thermal;
+    HeatConfig heat;
     ForcesConfig forces;
     InitialConfig initial;
     SolverConfig solver;

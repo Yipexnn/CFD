@@ -173,6 +173,16 @@ void CaseRunner::setup() {
         sst_ = std::make_unique<fv::KOmegaSst>(*flow_, sst_settings);
         flow_->set_turbulence_model(sst_.get());
     }
+    for (const auto& name : config_.heat.patches) {
+        if (solver_mesh->find_patch(name) == nullptr) {
+            throw std::runtime_error("heat: unknown patch '" + name + "'");
+        }
+    }
+    if (config_.energy) {
+        energy_ = std::make_unique<fv::EnergyEquation>(*flow_, *config_.energy, config_.thermal);
+        energy_->set_uniform_temperature(
+            config_.initial.temperature.value_or(config_.energy->t_ref));
+    }
     if (config_.restart) {
         read_checkpoint(config_.resolve(*config_.restart));
     }
@@ -314,6 +324,9 @@ void CaseRunner::write_results(const std::filesystem::path& file) const {
         turbulence.emplace_back("nut", gather_cells(lm, sst_->nut().data(), 1, ng));
         turbulence.emplace_back("yPlus", gather_cells(lm, sst_->y_plus().data(), 1, ng));
     }
+    if (energy_) {
+        turbulence.emplace_back("T", gather_cells(lm, energy_->temperature().data(), 1, ng));
+    }
     if (!world().is_root()) {
         return;
     }
@@ -334,6 +347,8 @@ void CaseRunner::write_checkpoint(const std::filesystem::path& file) const {
     const std::vector<Scalar> u = gather_cells(lm, flow_->velocity().data()->data(), 3, ng);
     const std::vector<Scalar> p = gather_cells(lm, flow_->pressure().data(), 1, ng);
     const std::vector<Scalar> phi = gather_faces(lm, g, flow_->face_flux(), true, false);
+    const std::vector<Scalar> temperature =
+        energy_ ? gather_cells(lm, energy_->temperature().data(), 1, ng) : std::vector<Scalar>{};
     std::vector<std::vector<Scalar>> turbulence;
     if (sst_) {
         turbulence.push_back(gather_cells(lm, sst_->k().data(), 1, ng));
@@ -360,6 +375,9 @@ void CaseRunner::write_checkpoint(const std::filesystem::path& file) const {
     for (const auto& field : turbulence) {
         write_array(out, field.data(), field.size());
     }
+    // Optional energy block (older checkpoints end here).
+    write_pod(out, static_cast<std::uint8_t>(energy_ ? 1 : 0));
+    write_array(out, temperature.data(), temperature.size());
     if (!out) {
         throw std::runtime_error("Checkpoint: write failed for " + file.string());
     }
@@ -401,6 +419,9 @@ CheckpointData read_checkpoint_file(const std::filesystem::path& file, Label n_c
         d.nut = read_vector(ncs);
         d.boundary_nut = read_vector(static_cast<std::size_t>(n_boundary_faces));
     }
+    if (in.peek() != std::char_traits<char>::eof() && read_pod<std::uint8_t>(in) != 0) {
+        d.t = read_vector(ncs);
+    }
     return d;
 }
 
@@ -421,8 +442,18 @@ void CaseRunner::read_checkpoint(const std::filesystem::path& file) {
     }
     flow_->set_state(to_vec3(scatter_cells(lm, u_flat, 3)), scatter_cells(lm, d.p, 1),
                      scatter_faces(lm, g, d.phi, true, false));
+    if (energy_ && !d.t.empty()) {
+        energy_->set_temperature(scatter_cells(lm, d.t, 1));
+    }
     step_ = d.step;
     time_ = d.time;
+}
+
+Scalar CaseRunner::heat_flow(const std::string& patch) const {
+    if (!energy_) {
+        throw std::runtime_error("heat_flow: the case has no energy equation");
+    }
+    return config_.heat.rho_cp * energy_->patch_heat_flow(*flow_, patch);
 }
 
 Vec3 CaseRunner::force(const std::string& patch) const {
@@ -442,7 +473,7 @@ RunResult CaseRunner::run(const ProgressCallback& progress) {
         log.open(dir / "residuals.csv", mode);
     }
     if (step_ == 0) {
-        log << "step,time,Ux,Uy,Uz,p,k,omega,continuity\n";
+        log << "step,time,Ux,Uy,Uz,p,k,omega,continuity,T\n";
     }
     log << std::setprecision(6) << std::scientific;
     const ForcesConfig& fc = config_.forces;
@@ -475,6 +506,35 @@ RunResult CaseRunner::run(const ProgressCallback& progress) {
         forces_log << '\n';
     };
 
+    const HeatConfig& hc = config_.heat;
+    std::ofstream heat_log;
+    if (energy_ && !hc.patches.empty()) {
+        if (root) {
+            heat_log.open(dir / "heat.csv", mode);
+        }
+        if (step_ == 0) {
+            heat_log << "step,time";
+            for (const auto& name : hc.patches) {
+                heat_log << ',' << name << "_Q," << name << "_Nu";
+            }
+            heat_log << '\n';
+        }
+        heat_log << std::setprecision(8) << std::scientific;
+    }
+    auto write_heat = [&]() {
+        if (!energy_ || hc.patches.empty()) {
+            return;
+        }
+        heat_log << step_ << ',' << time_;
+        const Scalar nu_scale = hc.reference_length / (energy_->settings().alpha *
+                                                       hc.reference_delta_t * hc.reference_area);
+        for (const auto& name : hc.patches) {
+            const Scalar q = energy_->patch_heat_flow(*flow_, name);
+            heat_log << ',' << hc.rho_cp * q << ',' << q * nu_scale;
+        }
+        heat_log << '\n';
+    };
+
     const SolverConfig& s = config_.solver;
     const OutputConfig& o = config_.output;
     const bool steady = s.mode == SolverMode::Steady;
@@ -485,16 +545,22 @@ RunResult CaseRunner::run(const ProgressCallback& progress) {
     RunResult result;
     while (step_ < max_steps) {
         fv::Residuals r;
+        if (energy_ && energy_->buoyant()) {
+            flow_->set_cell_acceleration(energy_->buoyancy());
+        }
         if (steady) {
             r = flow_->simple_iteration();
         } else {
             r = flow_->piso_step(s.dt);
             time_ += s.dt;
         }
+        if (energy_) {
+            r.t = energy_->correct(*flow_, steady ? 0.0 : s.dt);
+        }
         ++step_;
         result.final_residuals = r;
         log << step_ << ',' << time_ << ',' << r.u.x() << ',' << r.u.y() << ',' << r.u.z() << ','
-            << r.p << ',' << r.k << ',' << r.omega << ',' << r.continuity << '\n';
+            << r.p << ',' << r.k << ',' << r.omega << ',' << r.continuity << ',' << r.t << '\n';
         log.flush(); // followed live (e.g. by the GUI for parallel runs)
 
         if (o.write_interval > 0 && step_ % o.write_interval == 0) {
@@ -507,6 +573,9 @@ RunResult CaseRunner::run(const ProgressCallback& progress) {
         }
         if (!fc.patches.empty() && (o.log_interval <= 0 || step_ % o.log_interval == 0)) {
             write_forces();
+        }
+        if (o.log_interval <= 0 || step_ % o.log_interval == 0) {
+            write_heat();
         }
         const bool keep_going = !progress || progress(step_, time_, r);
         if (steady && r.max() < s.tolerance) {
@@ -522,8 +591,11 @@ RunResult CaseRunner::run(const ProgressCallback& progress) {
         result.converged = true;
     }
 
-    if (!fc.patches.empty() && o.log_interval > 0 && step_ % o.log_interval != 0) {
-        write_forces();
+    if (o.log_interval > 0 && step_ % o.log_interval != 0) {
+        if (!fc.patches.empty()) {
+            write_forces();
+        }
+        write_heat();
     }
     result.steps = step_;
     result.time = time_;

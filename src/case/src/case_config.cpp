@@ -267,7 +267,7 @@ MeshConfig parse_mesh(const json& j) {
 fv::BoundaryCondition parse_boundary(const json& j, const std::string& path) {
     check_keys(j, path,
                {"type", "velocity", "pressure", "turbulence_intensity", "viscosity_ratio",
-                "profile", "profile_axes"});
+                "profile", "profile_axes", "thermal"});
     fv::BoundaryCondition bc;
     const std::string type = get_string(j, "type", path, "");
     if (type == "velocity_inlet") {
@@ -305,7 +305,7 @@ CaseConfig parse_case(const std::string& json_text, const std::filesystem::path&
     }
     check_keys(root, "case",
                {"name", "mesh", "physics", "boundaries", "initial", "solver", "output", "forces",
-                "restart"});
+                "heat", "restart"});
 
     CaseConfig c;
     c.base_directory = base_directory;
@@ -319,7 +319,7 @@ CaseConfig parse_case(const std::string& json_text, const std::filesystem::path&
     fv::FlowSettings& flow = c.solver.flow;
     if (root.contains("physics")) {
         const json& p = root["physics"];
-        check_keys(p, "physics", {"nu", "body_force", "turbulence"});
+        check_keys(p, "physics", {"nu", "body_force", "turbulence", "energy"});
         flow.nu = get_number(p, "nu", "physics", flow.nu);
         if (!(flow.nu > 0.0)) {
             fail("physics.nu", "must be positive");
@@ -333,6 +333,25 @@ CaseConfig parse_case(const std::string& json_text, const std::filesystem::path&
         } else {
             fail("physics.turbulence", "unknown model '" + turb + "' (laminar, kOmegaSST)");
         }
+        if (p.contains("energy")) {
+            const json& e = p["energy"];
+            const std::string ep = "physics.energy";
+            check_keys(e, ep, {"alpha", "prandtl", "prandtl_t", "beta", "t_ref", "gravity"});
+            fv::EnergySettings es;
+            if (e.contains("alpha") && e.contains("prandtl")) {
+                fail(ep, "give either alpha or prandtl");
+            }
+            es.alpha = e.contains("alpha") ? get_number(e, "alpha", ep, 0.0)
+                                           : flow.nu / get_number(e, "prandtl", ep, 0.71);
+            es.prandtl_t = get_number(e, "prandtl_t", ep, es.prandtl_t);
+            es.beta = get_number(e, "beta", ep, es.beta);
+            es.t_ref = get_number(e, "t_ref", ep, es.t_ref);
+            es.gravity = get_vec3(e, "gravity", ep, es.gravity);
+            if (!(es.alpha > 0.0) || !(es.prandtl_t > 0.0)) {
+                fail(ep, "alpha / prandtl and prandtl_t must be positive");
+            }
+            c.energy = es;
+        }
     }
 
     if (root.contains("boundaries")) {
@@ -342,6 +361,26 @@ CaseConfig parse_case(const std::string& json_text, const std::filesystem::path&
         }
         for (const auto& [name, value] : b.items()) {
             const std::string path = "boundaries." + name;
+            if (value.is_object() && value.contains("thermal")) {
+                const json& t = value["thermal"];
+                const std::string tp = path + ".thermal";
+                check_keys(t, tp, {"type", "value"});
+                const std::string kind = get_string(t, "type", tp, "adiabatic");
+                fv::ThermalBoundary tb;
+                if (kind == "fixed") {
+                    tb.kind = fv::ThermalBoundary::Kind::FixedTemperature;
+                } else if (kind == "heat_flux") {
+                    tb.kind = fv::ThermalBoundary::Kind::HeatFlux;
+                } else if (kind != "adiabatic") {
+                    fail(tp + ".type",
+                         "unknown thermal type '" + kind + "' (fixed, heat_flux, adiabatic)");
+                }
+                tb.value = get_number(t, "value", tp, 0.0);
+                c.thermal[name] = tb;
+                if (value.size() == 1) {
+                    continue; // thermal condition only: flow condition from the patch type
+                }
+            }
             c.boundaries[name] = parse_boundary(value, path);
             const std::string profile = get_string(value, "profile", path, "uniform");
             if (profile == "parabolic") {
@@ -362,7 +401,10 @@ CaseConfig parse_case(const std::string& json_text, const std::filesystem::path&
 
     if (root.contains("initial")) {
         const json& i = root["initial"];
-        check_keys(i, "initial", {"velocity", "k", "omega"});
+        check_keys(i, "initial", {"velocity", "k", "omega", "temperature"});
+        if (i.contains("temperature")) {
+            c.initial.temperature = get_number(i, "temperature", "initial", 0.0);
+        }
         c.initial.velocity = get_vec3(i, "velocity", "initial", c.initial.velocity);
         c.initial.k = get_number(i, "k", "initial", c.initial.k);
         c.initial.omega = get_number(i, "omega", "initial", c.initial.omega);
@@ -443,6 +485,29 @@ CaseConfig parse_case(const std::string& json_text, const std::filesystem::path&
             !(c.forces.reference_area > 0.0)) {
             fail("forces", "density and reference values must be positive");
         }
+    }
+
+    if (root.contains("heat")) {
+        const json& h = root["heat"];
+        check_keys(
+            h, "heat",
+            {"patches", "rho_cp", "reference_length", "reference_delta_t", "reference_area"});
+        if (!h.contains("patches") || !h["patches"].is_array()) {
+            fail("heat.patches", "expected an array of patch names");
+        }
+        for (const auto& name : h["patches"]) {
+            if (!name.is_string()) {
+                fail("heat.patches", "expected an array of patch names");
+            }
+            c.heat.patches.push_back(name.get<std::string>());
+        }
+        c.heat.rho_cp = get_number(h, "rho_cp", "heat", c.heat.rho_cp);
+        c.heat.reference_length = get_number(h, "reference_length", "heat", 1.0);
+        c.heat.reference_delta_t = get_number(h, "reference_delta_t", "heat", 1.0);
+        c.heat.reference_area = get_number(h, "reference_area", "heat", 1.0);
+    }
+    if (!c.energy && (!c.thermal.empty() || !c.heat.patches.empty() || c.initial.temperature)) {
+        fail("physics.energy", "thermal settings need the energy equation (physics.energy)");
     }
 
     if (root.contains("restart")) {

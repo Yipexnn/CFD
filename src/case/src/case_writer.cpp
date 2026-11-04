@@ -142,7 +142,8 @@ ordered_json mesh_json(const MeshConfig& m) {
 }
 
 ordered_json boundaries_json(const std::map<std::string, fv::BoundaryCondition>& boundaries,
-                             const std::map<std::string, InletProfile>& profiles) {
+                             const std::map<std::string, InletProfile>& profiles,
+                             const std::map<std::string, fv::ThermalBoundary>& thermal) {
     ordered_json j = ordered_json::object();
     for (const auto& [name, bc] : boundaries) {
         ordered_json b = ordered_json::object();
@@ -157,6 +158,17 @@ ordered_json boundaries_json(const std::map<std::string, fv::BoundaryCondition>&
             b["profile_axes"] = it->second.axes;
         }
         j[name] = b;
+    }
+    for (const auto& [name, tb] : thermal) {
+        ordered_json t = ordered_json::object();
+        t["type"] = tb.kind == fv::ThermalBoundary::Kind::FixedTemperature ? "fixed"
+                    : tb.kind == fv::ThermalBoundary::Kind::HeatFlux       ? "heat_flux"
+                                                                           : "adiabatic";
+        t["value"] = tb.value;
+        if (!j.contains(name)) {
+            j[name] = ordered_json::object();
+        }
+        j[name]["thermal"] = t;
     }
     return j;
 }
@@ -174,14 +186,27 @@ std::string case_to_json(const CaseConfig& config) {
     physics["body_force"] = vec3_json(flow.body_force);
     physics["turbulence"] =
         config.turbulence == TurbulenceKind::KOmegaSst ? "kOmegaSST" : "laminar";
+    if (config.energy) {
+        const fv::EnergySettings& e = *config.energy;
+        ordered_json energy = ordered_json::object();
+        energy["alpha"] = e.alpha;
+        energy["prandtl_t"] = e.prandtl_t;
+        energy["beta"] = e.beta;
+        energy["t_ref"] = e.t_ref;
+        energy["gravity"] = vec3_json(e.gravity);
+        physics["energy"] = energy;
+    }
     root["physics"] = physics;
 
-    root["boundaries"] = boundaries_json(config.boundaries, config.profiles);
+    root["boundaries"] = boundaries_json(config.boundaries, config.profiles, config.thermal);
 
     ordered_json initial = ordered_json::object();
     initial["velocity"] = vec3_json(config.initial.velocity);
     initial["k"] = config.initial.k;
     initial["omega"] = config.initial.omega;
+    if (config.initial.temperature) {
+        initial["temperature"] = *config.initial.temperature;
+    }
     root["initial"] = initial;
 
     const SolverConfig& s = config.solver;
@@ -212,6 +237,16 @@ std::string case_to_json(const CaseConfig& config) {
         forces["reference_velocity"] = config.forces.reference_velocity;
         forces["reference_area"] = config.forces.reference_area;
         root["forces"] = forces;
+    }
+
+    if (!config.heat.patches.empty()) {
+        ordered_json heat = ordered_json::object();
+        heat["patches"] = config.heat.patches;
+        heat["rho_cp"] = config.heat.rho_cp;
+        heat["reference_length"] = config.heat.reference_length;
+        heat["reference_delta_t"] = config.heat.reference_delta_t;
+        heat["reference_area"] = config.heat.reference_area;
+        root["heat"] = heat;
     }
 
     if (config.restart) {

@@ -181,13 +181,17 @@ int run_case(int argc, char* argv[]) {
     out << ")" << std::endl;
 
     const int log_interval = cfg.output.log_interval;
-    const auto progress = [log_interval, laminar, &out](int step, cfd::cases::Scalar sim_time,
-                                                        const cfd::fv::Residuals& r) {
+    const bool energy = cfg.energy.has_value();
+    const auto progress = [log_interval, laminar, energy, &out](
+                              int step, cfd::cases::Scalar sim_time, const cfd::fv::Residuals& r) {
         if (step == 1 || (log_interval > 0 && step % log_interval == 0)) {
             out << "step " << step << "  time " << sim_time << "  U " << std::scientific
                 << std::setprecision(3) << r.u.maxCoeff() << "  p " << r.p;
             if (!laminar) {
                 out << "  k " << r.k << "  omega " << r.omega;
+            }
+            if (energy) {
+                out << "  T " << r.t;
             }
             out << "  cont " << r.continuity << std::defaultfloat << std::setprecision(6)
                 << std::endl;

@@ -35,6 +35,7 @@ struct CheckpointData {
     std::vector<Scalar> phi;           // face flux
     std::vector<Scalar> k, omega, nut; // empty without turbulence model
     std::vector<Scalar> boundary_nut;
+    std::vector<Scalar> t; // temperature (empty without energy equation)
 };
 // Reads a checkpoint; n_cells / n_faces / n_boundary_faces must match the mesh.
 [[nodiscard]] CheckpointData read_checkpoint_file(const std::filesystem::path& file, Label n_cells,
@@ -48,7 +49,8 @@ using ProgressCallback = std::function<bool(int step, Scalar time, const fv::Res
 // Output (in config.output.directory, created if needed):
 //   <name>_<step>.vtu   intermediate results (write_interval > 0)
 //   <name>.vtu          final result (cell data U, p and, with SST, k, omega, nut, yPlus)
-//   residuals.csv       step, time, Ux, Uy, Uz, p, k, omega, continuity
+//   residuals.csv       step, time, Ux, Uy, Uz, p, k, omega, continuity, T
+//   heat.csv            step, time, per heat patch Q, Nu (if configured)
 //   forces.csv          step, time, per force patch Fx, Fy, Fz, Cx, Cy, Cz (if configured)
 //   checkpoint.bin      restart file (fields + face flux + step/time)
 class CaseRunner {
@@ -81,6 +83,9 @@ public:
     [[nodiscard]] const parallel::LocalMesh* local_mesh() const { return local_.get(); }
     [[nodiscard]] const fv::FlowSolver& flow() const { return *flow_; }
     [[nodiscard]] const fv::KOmegaSst* sst() const { return sst_.get(); }
+    [[nodiscard]] const fv::EnergyEquation* energy() const { return energy_.get(); }
+    // Kinematic heat flow into the fluid through a patch times heat.rho_cp.
+    [[nodiscard]] Scalar heat_flow(const std::string& patch) const;
     [[nodiscard]] int step() const { return step_; }
     [[nodiscard]] Scalar time() const { return time_; }
     [[nodiscard]] std::filesystem::path output_directory() const;
@@ -93,6 +98,7 @@ private:
     std::unique_ptr<parallel::LocalMesh> local_;
     std::unique_ptr<fv::FlowSolver> flow_;
     std::unique_ptr<fv::KOmegaSst> sst_;
+    std::unique_ptr<fv::EnergyEquation> energy_;
     int step_ = 0;
     Scalar time_ = 0.0;
 };

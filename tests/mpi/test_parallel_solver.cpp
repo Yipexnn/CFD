@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cfd/fv/energy.hpp>
 #include <cfd/fv/flow_solver.hpp>
 #include <cfd/fv/k_omega_sst.hpp>
 #include <cfd/mesh/box_mesher.hpp>
@@ -119,6 +120,49 @@ TEST(ParallelSolver, SstChannelMatchesSerial) {
                               serial_k[g]);
     }
     EXPECT_LT(comm().max(dk), 1e-4);
+}
+
+// Natural convection (Boussinesq) on several processes matches the serial solution.
+TEST(ParallelSolver, HeatedCavityMatchesSerial) {
+    cfd::mesh::BoxSpec spec;
+    spec.nx = 24;
+    spec.ny = 24;
+    spec.nz = 1;
+    spec.max = Vec3(1.0, 1.0, 1.0 / 24.0);
+    const auto global = cfd::mesh::make_box_mesh(spec);
+    const BoundaryCondition empty{FlowBoundary::Empty, Vec3::Zero(), 0.0};
+    const std::map<std::string, BoundaryCondition> bcs{{"zmin", empty}, {"zmax", empty}};
+    FlowSettings settings;
+    settings.nu = 0.71;
+    settings.convection = ConvectionScheme::LimitedLinearUpwind;
+    EnergySettings es;
+    es.alpha = 1.0;
+    es.beta = 1.0;
+    es.t_ref = 0.5;
+    es.gravity = Vec3(0.0, -1e4 * 0.71, 0.0);
+    const std::map<std::string, ThermalBoundary> thermal{
+        {"xmin", {ThermalBoundary::Kind::FixedTemperature, 1.0}},
+        {"xmax", {ThermalBoundary::Kind::FixedTemperature, 0.0}}};
+    auto solve = [&](FlowSolver& flow) {
+        EnergyEquation energy(flow, es, thermal);
+        for (int it = 0; it < 5000; ++it) {
+            flow.set_cell_acceleration(energy.buoyancy());
+            Residuals r = flow.simple_iteration();
+            r.t = energy.correct(flow, 0.0);
+            if (r.max() < 1e-9) {
+                break;
+            }
+        }
+        return energy.patch_heat_flow(flow, "xmin");
+    };
+    FlowSolver serial(global, bcs, settings);
+    const Scalar q_serial = solve(serial);
+    const auto parts = par::partition_rcb(global, comm().size());
+    const auto lm = par::decompose(global, parts, comm().rank(), comm());
+    FlowSolver parallel(lm.mesh, bcs, settings, &lm.halo);
+    const Scalar q_parallel = solve(parallel);
+    EXPECT_NEAR(q_parallel, q_serial, 1e-5 * q_serial);
+    EXPECT_LT(max_difference(lm, parallel.velocity(), serial.velocity()), 1e-4);
 }
 
 } // namespace
