@@ -46,6 +46,8 @@ meaning to serial runs; serial build and behaviour unchanged.
   preconditioner instead of a global AMG). A true parallel AMG would raise the speed-up further.
 
 ## Usage
+- MPI runs use one OpenMP thread per process unless `OMP_NUM_THREADS` is set (processes ×
+  threads must not exceed the cores; oversubscription slows busy-waiting MPI dramatically).
 - CLI: `mpiexec -n 4 cfd run case.json` (needs a build with `CFD_ENABLE_MPI=ON`)
 - GUI: toolbar "Processes" > 1 → runs `mpiexec -n N cfd run` in the background; residuals are
   plotted live, the fields are loaded at the end. `CFD_MPIEXEC` / `CFD_MPIEXEC_FLAGS` override the

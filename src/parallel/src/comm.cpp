@@ -6,10 +6,25 @@
 #ifdef CFD_HAS_MPI
 #include <mpi.h>
 #endif
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 namespace cfd::parallel {
 
 namespace {
+
+[[maybe_unused]] bool env_set(const char* name) {
+#ifdef _MSC_VER
+    char* value = nullptr;
+    std::size_t size = 0;
+    const bool set = _dupenv_s(&value, &size, name) == 0 && value != nullptr;
+    std::free(value);
+    return set;
+#else
+    return std::getenv(name) != nullptr;
+#endif
+}
 
 #ifdef CFD_HAS_MPI
 bool mpi_running() {
@@ -179,6 +194,13 @@ Environment::Environment([[maybe_unused]] int& argc, [[maybe_unused]] char**& ar
         MPI_Init(&argc, &argv);
         initialised_ = true;
     }
+#ifdef _OPENMP
+    // One thread per process unless requested otherwise: N processes x N threads would
+    // oversubscribe the cores (busy-waiting MPI and OpenMP threads then slow down badly).
+    if (Comm::world().parallel() && !env_set("OMP_NUM_THREADS")) {
+        omp_set_num_threads(1);
+    }
+#endif
 #endif
 }
 
