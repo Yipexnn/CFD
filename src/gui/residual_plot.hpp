@@ -19,7 +19,8 @@ public:
     explicit ResidualPlot(QWidget* parent = nullptr);
 
     void clear();
-    void add_point(int step, double ux, double uy, double uz, double p, double k, double omega);
+    void add_point(int step, double ux, double uy, double uz, double p, double k, double omega,
+                   double t = 0.0);
     void set_tolerance(double tol);
 
     QSize sizeHint() const override;
@@ -29,7 +30,7 @@ protected:
     void paintEvent(QPaintEvent* event) override;
 
 private:
-    static constexpr std::size_t kSeriesCount = 6;
+    static constexpr std::size_t kSeriesCount = 7;
 
     // Each point is (x = step, y = log10(value)).
     std::array<std::vector<QPointF>, kSeriesCount> series_;

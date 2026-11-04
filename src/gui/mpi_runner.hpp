@@ -34,7 +34,7 @@ public:
 
 signals:
     void progress(int step, double time, double ux, double uy, double uz, double p, double k,
-                  double omega, double continuity);
+                  double omega, double continuity, double t);
     void output(const QString& line);
     void finished(bool ok, const QString& message, const QString& result_file);
 

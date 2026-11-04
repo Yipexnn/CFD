@@ -24,11 +24,18 @@ Differentially heated square cavity (de Vahl Davis 1983), Pr = 0.71:
 
 | Ra | 1e3 | 1e4 | 1e5 | 1e6 |
 |---|---|---|---|---|
-| mean Nu (reference) | 1.118 | 2.243 | 4.519 | 8.800 |
+| mean Nu (reference) | 1.118 | 2.243 | 4.519 | 8.800 (8.825 Le Quéré) |
+| 64² | – | 2.250 | 4.558 | 9.064 |
+| 128² | 1.119 (32²) | 2.246 (+0.1 %) | 4.531 (+0.3 %) | 8.885 (+0.7 % vs 8.825) |
+
+Program: `validation/cavity_de_vahl_davis [Ra] [n] [max_iterations]`; example case
+`examples/heated_cavity.json` (Ra 1e5, 64², Nu 4.558 in 676 iterations, identical on 4 MPI
+processes).
 
 ## Definition of Done
-- [ ] energy equation, thermal BCs, buoyancy; serial = MPI
-- [ ] de Vahl Davis Nu within 1 % (Ra 1e3–1e5) on fine meshes
-- [ ] case file, output, restart
-- [ ] GUI
-- [ ] tests, docs
+- [x] energy equation, thermal BCs, buoyancy; serial = MPI
+- [x] de Vahl Davis Nu within 1 % (Ra 1e3–1e6) on 128²
+- [x] case file, output, restart
+- [x] GUI (energy settings, thermal BC columns, field T, T residual)
+- [x] tests, docs
+- [ ] later: conjugate heat transfer (solid regions), variable properties, radiation

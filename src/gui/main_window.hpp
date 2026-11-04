@@ -68,7 +68,7 @@ private:
     [[nodiscard]] cases::CaseConfig current_config() const;
 
     void on_progress(int step, double time, double ux, double uy, double uz, double p, double k,
-                     double omega, double continuity);
+                     double omega, double continuity, double t);
     void on_snapshot();
     void show_fields(const FieldSet& fields, int step, double time);
     void on_mpi_finished(bool ok, const QString& message, const QString& result_file);

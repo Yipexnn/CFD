@@ -5,6 +5,7 @@
 #include <cfd/case/case_config.hpp>
 #include <cfd/mesh/mesh.hpp>
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -61,6 +62,9 @@ private:
     void rebuild_boundary_table();
     [[nodiscard]] fv::BoundaryCondition read_boundary_row(int row) const;
     [[nodiscard]] std::map<std::string, fv::BoundaryCondition> boundaries_from_table() const;
+    // Thermal condition of a table row (nullopt: default).
+    [[nodiscard]] std::optional<fv::ThermalBoundary> read_thermal_row(int row) const;
+    [[nodiscard]] std::map<std::string, fv::ThermalBoundary> thermal_from_table() const;
 
     void notify(bool mesh);
     void watch(QDoubleSpinBox* widget, bool mesh);
@@ -103,6 +107,12 @@ private:
     QDoubleSpinBox* nu_ = nullptr;
     std::array<QDoubleSpinBox*, 3> body_force_{};
     QComboBox* turbulence_ = nullptr;
+    QCheckBox* energy_ = nullptr;
+    QDoubleSpinBox* prandtl_ = nullptr;
+    QDoubleSpinBox* prandtl_t_ = nullptr;
+    QLineEdit* beta_ = nullptr;
+    QLineEdit* t_ref_ = nullptr;
+    std::array<QDoubleSpinBox*, 3> gravity_{};
 
     // Boundaries tab.
     QTableWidget* boundary_table_ = nullptr;

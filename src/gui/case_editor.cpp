@@ -41,6 +41,9 @@ constexpr std::array<fv::FlowBoundary, 5> kBoundaryKinds{
     fv::FlowBoundary::VelocityInlet, fv::FlowBoundary::Wall, fv::FlowBoundary::PressureOutlet,
     fv::FlowBoundary::Symmetry, fv::FlowBoundary::Empty};
 
+// Index - 1 is fv::ThermalBoundary::Kind (0 = no entry / default).
+constexpr std::array<const char*, 4> kThermalNames{"default", "adiabatic", "fixed T", "heat flux"};
+
 constexpr std::array<const char*, 3> kConvectionNames{"upwind", "linear_upwind",
                                                       "limited_linear_upwind"};
 constexpr std::array<fv::ConvectionScheme, 3> kConvections{
@@ -335,17 +338,37 @@ QWidget* CaseEditor::build_physics_tab() {
     turbulence_->addItem(QStringLiteral("k-omega SST"));
     form->addRow(QStringLiteral("Turbulence"), turbulence_);
     watch(turbulence_, false);
+
+    energy_ = new QCheckBox(QStringLiteral("Energy equation (temperature, Boussinesq)"), page);
+    form->addRow(energy_);
+    prandtl_ = make_double(page, 1e-6, 1e6, 4, 0.71);
+    prandtl_t_ = make_double(page, 1e-3, 100.0, 3, 0.85);
+    beta_ = make_number_edit(page, -1e6, 1e6, 0.0);
+    t_ref_ = make_number_edit(page, -1e9, 1e9, 0.0);
+    form->addRow(QStringLiteral("Prandtl number nu/alpha"), prandtl_);
+    form->addRow(QStringLiteral("Turbulent Prandtl number"), prandtl_t_);
+    form->addRow(QStringLiteral("Expansion coefficient beta [1/K]"), beta_);
+    form->addRow(QStringLiteral("Reference temperature [K]"), t_ref_);
+    form->addRow(QStringLiteral("Gravity [m/s^2]"), make_vec_row(page, gravity_, -1e9, 1e9, 4));
+    watch(energy_, false);
+    watch(prandtl_, false);
+    watch(prandtl_t_, false);
+    watch(beta_, false);
+    watch(t_ref_, false);
+    for (QDoubleSpinBox* spin : gravity_) {
+        watch(spin, false);
+    }
     return page;
 }
 
 QWidget* CaseEditor::build_boundaries_tab() {
     auto* page = new QWidget(this);
     auto* layout = new QVBoxLayout(page);
-    boundary_table_ = new QTableWidget(0, 8, page);
-    boundary_table_->setHorizontalHeaderLabels(
-        QStringList{QStringLiteral("Patch"), QStringLiteral("Type"), QStringLiteral("Ux"),
-                    QStringLiteral("Uy"), QStringLiteral("Uz"), QStringLiteral("p"),
-                    QStringLiteral("Turb. intensity"), QStringLiteral("Visc. ratio")});
+    boundary_table_ = new QTableWidget(0, 10, page);
+    boundary_table_->setHorizontalHeaderLabels(QStringList{
+        QStringLiteral("Patch"), QStringLiteral("Type"), QStringLiteral("Ux"), QStringLiteral("Uy"),
+        QStringLiteral("Uz"), QStringLiteral("p"), QStringLiteral("Turb. intensity"),
+        QStringLiteral("Visc. ratio"), QStringLiteral("Thermal"), QStringLiteral("T / heat flux")});
     boundary_table_->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
     boundary_table_->setSelectionMode(QAbstractItemView::NoSelection);
     layout->addWidget(boundary_table_);
@@ -476,6 +499,15 @@ void CaseEditor::set_config(const cases::CaseConfig& cfg) {
     nu_->setValue(flow.nu);
     set_vec(body_force_, flow.body_force);
     turbulence_->setCurrentIndex(config_.turbulence == cases::TurbulenceKind::KOmegaSst ? 1 : 0);
+    {
+        const fv::EnergySettings e = config_.energy.value_or(fv::EnergySettings{});
+        energy_->setChecked(config_.energy.has_value());
+        prandtl_->setValue(config_.energy ? flow.nu / e.alpha : 0.71);
+        prandtl_t_->setValue(e.prandtl_t);
+        beta_->setText(QString::number(e.beta, 'g', 12));
+        t_ref_->setText(QString::number(e.t_ref, 'g', 12));
+        set_vec(gravity_, e.gravity);
+    }
 
     // Boundaries.
     rebuild_boundary_table();
@@ -536,6 +568,21 @@ cases::CaseConfig CaseEditor::config() const {
 
     // Boundaries.
     cfg.boundaries = patches_.empty() ? config_.boundaries : boundaries_from_table();
+    cfg.thermal = patches_.empty() ? config_.thermal : thermal_from_table();
+    if (energy_->isChecked()) {
+        fv::EnergySettings e = config_.energy.value_or(fv::EnergySettings{});
+        e.alpha = flow.nu / prandtl_->value();
+        e.prandtl_t = prandtl_t_->value();
+        e.beta = parse_or(beta_, e.beta);
+        e.t_ref = parse_or(t_ref_, e.t_ref);
+        e.gravity = get_vec(gravity_);
+        cfg.energy = e;
+    } else {
+        cfg.energy.reset();
+        cfg.thermal.clear();
+        cfg.heat.patches.clear();
+        cfg.initial.temperature.reset();
+    }
 
     // Initial.
     cfg.initial.velocity = get_vec(init_velocity_);
@@ -580,6 +627,11 @@ void CaseEditor::set_patches(const std::vector<PatchInfo>& patches) {
         const bool explicit_entry = config_.boundaries.count(patches_[row].name) > 0;
         if (explicit_entry || !is_default) {
             config_.boundaries[patches_[row].name] = bc;
+        }
+        if (const auto tb = read_thermal_row(static_cast<int>(row))) {
+            config_.thermal[patches_[row].name] = *tb;
+        } else {
+            config_.thermal.erase(patches_[row].name);
         }
     }
     patches_ = patches;
@@ -635,6 +687,18 @@ void CaseEditor::rebuild_boundary_table() {
         boundary_table_->setCellWidget(r, 5, pressure);
         boundary_table_->setCellWidget(r, 6, intensity);
         boundary_table_->setCellWidget(r, 7, viscosity);
+
+        const auto th = config_.thermal.find(patch.name);
+        auto* thermal = new QComboBox(boundary_table_);
+        add_items(thermal, kThermalNames);
+        thermal->setCurrentIndex(
+            th == config_.thermal.end() ? 0 : 1 + static_cast<int>(th->second.kind));
+        watch(thermal, false);
+        boundary_table_->setCellWidget(r, 8, thermal);
+        QDoubleSpinBox* tvalue = make_double(boundary_table_, -1e9, 1e9, 6,
+                                             th == config_.thermal.end() ? 0.0 : th->second.value);
+        watch(tvalue, false);
+        boundary_table_->setCellWidget(r, 9, tvalue);
     }
 }
 
@@ -651,6 +715,27 @@ fv::BoundaryCondition CaseEditor::read_boundary_row(int row) const {
     bc.turbulence_intensity = table_double(boundary_table_, row, 6, bc.turbulence_intensity);
     bc.viscosity_ratio = table_double(boundary_table_, row, 7, bc.viscosity_ratio);
     return bc;
+}
+
+std::optional<fv::ThermalBoundary> CaseEditor::read_thermal_row(int row) const {
+    const auto* combo = qobject_cast<QComboBox*>(boundary_table_->cellWidget(row, 8));
+    if (combo == nullptr || combo->currentIndex() <= 0) {
+        return std::nullopt;
+    }
+    fv::ThermalBoundary tb;
+    tb.kind = static_cast<fv::ThermalBoundary::Kind>(combo->currentIndex() - 1);
+    tb.value = table_double(boundary_table_, row, 9, 0.0);
+    return tb;
+}
+
+std::map<std::string, fv::ThermalBoundary> CaseEditor::thermal_from_table() const {
+    std::map<std::string, fv::ThermalBoundary> thermal;
+    for (std::size_t row = 0; row < patches_.size(); ++row) {
+        if (const auto tb = read_thermal_row(static_cast<int>(row))) {
+            thermal[patches_[row].name] = *tb;
+        }
+    }
+    return thermal;
 }
 
 std::map<std::string, fv::BoundaryCondition> CaseEditor::boundaries_from_table() const {

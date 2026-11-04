@@ -41,8 +41,10 @@ SeriesStyle style_of(std::size_t index) {
         return {"p", QColor(215, 40, 40)};
     case 4:
         return {"k", QColor(250, 140, 0)};
-    default:
+    case 5:
         return {"omega", QColor(140, 70, 190)};
+    default:
+        return {"T", QColor(120, 70, 20)};
     }
 }
 
@@ -61,8 +63,8 @@ void ResidualPlot::clear() {
 }
 
 void ResidualPlot::add_point(int step, double ux, double uy, double uz, double p, double k,
-                             double omega) {
-    const std::array<double, kSeriesCount> values{ux, uy, uz, p, k, omega};
+                             double omega, double t) {
+    const std::array<double, kSeriesCount> values{ux, uy, uz, p, k, omega, t};
     max_step_ = std::max(max_step_, step);
     const double x = static_cast<double>(step);
 

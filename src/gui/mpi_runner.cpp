@@ -176,7 +176,8 @@ void MpiRunner::poll_residuals() {
             continue; // header
         }
         emit progress(step, v[1].toDouble(), v[2].toDouble(), v[3].toDouble(), v[4].toDouble(),
-                      v[5].toDouble(), v[6].toDouble(), v[7].toDouble(), v[8].toDouble());
+                      v[5].toDouble(), v[6].toDouble(), v[7].toDouble(), v[8].toDouble(),
+                      v.size() > 9 ? v[9].toDouble() : 0.0);
     }
 }
 

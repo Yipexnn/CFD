@@ -23,6 +23,9 @@ void SolverWorker::take_snapshot(const cases::CaseRunner& runner) {
         s.fields.nut = sst->nut();
         s.fields.y_plus = sst->y_plus();
     }
+    if (const auto* energy = runner.energy()) {
+        s.fields.t = energy->temperature();
+    }
     {
         const std::lock_guard<std::mutex> lock(mutex_);
         snapshot_ = std::move(s);
@@ -45,7 +48,7 @@ void SolverWorker::run(const cases::CaseConfig& config,
             // At most ~100 progress signals per second (fast cases would flood the GUI).
             if (now - last_progress >= std::chrono::milliseconds(10)) {
                 emit progress(step, time, r.u.x(), r.u.y(), r.u.z(), r.p, r.k, r.omega,
-                              r.continuity);
+                              r.continuity, r.t);
                 last_progress = now;
             }
             if (now - last >= interval_) {

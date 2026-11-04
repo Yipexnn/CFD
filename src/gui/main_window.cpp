@@ -387,8 +387,8 @@ bool MainWindow::is_running() const {
 }
 
 void MainWindow::on_progress(int step, double time, double ux, double uy, double uz, double p,
-                             double k, double omega, double continuity) {
-    plot_->add_point(step, ux, uy, uz, p, k, omega);
+                             double k, double omega, double continuity, double t) {
+    plot_->add_point(step, ux, uy, uz, p, k, omega, t);
     status_->setText(QString("Step %1  t = %2  |  U %3  p %4  continuity %5")
                          .arg(step)
                          .arg(time, 0, 'g', 4)
@@ -418,6 +418,7 @@ void MainWindow::on_mpi_finished(bool ok, const QString& message, const QString&
             f.k = d.k;
             f.omega = d.omega;
             f.nut = d.nut;
+            f.t = d.t;
             show_fields(f, d.step, d.time);
         } catch (const std::exception& e) {
             log(QString("Cannot load parallel results: %1").arg(e.what()));

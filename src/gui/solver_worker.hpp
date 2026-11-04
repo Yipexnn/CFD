@@ -43,7 +43,7 @@ public slots:
 signals:
     void started(int n_cells);
     void progress(int step, double time, double ux, double uy, double uz, double p, double k,
-                  double omega, double continuity);
+                  double omega, double continuity, double t);
     void snapshot_ready();
     void finished(bool ok, const QString& message, const QString& result_file);
 

@@ -137,6 +137,8 @@ jobs:
             --window-screenshot gui-cylinder-mpi.png --quit
           grep -q cylinder_Cx examples/results/cylinder_2d/forces.csv
           mpiexec --oversubscribe -n 4 ./build/linux-system-gui/src/app/cfd run examples/cavity.json
+          mpiexec --oversubscribe -n 2 ./build/linux-system-gui/src/app/cfd run examples/heated_cavity.json
+          grep -q xmin_Nu examples/results/heated_cavity/heat.csv
 
       - name: Upload screenshots
         uses: actions/upload-artifact@v4

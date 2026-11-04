@@ -85,6 +85,18 @@ other patches follow their names (`inlet*`, `outlet*`, `wall*`, `sym*`), otherwi
 | `body_force` | [num, num, num] | `[0, 0, 0]` | Acceleration [m/s^2], e.g. a driving pressure gradient. |
 | `turbulence` | string | `"laminar"` | `"laminar"` or `"kOmegaSST"`. |
 
+### Energy (`physics.energy`)
+
+Enables the temperature equation with Boussinesq buoyancy −β (T − T_ref) g.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `prandtl` / `alpha` | number | `prandtl: 0.71` | Prandtl number ν/α, or the thermal diffusivity α [m²/s] (not both). |
+| `prandtl_t` | number | `0.85` | Turbulent Prandtl number (with kOmegaSST). |
+| `beta` | number | `0` | Thermal expansion coefficient [1/K]. |
+| `t_ref` | number | `0` | Reference temperature [K] (also inlet default and initial value). |
+| `gravity` | [num, num, num] | `[0, 0, 0]` | Gravity [m/s²]. |
+
 ## Boundaries
 
 Object keyed by patch name (`xmin` ... `zmax`). Each entry is an object with:
@@ -97,6 +109,7 @@ Object keyed by patch name (`xmin` ... `zmax`). Each entry is an object with:
 | `turbulence_intensity` | number | `0.05` | Inlet turbulence: k = 1.5 (I \|U\|)^2. |
 | `viscosity_ratio` | number | `10` | Inlet turbulence: nu_t / nu. |
 | `profile` | string | `"uniform"` | Velocity inlet: `"parabolic"` = `velocity` * prod 4 s (1 - s) over the patch extent (peak = `velocity`). |
+| `thermal` | object | adiabatic (inlets: `t_ref`) | Energy equation: `{"type": "fixed" \| "heat_flux" \| "adiabatic", "value": T or q}`; q is kinematic (q/(ρ c_p), K·m/s, positive into the fluid). An entry with only `thermal` keeps the flow condition of the patch type. |
 | `profile_axes` | string | `"y"` | Axes of the parabolic profile, e.g. `"y"` (2D channel) or `"yz"` (rectangular duct). |
 
 Patches without an entry get a default from their patch type:
@@ -117,6 +130,7 @@ Patches without an entry get a default from their patch type:
 | `velocity` | [num, num, num] | `[0, 0, 0]` | Initial velocity field. |
 | `k` | number | `-1` | Initial turbulent kinetic energy. <= 0: derived by the model. |
 | `omega` | number | `-1` | Initial specific dissipation rate. <= 0: derived by the model. |
+| `temperature` | number | `t_ref` | Initial temperature (energy equation). |
 
 ## Solver
 
@@ -150,8 +164,9 @@ Written to `output.directory`:
 
 - `<name>_<step>.vtu`: intermediate results (`write_interval > 0`).
 - `<name>.vtu`: final result (cell data U, p and, with SST, k, omega, nut, yPlus).
-- `residuals.csv`: step, time, Ux, Uy, Uz, p, k, omega, continuity.
+- `residuals.csv`: step, time, Ux, Uy, Uz, p, k, omega, continuity, T.
 - `forces.csv`: step, time and per force patch Fx, Fy, Fz, Cx, Cy, Cz.
+- `heat.csv`: step, time and per heat patch Q, Nu.
 - `mesh/`: Gmsh script, mesh and log (geometry meshes).
 - `checkpoint.bin`: restart file (fields, face flux, step and time).
 
@@ -166,6 +181,17 @@ Optional top-level object; forces on the listed patches are written to `forces.c
 | `density` | number | `1` | Force = density * kinematic force. |
 | `reference_velocity` | number | `1` | Coefficients C = F / (0.5 rho U^2 A). |
 | `reference_area` | number | `1` | Reference area A (2D: diameter * depth). |
+
+## Heat
+
+Optional top-level object (energy equation): heat flow into the fluid per patch, written to
+`heat.csv` like `forces.csv`.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `patches` | [string] | required | Patches to integrate. |
+| `rho_cp` | number | `1` | Q = ρ c_p × kinematic heat flow [W]. |
+| `reference_length`, `reference_delta_t`, `reference_area` | number | `1` | Nu = Q_kin L / (α ΔT A). |
 
 ## Restart
 
