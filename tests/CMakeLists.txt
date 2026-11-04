@@ -36,7 +36,7 @@ endif()
 # Parallel tests: run with mpiexec on 2 and 4 processes.
 if(CFD_ENABLE_MPI)
     find_package(MPI REQUIRED COMPONENTS CXX)
-    add_executable(cfd_mpi_tests mpi/main.cpp mpi/test_parallel_solver.cpp)
+    add_executable(cfd_mpi_tests mpi/main.cpp mpi/test_parallel_solver.cpp mpi/test_parallel_case.cpp)
     target_link_libraries(cfd_mpi_tests PRIVATE cfd::fv cfd::parallel cfd::case GTest::gtest)
     cfd_target_defaults(cfd_mpi_tests)
     foreach(n 2 4)

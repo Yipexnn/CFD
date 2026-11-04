@@ -62,6 +62,8 @@ public:
 
     // True if the library was built with MPI support.
     [[nodiscard]] static bool mpi_available();
+    // Terminates all processes (MPI_Abort; std::exit without MPI).
+    [[noreturn]] static void abort(int code);
 
 private:
     bool initialised_ = false;

@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <cfd/parallel/comm.hpp>
+#include <cstdlib>
 #include <stdexcept>
 
 #ifdef CFD_HAS_MPI
@@ -187,6 +188,15 @@ Environment::~Environment() {
         MPI_Finalize();
     }
 #endif
+}
+
+void Environment::abort(int code) {
+#ifdef CFD_HAS_MPI
+    if (mpi_running()) {
+        MPI_Abort(MPI_COMM_WORLD, code);
+    }
+#endif
+    std::exit(code);
 }
 
 bool Environment::mpi_available() {

@@ -5,6 +5,10 @@
 #include <functional>
 #include <memory>
 
+namespace cfd::parallel {
+struct LocalMesh;
+}
+
 namespace cfd::cases {
 
 struct RunResult {
@@ -52,7 +56,13 @@ public:
     void read_checkpoint(const std::filesystem::path& file);
 
     [[nodiscard]] const CaseConfig& config() const { return config_; }
-    [[nodiscard]] const mesh::Mesh& mesh() const { return *mesh_; }
+    // Mesh the solver works on: the full mesh in serial runs, this process' part (owned +
+    // ghost cells) in MPI runs.
+    [[nodiscard]] const mesh::Mesh& mesh() const;
+    // The undecomposed case mesh (same as mesh() in serial runs).
+    [[nodiscard]] const mesh::Mesh& global_mesh() const { return *global_mesh_; }
+    // Decomposition of an MPI run (nullptr in serial runs).
+    [[nodiscard]] const parallel::LocalMesh* local_mesh() const { return local_.get(); }
     [[nodiscard]] const fv::FlowSolver& flow() const { return *flow_; }
     [[nodiscard]] const fv::KOmegaSst* sst() const { return sst_.get(); }
     [[nodiscard]] int step() const { return step_; }
@@ -63,7 +73,8 @@ private:
     void setup();
 
     CaseConfig config_;
-    std::unique_ptr<mesh::Mesh> mesh_;
+    std::unique_ptr<mesh::Mesh> global_mesh_;
+    std::unique_ptr<parallel::LocalMesh> local_;
     std::unique_ptr<fv::FlowSolver> flow_;
     std::unique_ptr<fv::KOmegaSst> sst_;
     int step_ = 0;

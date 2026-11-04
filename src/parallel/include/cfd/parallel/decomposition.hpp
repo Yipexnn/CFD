@@ -22,6 +22,7 @@ struct LocalMesh {
     Halo halo;
     std::vector<Label> global_cell; // local cell -> global cell
     std::vector<Label> global_face; // local face -> global face (-1: halo face)
+    std::vector<char> face_flipped; // 1: local orientation opposite to the global face
 };
 
 // Builds the local mesh of `part`. comm is stored in the halo (its rank need not equal

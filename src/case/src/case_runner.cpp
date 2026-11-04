@@ -1,6 +1,8 @@
+#include <algorithm>
 #include <cfd/case/case_runner.hpp>
 #include <cfd/mesh/gmsh_reader.hpp>
 #include <cfd/mesh/vtu_writer.hpp>
+#include <cfd/parallel/decomposition.hpp>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -54,13 +56,33 @@ mesh::Mesh build_mesh(const CaseConfig& config) {
                 body.file = config.resolve(body.file);
             }
         }
-        const std::string gmsh = geometry::find_gmsh();
-        if (gmsh.empty()) {
-            throw std::runtime_error("Gmsh executable not found (install Gmsh and add it to "
-                                     "PATH or set CFD_GMSH)");
+        const auto work_dir = config.resolve(config.output.directory) / "mesh";
+        const parallel::Comm& comm = parallel::Comm::world();
+        // Gmsh runs once (root); the other processes read its output.
+        std::string error;
+        if (comm.is_root()) {
+            try {
+                const std::string gmsh = geometry::find_gmsh();
+                if (gmsh.empty()) {
+                    throw std::runtime_error("Gmsh executable not found (install Gmsh and add "
+                                             "it to PATH or set CFD_GMSH)");
+                }
+                if (!comm.parallel()) {
+                    return geometry::generate_mesh(spec, work_dir, gmsh);
+                }
+                (void)geometry::generate_mesh(spec, work_dir, gmsh);
+            } catch (const std::exception& e) {
+                error = e.what();
+                if (!comm.parallel()) {
+                    throw;
+                }
+            }
         }
-        return geometry::generate_mesh(spec, config.resolve(config.output.directory) / "mesh",
-                                       gmsh);
+        comm.broadcast(error);
+        if (!error.empty()) {
+            throw std::runtime_error(error);
+        }
+        return geometry::read_generated_mesh(spec, work_dir);
     }
     case MeshSource::Box:
         break;
@@ -72,15 +94,16 @@ namespace {
 
 using core::Label;
 
-// u = peak * prod_a 4 s (1 - s) over the patch bounding box.
-std::vector<Vec3> parabolic_profile(const mesh::Mesh& mesh, const mesh::Patch& patch,
+// u = peak * prod_a 4 s (1 - s) over the bounding box of the (global) patch.
+std::vector<Vec3> parabolic_profile(const mesh::Mesh& global, const mesh::Patch& global_patch,
+                                    const mesh::Mesh& mesh, const mesh::Patch& patch,
                                     const Vec3& peak, const std::string& axes) {
     const auto& cf = mesh.face_centres();
     Vec3 lo = Vec3::Constant(std::numeric_limits<Scalar>::max());
     Vec3 hi = -lo;
-    for (Label q = 0; q < patch.n_faces; ++q) {
-        for (Label pt : mesh.face(patch.start_face + q)) {
-            const Vec3& x = mesh.points()[static_cast<std::size_t>(pt)];
+    for (Label q = 0; q < global_patch.n_faces; ++q) {
+        for (Label pt : global.face(global_patch.start_face + q)) {
+            const Vec3& x = global.points()[static_cast<std::size_t>(pt)];
             lo = lo.cwiseMin(x);
             hi = hi.cwiseMax(x);
         }
@@ -104,30 +127,43 @@ std::vector<Vec3> parabolic_profile(const mesh::Mesh& mesh, const mesh::Patch& p
 } // namespace
 
 CaseRunner::CaseRunner(CaseConfig config) : config_(std::move(config)) {
-    mesh_ = std::make_unique<mesh::Mesh>(build_mesh(config_));
+    global_mesh_ = std::make_unique<mesh::Mesh>(build_mesh(config_));
     setup();
 }
 
 CaseRunner::CaseRunner(CaseConfig config, mesh::Mesh mesh)
-    : config_(std::move(config)), mesh_(std::make_unique<mesh::Mesh>(std::move(mesh))) {
+    : config_(std::move(config)), global_mesh_(std::make_unique<mesh::Mesh>(std::move(mesh))) {
     setup();
 }
 
+const mesh::Mesh& CaseRunner::mesh() const {
+    return local_ ? local_->mesh : *global_mesh_;
+}
+
 void CaseRunner::setup() {
+    const parallel::Comm& comm = parallel::Comm::world();
+    if (comm.parallel()) {
+        const std::vector<int> parts = parallel::partition_rcb(*global_mesh_, comm.size());
+        local_ = std::make_unique<parallel::LocalMesh>(
+            parallel::decompose(*global_mesh_, parts, comm.rank(), comm));
+    }
+    const mesh::Mesh* const solver_mesh = &mesh();
     for (const auto& name : config_.forces.patches) {
-        if (mesh_->find_patch(name) == nullptr) {
+        if (solver_mesh->find_patch(name) == nullptr) {
             throw std::runtime_error("forces: unknown patch '" + name + "'");
         }
     }
-    flow_ = std::make_unique<fv::FlowSolver>(*mesh_, config_.boundaries, config_.solver.flow);
+    flow_ = std::make_unique<fv::FlowSolver>(*solver_mesh, config_.boundaries, config_.solver.flow,
+                                             local_ ? &local_->halo : nullptr);
     for (const auto& [name, profile] : config_.profiles) {
-        const mesh::Patch* patch = mesh_->find_patch(name);
+        const mesh::Patch* patch = solver_mesh->find_patch(name);
         const auto bc = config_.boundaries.find(name);
         if (patch == nullptr || bc == config_.boundaries.end()) {
             throw std::runtime_error("profile: unknown inlet patch '" + name + "'");
         }
         flow_->set_boundary_velocity_profile(
-            name, parabolic_profile(*mesh_, *patch, bc->second.velocity, profile.axes));
+            name, parabolic_profile(*global_mesh_, *global_mesh_->find_patch(name), *solver_mesh,
+                                    *patch, bc->second.velocity, profile.axes));
     }
     flow_->set_uniform_velocity(config_.initial.velocity);
     if (config_.turbulence == TurbulenceKind::KOmegaSst) {
@@ -148,39 +184,181 @@ std::filesystem::path CaseRunner::output_directory() const {
     return config_.resolve(config_.output.directory);
 }
 
-void CaseRunner::write_results(const std::filesystem::path& file) const {
-    std::vector<mesh::CellScalarData> scalars{{"p", &flow_->pressure()}};
-    std::vector<mesh::CellVectorData> vectors{{"U", &flow_->velocity()}};
-    if (sst_) {
-        scalars.push_back({"k", &sst_->k()});
-        scalars.push_back({"omega", &sst_->omega()});
-        scalars.push_back({"nut", &sst_->nut()});
-        scalars.push_back({"yPlus", &sst_->y_plus()});
+namespace {
+
+const parallel::Comm& world() {
+    return parallel::Comm::world();
+}
+
+// Owned cell values (ncomp per cell) in global cell order (root only in parallel).
+std::vector<Scalar> gather_cells(const parallel::LocalMesh* lm, const Scalar* data,
+                                 std::size_t ncomp, std::size_t n_global) {
+    if (lm == nullptr) {
+        return {data, data + n_global * ncomp};
     }
-    mesh::write_vtu(file, *mesh_, scalars, vectors);
+    const auto no = static_cast<std::size_t>(lm->halo.n_owned);
+    const std::vector<Scalar> values(data, data + no * ncomp);
+    const std::vector<Label> ids(lm->global_cell.begin(),
+                                 lm->global_cell.begin() + static_cast<std::ptrdiff_t>(no));
+    const std::vector<Scalar> all_values = world().gather(values);
+    const std::vector<Label> all_ids = world().gather(ids);
+    std::vector<Scalar> out;
+    if (world().is_root()) {
+        out.resize(n_global * ncomp);
+        for (std::size_t i = 0; i < all_ids.size(); ++i) {
+            const auto g = static_cast<std::size_t>(all_ids[i]);
+            std::copy_n(all_values.begin() + static_cast<std::ptrdiff_t>(i * ncomp), ncomp,
+                        out.begin() + static_cast<std::ptrdiff_t>(g * ncomp));
+        }
+    }
+    return out;
+}
+
+// Face values (first n entries of local faces starting at `first`) in global face order;
+// each global face is taken from the process owning its global owner cell.
+std::vector<Scalar> gather_faces(const parallel::LocalMesh* lm, const mesh::Mesh& global,
+                                 const std::vector<Scalar>& values, bool oriented,
+                                 bool boundary_only) {
+    const auto gnif = static_cast<std::size_t>(global.n_internal_faces());
+    const std::size_t offset = boundary_only ? gnif : 0;
+    const std::size_t n_out = static_cast<std::size_t>(global.n_faces()) - offset;
+    if (lm == nullptr) {
+        return values;
+    }
+    const auto& m = lm->mesh;
+    const auto lnif = static_cast<std::size_t>(m.n_internal_faces());
+    const std::size_t lfirst = boundary_only ? lnif : 0;
+    std::vector<Scalar> v;
+    std::vector<Label> ids;
+    for (std::size_t f = lfirst; f < static_cast<std::size_t>(m.n_faces()); ++f) {
+        const Label g = lm->global_face[f];
+        if (g < 0) {
+            continue;
+        }
+        const bool flipped = lm->face_flipped[f] != 0;
+        const Label global_owner_local =
+            flipped ? m.neighbour()[f] : m.owner()[f]; // flipped faces are internal
+        if (global_owner_local >= lm->halo.n_owned) {
+            continue;
+        }
+        const Scalar x = values[f - lfirst];
+        v.push_back(oriented && flipped ? -x : x);
+        ids.push_back(g - static_cast<Label>(offset));
+    }
+    const std::vector<Scalar> all_values = world().gather(v);
+    const std::vector<Label> all_ids = world().gather(ids);
+    std::vector<Scalar> out;
+    if (world().is_root()) {
+        out.assign(n_out, 0.0);
+        for (std::size_t i = 0; i < all_ids.size(); ++i) {
+            out[static_cast<std::size_t>(all_ids[i])] = all_values[i];
+        }
+    }
+    return out;
+}
+
+std::vector<Scalar> scatter_cells(const parallel::LocalMesh* lm, const std::vector<Scalar>& global,
+                                  std::size_t ncomp) {
+    if (lm == nullptr) {
+        return global;
+    }
+    std::vector<Scalar> local(lm->global_cell.size() * ncomp);
+    for (std::size_t c = 0; c < lm->global_cell.size(); ++c) {
+        const auto g = static_cast<std::size_t>(lm->global_cell[c]);
+        std::copy_n(global.begin() + static_cast<std::ptrdiff_t>(g * ncomp), ncomp,
+                    local.begin() + static_cast<std::ptrdiff_t>(c * ncomp));
+    }
+    return local;
+}
+
+std::vector<Scalar> scatter_faces(const parallel::LocalMesh* lm, const mesh::Mesh& global,
+                                  const std::vector<Scalar>& values, bool oriented,
+                                  bool boundary_only) {
+    if (lm == nullptr) {
+        return values;
+    }
+    const auto& m = lm->mesh;
+    const std::size_t lfirst = boundary_only ? static_cast<std::size_t>(m.n_internal_faces()) : 0;
+    const std::size_t gfirst =
+        boundary_only ? static_cast<std::size_t>(global.n_internal_faces()) : 0;
+    std::vector<Scalar> local(static_cast<std::size_t>(m.n_faces()) - lfirst, 0.0);
+    for (std::size_t f = lfirst; f < static_cast<std::size_t>(m.n_faces()); ++f) {
+        const Label g = lm->global_face[f];
+        if (g >= 0) {
+            const Scalar x = values[static_cast<std::size_t>(g) - gfirst];
+            local[f - lfirst] = oriented && lm->face_flipped[f] != 0 ? -x : x;
+        }
+    }
+    return local;
+}
+
+std::vector<Vec3> to_vec3(const std::vector<Scalar>& v) {
+    std::vector<Vec3> out(v.size() / 3);
+    for (std::size_t i = 0; i < out.size(); ++i) {
+        out[i] = Vec3(v[3 * i], v[3 * i + 1], v[3 * i + 2]);
+    }
+    return out;
+}
+
+} // namespace
+
+void CaseRunner::write_results(const std::filesystem::path& file) const {
+    const auto ng = static_cast<std::size_t>(global_mesh_->n_cells());
+    const parallel::LocalMesh* lm = local_.get();
+    const std::vector<Vec3> u = to_vec3(gather_cells(lm, flow_->velocity().data()->data(), 3, ng));
+    const std::vector<Scalar> p = gather_cells(lm, flow_->pressure().data(), 1, ng);
+    std::vector<std::pair<std::string, std::vector<Scalar>>> turbulence;
+    if (sst_) {
+        turbulence.emplace_back("k", gather_cells(lm, sst_->k().data(), 1, ng));
+        turbulence.emplace_back("omega", gather_cells(lm, sst_->omega().data(), 1, ng));
+        turbulence.emplace_back("nut", gather_cells(lm, sst_->nut().data(), 1, ng));
+        turbulence.emplace_back("yPlus", gather_cells(lm, sst_->y_plus().data(), 1, ng));
+    }
+    if (!world().is_root()) {
+        return;
+    }
+    std::vector<mesh::CellScalarData> scalars{{"p", &p}};
+    std::vector<mesh::CellVectorData> vectors{{"U", &u}};
+    for (const auto& [name, values] : turbulence) {
+        scalars.push_back({name, &values});
+    }
+    mesh::write_vtu(file, *global_mesh_, scalars, vectors);
 }
 
 void CaseRunner::write_checkpoint(const std::filesystem::path& file) const {
+    const mesh::Mesh& g = *global_mesh_;
+    const auto nc = static_cast<std::int64_t>(g.n_cells());
+    const auto nf = static_cast<std::int64_t>(g.n_faces());
+    const auto ng = static_cast<std::size_t>(nc);
+    const parallel::LocalMesh* lm = local_.get();
+    const std::vector<Scalar> u = gather_cells(lm, flow_->velocity().data()->data(), 3, ng);
+    const std::vector<Scalar> p = gather_cells(lm, flow_->pressure().data(), 1, ng);
+    const std::vector<Scalar> phi = gather_faces(lm, g, flow_->face_flux(), true, false);
+    std::vector<std::vector<Scalar>> turbulence;
+    if (sst_) {
+        turbulence.push_back(gather_cells(lm, sst_->k().data(), 1, ng));
+        turbulence.push_back(gather_cells(lm, sst_->omega().data(), 1, ng));
+        turbulence.push_back(gather_cells(lm, sst_->nut().data(), 1, ng));
+        turbulence.push_back(gather_faces(lm, g, sst_->boundary_nut(), false, true));
+    }
+    if (!world().is_root()) {
+        return;
+    }
     std::ofstream out(file, std::ios::binary);
     if (!out) {
         throw std::runtime_error("Checkpoint: cannot write " + file.string());
     }
-    const auto nc = static_cast<std::int64_t>(mesh_->n_cells());
-    const auto nf = static_cast<std::int64_t>(mesh_->n_faces());
     out.write(k_magic, sizeof(k_magic));
     write_pod(out, nc);
     write_pod(out, nf);
     write_pod(out, static_cast<std::int64_t>(step_));
     write_pod(out, time_);
     write_pod(out, static_cast<std::uint8_t>(sst_ ? 1 : 0));
-    write_array(out, flow_->velocity().data()->data(), static_cast<std::size_t>(nc) * 3);
-    write_array(out, flow_->pressure().data(), static_cast<std::size_t>(nc));
-    write_array(out, flow_->face_flux().data(), static_cast<std::size_t>(nf));
-    if (sst_) {
-        write_array(out, sst_->k().data(), static_cast<std::size_t>(nc));
-        write_array(out, sst_->omega().data(), static_cast<std::size_t>(nc));
-        write_array(out, sst_->nut().data(), static_cast<std::size_t>(nc));
-        write_array(out, sst_->boundary_nut().data(), sst_->boundary_nut().size());
+    write_array(out, u.data(), u.size());
+    write_array(out, p.data(), p.size());
+    write_array(out, phi.data(), phi.size());
+    for (const auto& field : turbulence) {
+        write_array(out, field.data(), field.size());
     }
     if (!out) {
         throw std::runtime_error("Checkpoint: write failed for " + file.string());
@@ -188,6 +366,7 @@ void CaseRunner::write_checkpoint(const std::filesystem::path& file) const {
 }
 
 void CaseRunner::read_checkpoint(const std::filesystem::path& file) {
+    const mesh::Mesh& g = *global_mesh_;
     std::ifstream in(file, std::ios::binary);
     if (!in) {
         throw std::runtime_error("Checkpoint: cannot open " + file.string());
@@ -199,35 +378,37 @@ void CaseRunner::read_checkpoint(const std::filesystem::path& file) {
     }
     const auto nc = read_pod<std::int64_t>(in);
     const auto nf = read_pod<std::int64_t>(in);
-    if (nc != mesh_->n_cells() || nf != mesh_->n_faces()) {
+    if (nc != g.n_cells() || nf != g.n_faces()) {
         throw std::runtime_error("Checkpoint: mesh size mismatch (" + std::to_string(nc) +
-                                 " cells in file, " + std::to_string(mesh_->n_cells()) +
-                                 " in mesh)");
+                                 " cells in file, " + std::to_string(g.n_cells()) + " in mesh)");
     }
     const auto step = read_pod<std::int64_t>(in);
     const auto time = read_pod<Scalar>(in);
     const auto has_turbulence = read_pod<std::uint8_t>(in);
 
-    std::vector<Vec3> u(static_cast<std::size_t>(nc));
-    std::vector<Scalar> p(static_cast<std::size_t>(nc));
-    std::vector<Scalar> phi(static_cast<std::size_t>(nf));
-    read_array(in, u.data()->data(), u.size() * 3);
-    read_array(in, p.data(), p.size());
-    read_array(in, phi.data(), phi.size());
+    const auto ncs = static_cast<std::size_t>(nc);
+    auto read_vector = [&](std::size_t n) {
+        std::vector<Scalar> v(n);
+        read_array(in, v.data(), n);
+        return v;
+    };
+    const std::vector<Scalar> u = read_vector(3 * ncs);
+    const std::vector<Scalar> p = read_vector(ncs);
+    const std::vector<Scalar> phi = read_vector(static_cast<std::size_t>(nf));
+    const parallel::LocalMesh* lm = local_.get();
     if (has_turbulence != 0) {
-        std::vector<Scalar> k(static_cast<std::size_t>(nc));
-        std::vector<Scalar> omega(static_cast<std::size_t>(nc));
-        read_array(in, k.data(), k.size());
-        read_array(in, omega.data(), omega.size());
-        std::vector<Scalar> nut(static_cast<std::size_t>(nc));
-        std::vector<Scalar> nut_b(static_cast<std::size_t>(mesh_->n_boundary_faces()));
-        read_array(in, nut.data(), nut.size());
-        read_array(in, nut_b.data(), nut_b.size());
+        const std::vector<Scalar> k = read_vector(ncs);
+        const std::vector<Scalar> omega = read_vector(ncs);
+        const std::vector<Scalar> nut = read_vector(ncs);
+        const std::vector<Scalar> nut_b =
+            read_vector(static_cast<std::size_t>(g.n_boundary_faces()));
         if (sst_) {
-            sst_->set_fields(std::move(k), std::move(omega), std::move(nut), std::move(nut_b));
+            sst_->set_fields(scatter_cells(lm, k, 1), scatter_cells(lm, omega, 1),
+                             scatter_cells(lm, nut, 1), scatter_faces(lm, g, nut_b, false, true));
         }
     }
-    flow_->set_state(std::move(u), std::move(p), std::move(phi));
+    flow_->set_state(to_vec3(scatter_cells(lm, u, 3)), scatter_cells(lm, p, 1),
+                     scatter_faces(lm, g, phi, true, false));
     step_ = static_cast<int>(step);
     time_ = time;
 }
@@ -238,9 +419,16 @@ Vec3 CaseRunner::force(const std::string& patch) const {
 
 RunResult CaseRunner::run(const ProgressCallback& progress) {
     const std::filesystem::path dir = output_directory();
-    std::filesystem::create_directories(dir);
+    const bool root = world().is_root();
+    if (root) {
+        std::filesystem::create_directories(dir);
+    }
+    world().barrier();
     const auto mode = step_ > 0 ? std::ios::app : std::ios::trunc;
-    std::ofstream log(dir / "residuals.csv", mode);
+    std::ofstream log;
+    if (root) {
+        log.open(dir / "residuals.csv", mode);
+    }
     if (step_ == 0) {
         log << "step,time,Ux,Uy,Uz,p,k,omega,continuity\n";
     }
@@ -248,7 +436,9 @@ RunResult CaseRunner::run(const ProgressCallback& progress) {
     const ForcesConfig& fc = config_.forces;
     std::ofstream forces_log;
     if (!fc.patches.empty()) {
-        forces_log.open(dir / "forces.csv", mode);
+        if (root) {
+            forces_log.open(dir / "forces.csv", mode);
+        }
         if (step_ == 0) {
             forces_log << "step,time";
             for (const auto& name : fc.patches) {

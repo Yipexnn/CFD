@@ -483,7 +483,11 @@ mesh::Mesh generate_mesh(const GeometrySpec& spec, const std::filesystem::path& 
         throw std::runtime_error("Gmsh failed (exit code " + std::to_string(rc) + "):\n" +
                                  read_tail(log, 2000));
     }
-    mesh::Mesh mesh = mesh::read_gmsh(msh);
+    return read_generated_mesh(spec, work_dir);
+}
+
+mesh::Mesh read_generated_mesh(const GeometrySpec& spec, const std::filesystem::path& work_dir) {
+    mesh::Mesh mesh = mesh::read_gmsh(work_dir / "geometry.msh");
     // Body surfaces are no-slip walls unless the name says otherwise.
     for (const Body& body : spec.bodies) {
         const mesh::Patch* patch = mesh.find_patch(body.patch);

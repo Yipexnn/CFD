@@ -75,4 +75,9 @@ struct GeometrySpec {
                                        const std::filesystem::path& work_dir,
                                        const std::string& gmsh_executable = find_gmsh());
 
+// Reads <work_dir>/geometry.msh written by generate_mesh (e.g. on other MPI processes)
+// and applies the same patch types.
+[[nodiscard]] mesh::Mesh read_generated_mesh(const GeometrySpec& spec,
+                                             const std::filesystem::path& work_dir);
+
 } // namespace cfd::geometry

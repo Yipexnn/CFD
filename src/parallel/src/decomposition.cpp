@@ -187,6 +187,7 @@ LocalMesh decompose(const mesh::Mesh& global, const std::vector<int>& parts, int
             neighbour.push_back(lf.neighbour);
         }
         lm.global_face.push_back(i >= first_halo ? -1 : lf.global);
+        lm.face_flipped.push_back(lf.flip ? 1 : 0);
     }
     lm.mesh = mesh::Mesh(std::move(points), std::move(offsets), std::move(face_points),
                          std::move(owner), std::move(neighbour), std::move(patches),
