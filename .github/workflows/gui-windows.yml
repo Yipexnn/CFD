@@ -72,9 +72,14 @@ jobs:
         run: cmake --build --preset windows-msvc-gui-release
 
       - name: Test
-        run: ctest --preset windows-msvc-gui-release -LE mpi
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          ctest --preset windows-msvc-gui-release -LE mpi
+          Write-Host "Logical processors: $env:NUMBER_OF_PROCESSORS"
+        shell: pwsh
 
-      # MPI tests in their own step with a hard limit (diagnosable if mpiexec misbehaves).
+      # MPI tests in their own step with a hard limit. Only 2 processes: the runner may have
+      # just 2 vCPUs, and busy-waiting MS-MPI processes are extremely slow when oversubscribed.
       - name: Test (MPI)
         timeout-minutes: 10
         shell: pwsh
@@ -82,7 +87,5 @@ jobs:
           $exe = "build/windows-msvc-gui-release/tests/cfd_mpi_tests.exe"
           & "C:\Program Files\Microsoft MPI\Bin\mpiexec.exe" -n 2 $exe --gtest_filter=ParallelSolver.RunsOnSeveralProcesses
           & "C:\Program Files\Microsoft MPI\Bin\mpiexec.exe" -n 2 $exe
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & "C:\Program Files\Microsoft MPI\Bin\mpiexec.exe" -n 4 $exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & "C:\Program Files\Microsoft MPI\Bin\mpiexec.exe" -n 2 build/windows-msvc-gui-release/src/app/cfd.exe run examples/cavity.json

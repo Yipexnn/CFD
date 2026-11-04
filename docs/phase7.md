@@ -46,6 +46,8 @@ meaning to serial runs; serial build and behaviour unchanged.
   preconditioner instead of a global AMG). A true parallel AMG would raise the speed-up further.
 
 ## Usage
+- Use at most one process per core: MS-MPI processes busy-wait, so oversubscribed runs are
+  extremely slow (seen on a 2-vCPU CI runner with 4 processes).
 - MPI runs use one OpenMP thread per process unless `OMP_NUM_THREADS` is set (processes ×
   threads must not exceed the cores; oversubscription slows busy-waiting MPI dramatically).
 - CLI: `mpiexec -n 4 cfd run case.json` (needs a build with `CFD_ENABLE_MPI=ON`)
