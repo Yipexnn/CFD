@@ -43,5 +43,6 @@ if(CFD_ENABLE_MPI)
         add_test(NAME cfd_mpi_tests_np${n}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${n} ${MPIEXEC_PREFLAGS}
                          $<TARGET_FILE:cfd_mpi_tests> ${MPIEXEC_POSTFLAGS})
+        set_tests_properties(cfd_mpi_tests_np${n} PROPERTIES TIMEOUT 300 LABELS mpi)
     endforeach()
 endif()

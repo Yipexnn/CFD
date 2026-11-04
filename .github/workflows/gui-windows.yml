@@ -72,4 +72,17 @@ jobs:
         run: cmake --build --preset windows-msvc-gui-release
 
       - name: Test
-        run: ctest --preset windows-msvc-gui-release
+        run: ctest --preset windows-msvc-gui-release -LE mpi
+
+      # MPI tests in their own step with a hard limit (diagnosable if mpiexec misbehaves).
+      - name: Test (MPI)
+        timeout-minutes: 10
+        shell: pwsh
+        run: |
+          $exe = "build/windows-msvc-gui-release/tests/cfd_mpi_tests.exe"
+          & "C:\Program Files\Microsoft MPI\Bin\mpiexec.exe" -n 2 $exe --gtest_filter=ParallelSolver.RunsOnSeveralProcesses
+          & "C:\Program Files\Microsoft MPI\Bin\mpiexec.exe" -n 2 $exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & "C:\Program Files\Microsoft MPI\Bin\mpiexec.exe" -n 4 $exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & "C:\Program Files\Microsoft MPI\Bin\mpiexec.exe" -n 2 build/windows-msvc-gui-release/src/app/cfd.exe run examples/cavity.json
