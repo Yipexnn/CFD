@@ -132,6 +132,8 @@ void FlowSolver::set_cell_acceleration(std::vector<Vec3> acceleration) {
 void FlowSolver::set_uniform_velocity(const Vec3& u) {
     std::fill(u_.begin(), u_.end(), u);
     u_old_ = u_;
+    u_old_old_.clear();
+    dt_old_ = 0.0;
     compute_initial_flux();
 }
 
@@ -165,6 +167,8 @@ void FlowSolver::set_state(std::vector<Vec3> u, std::vector<Scalar> p) {
     }
     u_ = std::move(u);
     u_old_ = u_;
+    u_old_old_.clear();
+    dt_old_ = 0.0;
     p_ = std::move(p);
     compute_initial_flux();
 }
@@ -344,6 +348,9 @@ void FlowSolver::assemble_momentum(MomentumSystem& sys, Scalar dt, bool relax) c
     const Scalar nu = settings_.nu;
     const bool linear_upwind = settings_.convection != ConvectionScheme::Upwind;
     const bool limited = settings_.convection == ConvectionScheme::LimitedLinearUpwind;
+    // Constant-step BDF2 once two old levels exist (Euler otherwise).
+    const bool bdf2 = dt > 0.0 && settings_.time_scheme == TimeScheme::Backward &&
+                      u_old_old_.size() == u_.size() && std::abs(dt - dt_old_) <= 1e-12 * dt;
 
     LduMatrix& a = sys.base;
     a.set_zero();
@@ -463,8 +470,13 @@ void FlowSolver::assemble_momentum(MomentumSystem& sys, Scalar dt, bool relax) c
         }
         if (dt > 0.0) {
             const Scalar ddt = vol[c] / dt;
-            a.diag[c] += ddt;
-            sys.source[c] += ddt * u_old_[c];
+            if (bdf2) {
+                a.diag[c] += 1.5 * ddt;
+                sys.source[c] += ddt * (2.0 * u_old_[c] - 0.5 * u_old_old_[c]);
+            } else {
+                a.diag[c] += ddt;
+                sys.source[c] += ddt * u_old_[c];
+            }
         }
         sys.diag[c] += Vec3::Constant(a.diag[c]);
         if (relax) {
@@ -690,6 +702,9 @@ Residuals FlowSolver::piso_step(Scalar dt) {
     if (dt <= 0.0) {
         throw std::invalid_argument("FlowSolver::piso_step: dt must be positive");
     }
+    if (settings_.time_scheme == TimeScheme::Backward && dt_old_ > 0.0) {
+        u_old_old_ = u_old_;
+    }
     u_old_ = u_;
     MomentumSystem sys{LduMatrix(geo_.mesh()), {}, {}};
     sys.base.pattern = &geo_.csr_pattern();
@@ -707,6 +722,7 @@ Residuals FlowSolver::piso_step(Scalar dt) {
         std::tie(res.k, res.omega) = turbulence_->correct(*this, dt);
     }
     res.continuity = continuity_error();
+    dt_old_ = dt;
     history_.push_back(res);
     return res;
 }

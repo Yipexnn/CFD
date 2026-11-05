@@ -28,6 +28,10 @@ struct BoundaryCondition {
 // robust at high cell Peclet numbers).
 enum class ConvectionScheme { Upwind, LinearUpwind, LimitedLinearUpwind };
 
+// Transient schemes: implicit Euler (1st order) or backward differencing (BDF2, 2nd order;
+// the first step after a start / restart uses Euler).
+enum class TimeScheme { Euler, Backward };
+
 struct FlowSettings {
     Scalar nu = 1e-3;               // kinematic viscosity [m^2/s]
     Vec3 body_force = Vec3::Zero(); // acceleration [m/s^2], e.g. driving pressure gradient
@@ -36,6 +40,7 @@ struct FlowSettings {
     Scalar alpha_p = 0.3; // SIMPLE pressure under-relaxation
     int n_non_orth_correctors = 0;
     int n_piso_correctors = 2;
+    TimeScheme time_scheme = TimeScheme::Euler;
     LinearSolverSettings u_solver{LinearSolverType::BiCgStab, 1e-10, 0.1, 1000};
     LinearSolverSettings p_solver{LinearSolverType::AmgCg, 1e-10, 0.01, 500};
 };
@@ -156,6 +161,8 @@ private:
 
     std::vector<Vec3> u_;
     std::vector<Vec3> u_old_;
+    std::vector<Vec3> u_old_old_; // BDF2: velocity two steps back (empty: not available)
+    Scalar dt_old_ = 0.0;
     std::vector<Scalar> p_;
     std::vector<Scalar> phi_;
     std::vector<Residuals> history_;

@@ -1,0 +1,29 @@
+{
+  // Schaefer-Turek benchmark 2D-2 (Re = 100, vortex shedding): Cd_max 3.22-3.24,
+  // Cl_max 0.99-1.01, St 0.295-0.305. Needs Gmsh. Cd/Cl history in results/.../forces.csv.
+  "name": "cylinder_2d_re100",
+  "mesh": {
+    "type": "geometry",
+    "min": [0, 0, 0],
+    "max": [2.2, 0.41, 0.01],
+    "two_d": true,
+    "bodies": [{ "type": "cylinder", "base": [0.2, 0.2, 0], "radius": 0.05, "patch": "cylinder" }],
+    "size": 0.02,
+    "size_near": 0.003,
+    "refine_distance": 0.3,
+    "boundary_layer": { "layers": 8, "first": 2e-4, "ratio": 1.2 },
+    "domain_patches": { "xmin": "inlet", "xmax": "outlet", "ymin": "walls", "ymax": "walls",
+                        "zmin": "front", "zmax": "back" }
+  },
+  "physics": { "nu": 1e-3 },
+  "boundaries": {
+    "inlet": { "type": "velocity_inlet", "velocity": [1.5, 0, 0], "profile": "parabolic", "profile_axes": "y" },
+    "outlet": { "type": "pressure_outlet" },
+    "front": { "type": "empty" },
+    "back": { "type": "empty" }
+  },
+  "solver": { "mode": "transient", "dt": 0.001, "end_time": 8, "time_scheme": "backward",
+              "convection": "linear_upwind", "non_orthogonal_correctors": 1 },
+  "forces": { "patches": ["cylinder"], "reference_velocity": 1.0, "reference_area": 0.001 },
+  "output": { "directory": "results/cylinder_2d_re100", "log_interval": 10, "write_interval": 500 }
+}

@@ -415,7 +415,7 @@ CaseConfig parse_case(const std::string& json_text, const std::filesystem::path&
         const std::string path = "solver";
         check_keys(s, path,
                    {"mode", "max_iterations", "tolerance", "dt", "end_time", "alpha_u", "alpha_p",
-                    "convection", "non_orthogonal_correctors", "piso_correctors"});
+                    "convection", "non_orthogonal_correctors", "piso_correctors", "time_scheme"});
         const std::string mode = get_string(s, "mode", path, "steady");
         if (mode == "steady") {
             c.solver.mode = SolverMode::Steady;
@@ -444,6 +444,14 @@ CaseConfig parse_case(const std::string& json_text, const std::filesystem::path&
         flow.n_non_orth_correctors =
             get_int(s, "non_orthogonal_correctors", path, flow.n_non_orth_correctors);
         flow.n_piso_correctors = get_int(s, "piso_correctors", path, flow.n_piso_correctors);
+        const std::string ts = get_string(s, "time_scheme", path, "euler");
+        if (ts == "euler") {
+            flow.time_scheme = fv::TimeScheme::Euler;
+        } else if (ts == "backward") {
+            flow.time_scheme = fv::TimeScheme::Backward;
+        } else {
+            fail(path + ".time_scheme", "unknown scheme '" + ts + "' (euler, backward)");
+        }
         if (c.solver.max_iterations < 1 || !(c.solver.dt > 0.0) || !(c.solver.end_time > 0.0) ||
             !(flow.alpha_u > 0.0 && flow.alpha_u <= 1.0) ||
             !(flow.alpha_p > 0.0 && flow.alpha_p <= 1.0) || flow.n_non_orth_correctors < 0 ||

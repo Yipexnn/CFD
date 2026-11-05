@@ -221,6 +221,7 @@ std::string case_to_json(const CaseConfig& config) {
     solver["convection"] = convection_name(flow.convection);
     solver["non_orthogonal_correctors"] = flow.n_non_orth_correctors;
     solver["piso_correctors"] = flow.n_piso_correctors;
+    solver["time_scheme"] = flow.time_scheme == fv::TimeScheme::Backward ? "backward" : "euler";
     root["solver"] = solver;
 
     ordered_json output = ordered_json::object();

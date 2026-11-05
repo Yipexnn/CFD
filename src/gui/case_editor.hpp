@@ -131,6 +131,7 @@ private:
     QDoubleSpinBox* alpha_u_ = nullptr;
     QDoubleSpinBox* alpha_p_ = nullptr;
     QComboBox* convection_ = nullptr;
+    QComboBox* time_scheme_ = nullptr;
     QSpinBox* non_orth_correctors_ = nullptr;
     QSpinBox* piso_correctors_ = nullptr;
 

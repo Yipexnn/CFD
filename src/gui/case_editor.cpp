@@ -437,6 +437,11 @@ QWidget* CaseEditor::build_solver_tab() {
     add_items(convection_, kConvectionNames);
     form->addRow(QStringLiteral("Convection"), convection_);
     watch(convection_, false);
+    time_scheme_ = new QComboBox(page);
+    time_scheme_->addItem(QStringLiteral("Euler (1st order)"));
+    time_scheme_->addItem(QStringLiteral("Backward (BDF2, 2nd order)"));
+    form->addRow(QStringLiteral("Time scheme (transient)"), time_scheme_);
+    watch(time_scheme_, false);
 
     non_orth_correctors_ = make_int(page, 0, 10, 0);
     piso_correctors_ = make_int(page, 1, 10, 2);
@@ -527,6 +532,7 @@ void CaseEditor::set_config(const cases::CaseConfig& cfg) {
     alpha_u_->setValue(flow.alpha_u);
     alpha_p_->setValue(flow.alpha_p);
     convection_->setCurrentIndex(index_of(kConvections, flow.convection));
+    time_scheme_->setCurrentIndex(flow.time_scheme == fv::TimeScheme::Backward ? 1 : 0);
     non_orth_correctors_->setValue(flow.n_non_orth_correctors);
     piso_correctors_->setValue(flow.n_piso_correctors);
 
@@ -600,6 +606,8 @@ cases::CaseConfig CaseEditor::config() const {
     flow.alpha_u = alpha_u_->value();
     flow.alpha_p = alpha_p_->value();
     flow.convection = kConvections[current_index(convection_)];
+    flow.time_scheme =
+        time_scheme_->currentIndex() == 1 ? fv::TimeScheme::Backward : fv::TimeScheme::Euler;
     flow.n_non_orth_correctors = non_orth_correctors_->value();
     flow.n_piso_correctors = piso_correctors_->value();
 

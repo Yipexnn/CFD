@@ -19,6 +19,7 @@ add_executable(cfd_tests
     test_case_geometry.cpp
     test_decomposition.cpp
     test_energy.cpp
+    test_time_scheme.cpp
 )
 target_link_libraries(cfd_tests PRIVATE cfd::core cfd::mesh cfd::fv cfd::parallel cfd::geometry cfd::case GTest::gtest_main)
 cfd_target_defaults(cfd_tests)
