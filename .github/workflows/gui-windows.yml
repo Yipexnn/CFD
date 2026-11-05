@@ -57,6 +57,24 @@ jobs:
           key: vcpkg-gui2-${{ runner.os }}-${{ hashFiles('vcpkg.json', 'CMakePresets.json', 'vcpkg/ports/**') }}
           restore-keys: vcpkg-gui2-${{ runner.os }}-
 
+      # pcre2 (Qt dependency) fetches a file from api.github.com, which rate-limits anonymous
+      # requests from shared runners (HTTP 403). Pre-fetch it with the workflow token.
+      - name: Pre-fetch pcre2 sljit gitlink
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $dl = Join-Path $env:VCPKG_ROOT 'downloads'
+          New-Item -ItemType Directory -Force $dl | Out-Null
+          $f = Join-Path $dl 'pcre2-pcre2-10.49-sljit-gitlink.json'
+          $expected = '719fa1d8d8e1e749ce6f7370db32818268f84b1376ed9367fd5290ab440d8bea7a6a25a68e55045a45da68b0ce7a55daa0d7acd2f1b11774319b50268c02441c'
+          try {
+            Invoke-WebRequest -Uri 'https://api.github.com/repos/PCRE2Project/pcre2/contents/deps/sljit?ref=pcre2-10.49' `
+              -Headers @{ Authorization = "Bearer $env:GH_TOKEN" } -OutFile $f
+            $hash = (Get-FileHash $f -Algorithm SHA512).Hash.ToLower()
+            if ($hash -ne $expected) { Write-Warning "sljit gitlink hash mismatch ($hash), leaving download to vcpkg"; Remove-Item $f }
+          } catch { Write-Warning "pre-fetch failed: $_" }
+
       - name: Configure (builds Qt and VTK on a cache miss)
         run: cmake --preset windows-msvc-gui-release -DCFD_WARNINGS_AS_ERRORS=ON
 
