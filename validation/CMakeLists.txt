@@ -17,3 +17,11 @@ cfd_target_defaults(cylinder_schaefer_turek_2d2)
 add_executable(dam_break dam_break.cpp)
 target_link_libraries(dam_break PRIVATE cfd::fv)
 cfd_target_defaults(dam_break)
+
+add_executable(sod_shock_tube sod_shock_tube.cpp)
+target_link_libraries(sod_shock_tube PRIVATE cfd::fv)
+cfd_target_defaults(sod_shock_tube)
+
+add_executable(supersonic_ramp supersonic_ramp.cpp)
+target_link_libraries(supersonic_ramp PRIVATE cfd::fv)
+cfd_target_defaults(supersonic_ramp)

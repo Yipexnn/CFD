@@ -9,6 +9,7 @@ add_library(cfd_fv STATIC
     src/energy.cpp
     src/parallel_amg.cpp
     src/multiphase.cpp
+    src/compressible.cpp
 )
 add_library(cfd::fv ALIAS cfd_fv)
 
