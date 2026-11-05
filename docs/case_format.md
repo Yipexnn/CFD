@@ -89,6 +89,30 @@ other patches follow their names (`inlet*`, `outlet*`, `wall*`, `sym*`), otherwi
 | `body_force` | [num, num, num] | `[0, 0, 0]` | Acceleration [m/s^2], e.g. a driving pressure gradient. |
 | `turbulence` | string | `"laminar"` | `"laminar"` or `"kOmegaSST"`. |
 
+### Compressible (`physics.compressible`)
+
+Density-based solver for an ideal gas (HLLC fluxes, MUSCL reconstruction, explicit SSP-RK3;
+steady mode uses local time stepping). Not combinable with turbulence, energy, solids or
+multiphase yet.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `gamma` | number | `1.4` | Ratio of specific heats. |
+| `r_gas` | number | `287` | Specific gas constant [J/(kg K)]. |
+| `mu` | number | `0` | Dynamic viscosity [Pa s]; 0 = inviscid (Euler). |
+| `prandtl` | number | `0.72` | Heat conduction k = mu c_p / Pr. |
+| `cfl` | number | `0.5` | Courant number of the explicit time step. |
+| `second_order` | bool | `true` | MUSCL reconstruction (Barth–Jespersen limiter). |
+
+Boundaries: `velocity_inlet` = fixed state (`velocity`, `pressure`, `temperature`);
+`pressure_outlet` = static `pressure` if subsonic (`pressure` <= 0: extrapolate);
+`wall` = no-slip adiabatic (slip if `mu` = 0); `symmetry` = slip; `empty`.
+Initial: `initial.velocity`, `initial.pressure`, `initial.temperature` and
+`initial.regions: [{"min", "max", "velocity", "pressure", "temperature"}]`.
+Transient runs use dt = min(`solver.dt`, CFL limit); steady runs stop when the density
+residual (relative to the first iteration) drops below `solver.tolerance`.
+Output fields: U, p, rho, T, Mach.
+
 ### Multiphase (`physics.multiphase`)
 
 Two immiscible incompressible fluids (volume of fluid, transient only; not combinable with

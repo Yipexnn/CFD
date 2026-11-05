@@ -145,6 +145,8 @@ jobs:
           grep -q plate_Q examples/results/conjugate_plate/heat.csv
           mpiexec --oversubscribe -n 2 ./build/linux-system-gui/src/app/cfd run examples/dam_break.json
           test -s examples/results/dam_break/dam_break.vtu
+          mpiexec --oversubscribe -n 2 ./build/linux-system-gui/src/app/cfd run examples/sod_shock_tube.json
+          test -s examples/results/sod_shock_tube/sod_shock_tube.vtu
 
       - name: Upload screenshots
         uses: actions/upload-artifact@v4

@@ -6,7 +6,7 @@ See [PLAN.md](PLAN.md) and [Phase 0 details](docs/phase0.md).
 
 ## Status
 
-Phases 0–9 done: mesh core, laminar solver (SIMPLE/PISO), k-ω SST turbulence, JSON case files with VTU output and restart, AMG pressure solver, desktop GUI, geometry import and auto meshing (Gmsh) with force coefficients, MPI parallel runs, heat transfer with buoyancy and solid regions (conjugate), BDF2 transient benchmark.
+Phases 0–10 done: mesh core, laminar solver (SIMPLE/PISO), k-ω SST turbulence, JSON case files with VTU output and restart, AMG pressure solver, desktop GUI, geometry import and auto meshing (Gmsh) with force coefficients, MPI parallel runs, heat transfer with buoyancy and solid regions (conjugate), BDF2 transient benchmark, VOF two-phase flow, compressible flow (shocks).
 
 ## Windows setup (CLion)
 
@@ -81,6 +81,8 @@ cfd run examples/heated_cavity.json # natural convection (energy equation), Nuss
 cfd run examples/conjugate_plate.json  # conjugate heat transfer (fluid + solid plate)
 cfd run examples/cylinder_2d_re100.json # vortex shedding (transient, needs Gmsh)
 cfd run examples/dam_break.json     # two-phase VOF (water column collapse)
+cfd run examples/sod_shock_tube.json # compressible shock tube
+cfd run examples/forward_step_mach3.json # supersonic flow (needs Gmsh)
 cfd run examples/conjugate_block_2d.json # meshed solid body (CHT, needs Gmsh)
 cfd mesh-box 10 10 10               # create a box mesh and print statistics
 cfd check-mesh mesh.msh             # check a Gmsh 4.1 mesh

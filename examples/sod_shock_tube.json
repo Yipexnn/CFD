@@ -1,0 +1,23 @@
+{
+  // Sod shock tube (compressible, non-dimensional: R = 1, gamma = 1.4), t = 0.2.
+  // Left: rho = 1, p = 1 (T = 1); right: rho = 0.125, p = 0.1 (T = 0.8).
+  "name": "sod_shock_tube",
+  "mesh": {
+    "type": "box",
+    "cells": [400, 1, 1],
+    "max": [1, 0.01, 0.01],
+    "patch_types": { "xmin": "outlet", "xmax": "outlet", "ymin": "patch", "ymax": "patch",
+                     "zmin": "patch", "zmax": "patch" }
+  },
+  "physics": { "compressible": { "gamma": 1.4, "r_gas": 1.0, "cfl": 0.5 } },
+  "boundaries": {
+    "ymin": { "type": "empty" }, "ymax": { "type": "empty" },
+    "zmin": { "type": "empty" }, "zmax": { "type": "empty" }
+  },
+  "initial": {
+    "pressure": 0.1, "temperature": 0.8,
+    "regions": [ { "min": [-1, -1, -1], "max": [0.5, 1, 1], "pressure": 1.0, "temperature": 1.0 } ]
+  },
+  "solver": { "mode": "transient", "dt": 1.0, "end_time": 0.2 },
+  "output": { "directory": "results/sod_shock_tube", "log_interval": 100 }
+}

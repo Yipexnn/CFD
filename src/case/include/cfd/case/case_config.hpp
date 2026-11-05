@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cfd/fv/compressible.hpp>
 #include <cfd/fv/energy.hpp>
 #include <cfd/fv/flow_solver.hpp>
 #include <cfd/fv/k_omega_sst.hpp>
@@ -50,6 +51,18 @@ struct InitialConfig {
     std::optional<Scalar> temperature; // default: energy t_ref
     // Multiphase: boxes filled with phase 1 (alpha = 1); everything else alpha = 0.
     std::vector<std::pair<Vec3, Vec3>> alpha_regions;
+    // Compressible: initial gas state (pressure [Pa], temperature [K]) and boxes with their
+    // own state (e.g. a shock tube).
+    Scalar pressure = 1e5;
+    Scalar temperature_gas = 300.0;
+    struct GasRegion {
+        Vec3 min;
+        Vec3 max;
+        Vec3 velocity;
+        Scalar pressure;
+        Scalar temperature;
+    };
+    std::vector<GasRegion> regions;
 };
 
 // Solid region for conjugate heat transfer: cells of the mesh zone `name` (Gmsh physical
@@ -99,9 +112,10 @@ struct CaseConfig {
     std::optional<fv::EnergySettings> energy;     // energy equation enabled
     std::map<std::string, fv::ThermalBoundary> thermal;
     HeatConfig heat;
-    std::optional<fv::MultiphaseSettings> multiphase; // VOF two-phase flow (transient)
-    std::map<std::string, Scalar> inlet_alpha;        // multiphase: alpha at velocity inlets
-    std::vector<SolidConfig> solids;                  // conjugate heat transfer (needs energy)
+    std::optional<fv::MultiphaseSettings> multiphase;     // VOF two-phase flow (transient)
+    std::optional<fv::CompressibleSettings> compressible; // density-based compressible flow
+    std::map<std::string, Scalar> inlet_alpha;            // multiphase: alpha at velocity inlets
+    std::vector<SolidConfig> solids;                      // conjugate heat transfer (needs energy)
     ForcesConfig forces;
     InitialConfig initial;
     SolverConfig solver;

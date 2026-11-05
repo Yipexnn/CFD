@@ -136,11 +136,17 @@ CaseRunner::CaseRunner(CaseConfig config, mesh::Mesh mesh)
     setup();
 }
 
-const std::vector<Vec3>& CaseRunner::velocity() const {
+std::vector<Vec3> CaseRunner::velocity() const {
+    if (compressible_) {
+        return compressible_->velocity();
+    }
     return multiphase_ ? multiphase_->velocity() : flow_->velocity();
 }
 
 std::vector<Scalar> CaseRunner::pressure() const {
+    if (compressible_) {
+        return compressible_->pressure();
+    }
     return multiphase_ ? multiphase_->pressure() : flow_->pressure();
 }
 
@@ -297,6 +303,32 @@ void CaseRunner::setup() {
         }
     }
     const parallel::Halo* flow_halo = fluid_ && local_ ? &fluid_->halo : full_halo;
+    if (config_.compressible) {
+        if (!config_.forces.patches.empty() || !config_.profiles.empty()) {
+            throw std::runtime_error(
+                "compressible: forces and inlet profiles are not supported yet");
+        }
+        compressible_ = std::make_unique<fv::CompressibleSolver>(*solver_mesh, config_.boundaries,
+                                                                 *config_.compressible, flow_halo);
+        const Scalar r = config_.compressible->r_gas;
+        const auto& in = config_.initial;
+        std::vector<fv::GasState> states(
+            static_cast<std::size_t>(solver_mesh->n_cells()),
+            {in.pressure / (r * in.temperature_gas), in.velocity, in.pressure});
+        for (std::size_t c = 0; c < states.size(); ++c) {
+            const Vec3& x = solver_mesh->cell_centres()[c];
+            for (const auto& g : in.regions) {
+                if ((x.array() >= g.min.array()).all() && (x.array() <= g.max.array()).all()) {
+                    states[c] = {g.pressure / (r * g.temperature), g.velocity, g.pressure};
+                }
+            }
+        }
+        compressible_->set_state(states);
+        if (config_.restart) {
+            read_checkpoint(config_.resolve(*config_.restart));
+        }
+        return;
+    }
     if (config_.multiphase) {
         if (!config_.forces.patches.empty() || !config_.profiles.empty()) {
             throw std::runtime_error("multiphase: forces and inlet profiles are not supported yet");
@@ -494,9 +526,16 @@ void CaseRunner::write_results(const std::filesystem::path& file) const {
     auto cells = [&](const Scalar* values, std::size_t ncomp) {
         return gather_cells(lm, to_full_cells(values, ncomp).data(), ncomp, ng);
     };
-    const std::vector<Vec3> u = to_vec3(cells(velocity().data()->data(), 3));
-    const std::vector<Scalar> p = cells(pressure().data(), 1);
+    const std::vector<Vec3> u_cells = velocity();
+    const std::vector<Scalar> p_cells = pressure();
+    const std::vector<Vec3> u = to_vec3(cells(u_cells.data()->data(), 3));
+    const std::vector<Scalar> p = cells(p_cells.data(), 1);
     std::vector<std::pair<std::string, std::vector<Scalar>>> turbulence;
+    if (compressible_) {
+        turbulence.emplace_back("rho", cells(compressible_->density().data(), 1));
+        turbulence.emplace_back("T", cells(compressible_->temperature().data(), 1));
+        turbulence.emplace_back("Mach", cells(compressible_->mach().data(), 1));
+    }
     if (multiphase_) {
         turbulence.emplace_back("alpha", cells(multiphase_->alpha().data(), 1));
         turbulence.emplace_back("p_rgh", cells(multiphase_->p_rgh().data(), 1));
@@ -531,11 +570,22 @@ void CaseRunner::write_checkpoint(const std::filesystem::path& file) const {
     auto cells = [&](const Scalar* values, std::size_t ncomp) {
         return gather_cells(lm, to_full_cells(values, ncomp).data(), ncomp, ng);
     };
-    const std::vector<Scalar> u = cells(velocity().data()->data(), 3);
-    const std::vector<Scalar> p =
-        cells(multiphase_ ? multiphase_->p_rgh().data() : flow_->pressure().data(), 1);
-    const std::vector<Scalar>& face_flux =
-        multiphase_ ? multiphase_->face_flux() : flow_->face_flux();
+    const std::vector<Vec3> u_cells = velocity();
+    const std::vector<Scalar> p_cells = multiphase_ ? multiphase_->p_rgh() : pressure();
+    const std::vector<Scalar> u = cells(u_cells.data()->data(), 3);
+    const std::vector<Scalar> p = cells(p_cells.data(), 1);
+    const std::vector<Scalar> no_flux(static_cast<std::size_t>(mesh().n_faces()), 0.0);
+    const std::vector<Scalar>& face_flux = multiphase_     ? multiphase_->face_flux()
+                                           : compressible_ ? no_flux
+                                                           : flow_->face_flux();
+    std::vector<Scalar> conserved;
+    if (compressible_) {
+        std::vector<Scalar> flat;
+        for (const auto& qc : compressible_->conserved()) {
+            flat.insert(flat.end(), qc.data(), qc.data() + 5);
+        }
+        conserved = cells(flat.data(), 5);
+    }
     const std::vector<Scalar> phi =
         gather_faces(lm, g, to_full_faces(face_flux, true, false), true, false);
     const std::vector<Scalar> alpha =
@@ -575,6 +625,9 @@ void CaseRunner::write_checkpoint(const std::filesystem::path& file) const {
     // Optional multiphase block: p above is p_rgh.
     write_pod(out, static_cast<std::uint8_t>(multiphase_ ? 1 : 0));
     write_array(out, alpha.data(), alpha.size());
+    // Optional compressible block: conserved variables (rho, rho u, rho E) per cell.
+    write_pod(out, static_cast<std::uint8_t>(compressible_ ? 1 : 0));
+    write_array(out, conserved.data(), conserved.size());
     if (!out) {
         throw std::runtime_error("Checkpoint: write failed for " + file.string());
     }
@@ -622,6 +675,9 @@ CheckpointData read_checkpoint_file(const std::filesystem::path& file, Label n_c
     if (in.peek() != std::char_traits<char>::eof() && read_pod<std::uint8_t>(in) != 0) {
         d.alpha = read_vector(ncs);
     }
+    if (in.peek() != std::char_traits<char>::eof() && read_pod<std::uint8_t>(in) != 0) {
+        d.conserved = read_vector(5 * ncs);
+    }
     return d;
 }
 
@@ -642,6 +698,20 @@ void CaseRunner::read_checkpoint(const std::filesystem::path& file) {
         for (int i = 0; i < 3; ++i) {
             u_flat[3 * c + static_cast<std::size_t>(i)] = d.u[c][i];
         }
+    }
+    if (compressible_) {
+        if (d.conserved.empty()) {
+            throw std::runtime_error("Checkpoint: no conserved variables for a compressible case");
+        }
+        const std::vector<Scalar> flat = cells(d.conserved, 5);
+        std::vector<fv::CompressibleSolver::Conserved> q(flat.size() / 5);
+        for (std::size_t c = 0; c < q.size(); ++c) {
+            q[c] = Eigen::Map<const fv::CompressibleSolver::Conserved>(flat.data() + 5 * c);
+        }
+        compressible_->set_conserved(std::move(q));
+        step_ = d.step;
+        time_ = d.time;
+        return;
     }
     if (multiphase_) {
         if (d.alpha.empty()) {
@@ -758,8 +828,44 @@ RunResult CaseRunner::run(const ProgressCallback& progress) {
     const bool adaptive = multiphase_ && s.max_courant > 0.0;
 
     RunResult result;
-    while (multiphase_ ? time_ < s.end_time * (1.0 - 1e-12) : step_ < max_steps) {
+    const bool time_loop = multiphase_ || (compressible_ && !steady);
+    while (time_loop ? time_ < s.end_time * (1.0 - 1e-12) : step_ < max_steps) {
         fv::Residuals r;
+        if (compressible_) {
+            if (steady) {
+                r.p = compressible_->steady_iteration();
+            } else {
+                const Scalar dt = std::min({s.dt, compressible_->stable_dt(), s.end_time - time_});
+                r.p = compressible_->step(dt);
+                time_ += dt;
+            }
+            if (residual0_ <= 0.0) {
+                residual0_ = std::max(r.p, 1e-300);
+            }
+            r.p /= residual0_; // density residual relative to the first iteration
+            ++step_;
+            result.final_residuals = r;
+            log << step_ << ',' << time_ << ",0,0,0," << r.p << ",0,0,0,0\n";
+            log.flush();
+            if (o.write_interval > 0 && step_ % o.write_interval == 0) {
+                std::ostringstream name;
+                name << config_.name << '_' << std::setw(6) << std::setfill('0') << step_ << ".vtu";
+                write_results(dir / name.str());
+            }
+            if (o.checkpoint_interval > 0 && step_ % o.checkpoint_interval == 0) {
+                write_checkpoint(dir / "checkpoint.bin");
+            }
+            const bool keep_going = !progress || progress(step_, time_, r);
+            if (steady && r.p < s.tolerance) {
+                result.converged = true;
+                break;
+            }
+            if (!keep_going) {
+                result.stopped = true;
+                break;
+            }
+            continue;
+        }
         if (multiphase_) {
             Scalar dt = s.dt;
             if (adaptive && dt_ > 0.0) {
@@ -832,7 +938,7 @@ RunResult CaseRunner::run(const ProgressCallback& progress) {
         }
     }
     if (!steady && !result.stopped &&
-        (multiphase_ ? time_ >= s.end_time * (1.0 - 1e-12) : step_ >= max_steps)) {
+        (time_loop ? time_ >= s.end_time * (1.0 - 1e-12) : step_ >= max_steps)) {
         result.converged = true;
     }
 

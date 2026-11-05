@@ -1,0 +1,25 @@
+{
+  // Mach 3 wind tunnel with a forward-facing step (Woodward & Colella 1984), inviscid,
+  // non-dimensional: rho = 1.4, p = 1, u = 3 (R = 1, T = 1/1.4). Needs Gmsh. Field "Mach".
+  "name": "forward_step_mach3",
+  "mesh": {
+    "type": "geometry",
+    "min": [0, 0, 0],
+    "max": [3, 1, 0.02],
+    "two_d": true,
+    "bodies": [ { "type": "box", "min": [0.6, 0, 0], "max": [3.1, 0.2, 0], "patch": "step" } ],
+    "size": 0.02,
+    "domain_patches": { "xmin": "inlet", "xmax": "outlet", "ymin": "bottom", "ymax": "top",
+                        "zmin": "front", "zmax": "back" }
+  },
+  "physics": { "compressible": { "gamma": 1.4, "r_gas": 1.0, "cfl": 0.5 } },
+  "boundaries": {
+    "inlet": { "type": "velocity_inlet", "velocity": [3, 0, 0], "pressure": 1.0, "temperature": 0.7142857142857143 },
+    "outlet": { "type": "pressure_outlet", "pressure": 0 },
+    "bottom": { "type": "symmetry" }, "top": { "type": "symmetry" }, "step": { "type": "symmetry" },
+    "front": { "type": "empty" }, "back": { "type": "empty" }
+  },
+  "initial": { "velocity": [3, 0, 0], "pressure": 1.0, "temperature": 0.7142857142857143 },
+  "solver": { "mode": "transient", "dt": 1.0, "end_time": 4.0 },
+  "output": { "directory": "results/forward_step_mach3", "log_interval": 200, "write_interval": 1000 }
+}

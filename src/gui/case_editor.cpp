@@ -738,7 +738,12 @@ void CaseEditor::rebuild_boundary_table() {
 
 fv::BoundaryCondition CaseEditor::read_boundary_row(int row) const {
     const std::size_t index = static_cast<std::size_t>(row);
-    fv::BoundaryCondition bc = default_boundary(patches_[index].type);
+    // Start from the stored condition so settings without a table column (e.g. the
+    // compressible inlet temperature) are kept.
+    const auto stored = config_.boundaries.find(patches_[index].name);
+    fv::BoundaryCondition bc = stored != config_.boundaries.end()
+                                   ? stored->second
+                                   : default_boundary(patches_[index].type);
     if (const auto* type = qobject_cast<QComboBox*>(boundary_table_->cellWidget(row, 1))) {
         bc.kind = kBoundaryKinds[current_index(type)];
     }
