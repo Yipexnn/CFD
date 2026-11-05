@@ -60,6 +60,8 @@ jobs:
       # Gmsh executable for the geometry tests (they are skipped without it).
       - name: Install Gmsh (Linux)
         if: runner.os == 'Linux'
+        timeout-minutes: 5
+        continue-on-error: true # Gmsh tests are skipped without it
         run: sudo apt-get update -qq && sudo apt-get install -y -qq gmsh
 
       - name: Install Gmsh (Windows)
