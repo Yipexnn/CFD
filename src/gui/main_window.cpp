@@ -419,6 +419,7 @@ void MainWindow::on_mpi_finished(bool ok, const QString& message, const QString&
             f.omega = d.omega;
             f.nut = d.nut;
             f.t = d.t;
+            f.alpha = d.alpha;
             show_fields(f, d.step, d.time);
         } catch (const std::exception& e) {
             log(QString("Cannot load parallel results: %1").arg(e.what()));

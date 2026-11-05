@@ -124,3 +124,60 @@ TEST(Multiphase, DamBreakConservesMassAndStaysBounded) {
 }
 
 } // namespace
+
+#include <cfd/case/case_config.hpp>
+#include <cfd/case/case_runner.hpp>
+#include <filesystem>
+
+namespace {
+
+constexpr auto kDamCase = R"({
+    "name": "dam",
+    "mesh": {"type": "box", "cells": [24, 12, 1], "max": [0.28, 0.14, 0.01],
+             "patch_types": {"zmin": "patch", "zmax": "patch"}},
+    "physics": {"multiphase": {"rho1": 1000, "nu1": 1e-6, "rho2": 1, "nu2": 1.5e-5,
+                               "sigma": 0.07, "gravity": [0, -9.81, 0]}},
+    "boundaries": {"zmin": {"type": "empty"}, "zmax": {"type": "empty"}},
+    "initial": {"alpha_regions": [{"min": [0, 0, -1], "max": [0.06, 0.12, 1]}]},
+    "solver": {"mode": "transient", "dt": 1e-3, "end_time": 0.04, "max_courant": 0.5}
+})";
+
+TEST(Multiphase, CaseFileRunAndRestart) {
+    const auto dir = std::filesystem::temp_directory_path() / "cfd_multiphase_case";
+    std::filesystem::remove_all(dir);
+    cfd::cases::CaseConfig c = cfd::cases::parse_case(kDamCase, dir);
+    ASSERT_TRUE(c.multiphase.has_value());
+    EXPECT_DOUBLE_EQ(c.multiphase->rho1, 1000.0);
+    EXPECT_EQ(c.initial.alpha_regions.size(), 1U);
+    EXPECT_DOUBLE_EQ(c.solver.max_courant, 0.5);
+    const auto b = cfd::cases::parse_case(cfd::cases::case_to_json(c), dir);
+    ASSERT_TRUE(b.multiphase.has_value());
+    EXPECT_DOUBLE_EQ(b.multiphase->sigma, 0.07);
+    EXPECT_TRUE(b.initial.alpha_regions[0].second.isApprox(Vec3(0.06, 0.12, 1)));
+
+    cfd::cases::CaseRunner runner(c);
+    ASSERT_NE(runner.multiphase(), nullptr);
+    const Scalar v0 = runner.multiphase()->phase1_volume();
+    EXPECT_NEAR(v0 / (0.06 * 0.12 * 0.01), 1.0, 0.1); // cell-centre selection
+    const auto result = runner.run();
+    EXPECT_TRUE(result.converged);
+    EXPECT_NEAR(runner.time(), 0.04, 1e-12);
+    EXPECT_NEAR(runner.multiphase()->phase1_volume() / v0, 1.0, 1e-10);
+    EXPECT_TRUE(std::filesystem::exists(dir / "results" / "dam.vtu"));
+
+    c.solver.end_time = 0.05;
+    c.restart = "results/checkpoint.bin";
+    cfd::cases::CaseRunner second(c);
+    EXPECT_NEAR(second.time(), 0.04, 1e-12);
+    for (std::size_t i = 0; i < second.multiphase()->alpha().size(); ++i) {
+        EXPECT_DOUBLE_EQ(second.multiphase()->alpha()[i], runner.multiphase()->alpha()[i]);
+    }
+    (void)second.run();
+    EXPECT_NEAR(second.time(), 0.05, 1e-12);
+
+    auto bad = std::string(kDamCase);
+    bad.replace(bad.find("\"transient\""), 11, "\"steady\"   ");
+    EXPECT_THROW((void)cfd::cases::parse_case(bad), std::runtime_error);
+}
+
+} // namespace

@@ -214,9 +214,25 @@ std::string case_to_json(const CaseConfig& config) {
         energy["rho_cp"] = e.rho_cp;
         physics["energy"] = energy;
     }
+    if (config.multiphase) {
+        const fv::MultiphaseSettings& m = *config.multiphase;
+        physics["multiphase"] = {{"rho1", m.rho1},
+                                 {"nu1", m.nu1},
+                                 {"rho2", m.rho2},
+                                 {"nu2", m.nu2},
+                                 {"sigma", m.sigma},
+                                 {"gravity", vec3_json(m.gravity)},
+                                 {"compression", m.compression}};
+    }
     root["physics"] = physics;
 
     root["boundaries"] = boundaries_json(config.boundaries, config.profiles, config.thermal);
+    for (const auto& [name, a] : config.inlet_alpha) {
+        if (!root["boundaries"].contains(name)) {
+            root["boundaries"][name] = ordered_json::object();
+        }
+        root["boundaries"][name]["alpha"] = a;
+    }
 
     ordered_json initial = ordered_json::object();
     initial["velocity"] = vec3_json(config.initial.velocity);
@@ -224,6 +240,13 @@ std::string case_to_json(const CaseConfig& config) {
     initial["omega"] = config.initial.omega;
     if (config.initial.temperature) {
         initial["temperature"] = *config.initial.temperature;
+    }
+    if (!config.initial.alpha_regions.empty()) {
+        ordered_json regions = ordered_json::array();
+        for (const auto& [lo, hi] : config.initial.alpha_regions) {
+            regions.push_back({{"min", vec3_json(lo)}, {"max", vec3_json(hi)}});
+        }
+        initial["alpha_regions"] = regions;
     }
     root["initial"] = initial;
 
@@ -239,6 +262,7 @@ std::string case_to_json(const CaseConfig& config) {
     solver["convection"] = convection_name(flow.convection);
     solver["non_orthogonal_correctors"] = flow.n_non_orth_correctors;
     solver["piso_correctors"] = flow.n_piso_correctors;
+    solver["max_courant"] = s.max_courant;
     solver["time_scheme"] = flow.time_scheme == fv::TimeScheme::Backward ? "backward" : "euler";
     root["solver"] = solver;
 

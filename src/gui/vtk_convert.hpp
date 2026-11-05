@@ -20,7 +20,8 @@ struct FieldSet {
     std::vector<Scalar> omega;
     std::vector<Scalar> nut;
     std::vector<Scalar> y_plus;
-    std::vector<Scalar> t; // temperature
+    std::vector<Scalar> t;     // temperature
+    std::vector<Scalar> alpha; // volume fraction (multiphase)
 };
 
 // Builds an unstructured grid with one VTK_POLYHEDRON per mesh cell (works for any

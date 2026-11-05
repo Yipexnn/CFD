@@ -136,6 +136,14 @@ CaseRunner::CaseRunner(CaseConfig config, mesh::Mesh mesh)
     setup();
 }
 
+const std::vector<Vec3>& CaseRunner::velocity() const {
+    return multiphase_ ? multiphase_->velocity() : flow_->velocity();
+}
+
+std::vector<Scalar> CaseRunner::pressure() const {
+    return multiphase_ ? multiphase_->pressure() : flow_->pressure();
+}
+
 const mesh::Mesh& CaseRunner::full_mesh() const {
     return local_ ? local_->mesh : *global_mesh_;
 }
@@ -289,6 +297,32 @@ void CaseRunner::setup() {
         }
     }
     const parallel::Halo* flow_halo = fluid_ && local_ ? &fluid_->halo : full_halo;
+    if (config_.multiphase) {
+        if (!config_.forces.patches.empty() || !config_.profiles.empty()) {
+            throw std::runtime_error("multiphase: forces and inlet profiles are not supported yet");
+        }
+        multiphase_ = std::make_unique<fv::MultiphaseSolver>(*solver_mesh, config_.boundaries,
+                                                             *config_.multiphase, flow_halo);
+        for (const auto& [name, a] : config_.inlet_alpha) {
+            multiphase_->set_inlet_alpha(name, a);
+        }
+        std::vector<Scalar> alpha(static_cast<std::size_t>(solver_mesh->n_cells()), 0.0);
+        for (std::size_t c = 0; c < alpha.size(); ++c) {
+            const Vec3& x = solver_mesh->cell_centres()[c];
+            for (const auto& [lo, hi] : config_.initial.alpha_regions) {
+                if ((x.array() >= lo.array()).all() && (x.array() <= hi.array()).all()) {
+                    alpha[c] = 1.0;
+                }
+            }
+        }
+        multiphase_->set_alpha(alpha);
+        multiphase_->set_velocity(std::vector<Vec3>(
+            static_cast<std::size_t>(solver_mesh->n_cells()), config_.initial.velocity));
+        if (config_.restart) {
+            read_checkpoint(config_.resolve(*config_.restart));
+        }
+        return;
+    }
     flow_ = std::make_unique<fv::FlowSolver>(*solver_mesh, config_.boundaries, config_.solver.flow,
                                              flow_halo);
     for (const auto& [name, profile] : config_.profiles) {
@@ -460,9 +494,14 @@ void CaseRunner::write_results(const std::filesystem::path& file) const {
     auto cells = [&](const Scalar* values, std::size_t ncomp) {
         return gather_cells(lm, to_full_cells(values, ncomp).data(), ncomp, ng);
     };
-    const std::vector<Vec3> u = to_vec3(cells(flow_->velocity().data()->data(), 3));
-    const std::vector<Scalar> p = cells(flow_->pressure().data(), 1);
+    const std::vector<Vec3> u = to_vec3(cells(velocity().data()->data(), 3));
+    const std::vector<Scalar> p = cells(pressure().data(), 1);
     std::vector<std::pair<std::string, std::vector<Scalar>>> turbulence;
+    if (multiphase_) {
+        turbulence.emplace_back("alpha", cells(multiphase_->alpha().data(), 1));
+        turbulence.emplace_back("p_rgh", cells(multiphase_->p_rgh().data(), 1));
+        turbulence.emplace_back("rho", cells(multiphase_->density().data(), 1));
+    }
     if (sst_) {
         turbulence.emplace_back("k", cells(sst_->k().data(), 1));
         turbulence.emplace_back("omega", cells(sst_->omega().data(), 1));
@@ -492,10 +531,15 @@ void CaseRunner::write_checkpoint(const std::filesystem::path& file) const {
     auto cells = [&](const Scalar* values, std::size_t ncomp) {
         return gather_cells(lm, to_full_cells(values, ncomp).data(), ncomp, ng);
     };
-    const std::vector<Scalar> u = cells(flow_->velocity().data()->data(), 3);
-    const std::vector<Scalar> p = cells(flow_->pressure().data(), 1);
+    const std::vector<Scalar> u = cells(velocity().data()->data(), 3);
+    const std::vector<Scalar> p =
+        cells(multiphase_ ? multiphase_->p_rgh().data() : flow_->pressure().data(), 1);
+    const std::vector<Scalar>& face_flux =
+        multiphase_ ? multiphase_->face_flux() : flow_->face_flux();
     const std::vector<Scalar> phi =
-        gather_faces(lm, g, to_full_faces(flow_->face_flux(), true, false), true, false);
+        gather_faces(lm, g, to_full_faces(face_flux, true, false), true, false);
+    const std::vector<Scalar> alpha =
+        multiphase_ ? cells(multiphase_->alpha().data(), 1) : std::vector<Scalar>{};
     const std::vector<Scalar> temperature =
         energy_ ? gather_cells(lm, energy_->temperature().data(), 1, ng) : std::vector<Scalar>{};
     std::vector<std::vector<Scalar>> turbulence;
@@ -528,6 +572,9 @@ void CaseRunner::write_checkpoint(const std::filesystem::path& file) const {
     // Optional energy block (older checkpoints end here).
     write_pod(out, static_cast<std::uint8_t>(energy_ ? 1 : 0));
     write_array(out, temperature.data(), temperature.size());
+    // Optional multiphase block: p above is p_rgh.
+    write_pod(out, static_cast<std::uint8_t>(multiphase_ ? 1 : 0));
+    write_array(out, alpha.data(), alpha.size());
     if (!out) {
         throw std::runtime_error("Checkpoint: write failed for " + file.string());
     }
@@ -572,6 +619,9 @@ CheckpointData read_checkpoint_file(const std::filesystem::path& file, Label n_c
     if (in.peek() != std::char_traits<char>::eof() && read_pod<std::uint8_t>(in) != 0) {
         d.t = read_vector(ncs);
     }
+    if (in.peek() != std::char_traits<char>::eof() && read_pod<std::uint8_t>(in) != 0) {
+        d.alpha = read_vector(ncs);
+    }
     return d;
 }
 
@@ -592,6 +642,17 @@ void CaseRunner::read_checkpoint(const std::filesystem::path& file) {
         for (int i = 0; i < 3; ++i) {
             u_flat[3 * c + static_cast<std::size_t>(i)] = d.u[c][i];
         }
+    }
+    if (multiphase_) {
+        if (d.alpha.empty()) {
+            throw std::runtime_error("Checkpoint: no volume fraction for a multiphase case");
+        }
+        multiphase_->set_state(
+            to_vec3(cells(u_flat, 3)), cells(d.p, 1), cells(d.alpha, 1),
+            from_full_faces(scatter_faces(lm, g, d.phi, true, false), true, false));
+        step_ = d.step;
+        time_ = d.time;
+        return;
     }
     flow_->set_state(to_vec3(cells(u_flat, 3)), cells(d.p, 1),
                      from_full_faces(scatter_faces(lm, g, d.phi, true, false), true, false));
@@ -694,10 +755,40 @@ RunResult CaseRunner::run(const ProgressCallback& progress) {
     const int max_steps =
         steady ? s.max_iterations
                : static_cast<int>(std::ceil((s.end_time - time_) / s.dt - 1e-9)) + step_;
+    const bool adaptive = multiphase_ && s.max_courant > 0.0;
 
     RunResult result;
-    while (step_ < max_steps) {
+    while (multiphase_ ? time_ < s.end_time * (1.0 - 1e-12) : step_ < max_steps) {
         fv::Residuals r;
+        if (multiphase_) {
+            Scalar dt = s.dt;
+            if (adaptive && dt_ > 0.0) {
+                const Scalar co = multiphase_->courant(dt_);
+                dt = std::min({s.dt, 1.2 * dt_, co > 0.0 ? dt_ * s.max_courant / co : s.dt});
+            }
+            dt = std::min(dt, s.end_time - time_);
+            r = multiphase_->step(dt);
+            dt_ = dt;
+            time_ += dt;
+            ++step_;
+            result.final_residuals = r;
+            log << step_ << ',' << time_ << ',' << r.u.x() << ',' << r.u.y() << ',' << r.u.z()
+                << ',' << r.p << ",0,0," << r.continuity << ',' << r.t << '\n';
+            log.flush();
+            if (o.write_interval > 0 && step_ % o.write_interval == 0) {
+                std::ostringstream name;
+                name << config_.name << '_' << std::setw(6) << std::setfill('0') << step_ << ".vtu";
+                write_results(dir / name.str());
+            }
+            if (o.checkpoint_interval > 0 && step_ % o.checkpoint_interval == 0) {
+                write_checkpoint(dir / "checkpoint.bin");
+            }
+            if (progress && !progress(step_, time_, r)) {
+                result.stopped = true;
+                break;
+            }
+            continue;
+        }
         if (energy_ && energy_->buoyant()) {
             flow_->set_cell_acceleration(energy_->buoyancy());
         }
@@ -740,7 +831,8 @@ RunResult CaseRunner::run(const ProgressCallback& progress) {
             break;
         }
     }
-    if (!steady && step_ >= max_steps) {
+    if (!steady && !result.stopped &&
+        (multiphase_ ? time_ >= s.end_time * (1.0 - 1e-12) : step_ >= max_steps)) {
         result.converged = true;
     }
 

@@ -2,6 +2,7 @@
 #include <cfd/fv/energy.hpp>
 #include <cfd/fv/flow_solver.hpp>
 #include <cfd/fv/k_omega_sst.hpp>
+#include <cfd/fv/multiphase.hpp>
 #include <cfd/mesh/box_mesher.hpp>
 #include <cfd/parallel/decomposition.hpp>
 #include <cmath>
@@ -226,6 +227,45 @@ TEST(ParallelSolver, ConjugatePlateMatchesSerial) {
     EXPECT_NEAR(q_parallel, q_serial, 1e-6 * q_serial);
     EXPECT_NEAR(plate_parallel, plate_serial, 1e-6 * q_serial);
     EXPECT_NEAR(plate_serial, q_serial, 1e-5 * q_serial);
+}
+
+// VOF dam break on several processes: same volume and front as serial.
+TEST(ParallelSolver, DamBreakMatchesSerial) {
+    cfd::mesh::BoxSpec spec;
+    spec.nx = 32;
+    spec.ny = 16;
+    spec.nz = 1;
+    spec.max = Vec3(0.28, 0.14, 0.01);
+    const auto global = cfd::mesh::make_box_mesh(spec);
+    const BoundaryCondition empty{FlowBoundary::Empty, Vec3::Zero(), 0.0};
+    const std::map<std::string, BoundaryCondition> bcs{{"zmin", empty}, {"zmax", empty}};
+    MultiphaseSettings s;
+    s.gravity = Vec3(0, -9.81, 0);
+    s.sigma = 0.07;
+    auto solve = [&](const cfd::mesh::Mesh& mesh, const par::Halo* halo) {
+        MultiphaseSolver solver(mesh, bcs, s, halo);
+        std::vector<Scalar> alpha(static_cast<std::size_t>(mesh.n_cells()));
+        for (std::size_t c = 0; c < alpha.size(); ++c) {
+            const Vec3& x = mesh.cell_centres()[c];
+            alpha[c] = x.x() < 0.06 && x.y() < 0.12 ? 1.0 : 0.0;
+        }
+        solver.set_alpha(alpha);
+        for (int n = 0; n < 60; ++n) {
+            (void)solver.step(5e-4);
+        }
+        return std::make_pair(solver.phase1_volume(), solver.alpha());
+    };
+    const auto [v_serial, a_serial] = solve(global, nullptr);
+    const auto parts = par::partition_rcb(global, comm().size());
+    const auto lm = par::decompose(global, parts, comm().rank(), comm());
+    const auto [v_parallel, a_parallel] = solve(lm.mesh, &lm.halo);
+    EXPECT_NEAR(v_parallel, v_serial, 1e-12);
+    Scalar da = 0.0;
+    for (cfd::core::Label c = 0; c < lm.halo.n_owned; ++c) {
+        const auto g = static_cast<std::size_t>(lm.global_cell[static_cast<std::size_t>(c)]);
+        da = std::max(da, std::abs(a_parallel[static_cast<std::size_t>(c)] - a_serial[g]));
+    }
+    EXPECT_LT(comm().max(da), 1e-3);
 }
 
 } // namespace

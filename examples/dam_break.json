@@ -1,0 +1,19 @@
+{
+  // Dam break (Martin & Moyce): a water column 0.05715 x 0.1143 m collapses in an air-filled
+  // tank (VOF two-phase flow, transient with adaptive time step). Field "alpha" = water.
+  "name": "dam_break",
+  "mesh": {
+    "type": "box",
+    "cells": [100, 50, 1],
+    "max": [0.28575, 0.142875, 0.0028575],
+    "patch_types": { "zmin": "patch", "zmax": "patch" }
+  },
+  "physics": {
+    "multiphase": { "rho1": 1000, "nu1": 1e-6, "rho2": 1, "nu2": 1.48e-5, "sigma": 0.07,
+                    "gravity": [0, -9.81, 0] }
+  },
+  "boundaries": { "zmin": { "type": "empty" }, "zmax": { "type": "empty" } },
+  "initial": { "alpha_regions": [ { "min": [0, 0, -1], "max": [0.05715, 0.1143, 1] } ] },
+  "solver": { "mode": "transient", "dt": 1e-3, "end_time": 0.4, "max_courant": 0.5 },
+  "output": { "directory": "results/dam_break", "log_interval": 50, "write_interval": 100 }
+}

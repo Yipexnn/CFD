@@ -283,7 +283,7 @@ MeshConfig parse_mesh(const json& j, std::vector<SolidConfig>& solids) {
 fv::BoundaryCondition parse_boundary(const json& j, const std::string& path) {
     check_keys(j, path,
                {"type", "velocity", "pressure", "turbulence_intensity", "viscosity_ratio",
-                "profile", "profile_axes", "thermal"});
+                "profile", "profile_axes", "thermal", "alpha"});
     fv::BoundaryCondition bc;
     const std::string type = get_string(j, "type", path, "");
     if (type == "velocity_inlet") {
@@ -336,7 +336,25 @@ CaseConfig parse_case(const std::string& json_text, const std::filesystem::path&
     fv::FlowSettings& flow = c.solver.flow;
     if (root.contains("physics")) {
         const json& p = root["physics"];
-        check_keys(p, "physics", {"nu", "body_force", "turbulence", "energy"});
+        check_keys(p, "physics", {"nu", "body_force", "turbulence", "energy", "multiphase"});
+        if (p.contains("multiphase")) {
+            const json& mp = p["multiphase"];
+            const std::string mpp = "physics.multiphase";
+            check_keys(mp, mpp, {"rho1", "nu1", "rho2", "nu2", "sigma", "gravity", "compression"});
+            fv::MultiphaseSettings ms;
+            ms.rho1 = get_number(mp, "rho1", mpp, ms.rho1);
+            ms.nu1 = get_number(mp, "nu1", mpp, ms.nu1);
+            ms.rho2 = get_number(mp, "rho2", mpp, ms.rho2);
+            ms.nu2 = get_number(mp, "nu2", mpp, ms.nu2);
+            ms.sigma = get_number(mp, "sigma", mpp, ms.sigma);
+            ms.gravity = get_vec3(mp, "gravity", mpp, ms.gravity);
+            ms.compression = get_number(mp, "compression", mpp, ms.compression);
+            if (!(ms.rho1 > 0.0 && ms.rho2 > 0.0 && ms.nu1 > 0.0 && ms.nu2 > 0.0) ||
+                ms.sigma < 0.0) {
+                fail(mpp, "densities and viscosities must be positive, sigma >= 0");
+            }
+            c.multiphase = ms;
+        }
         flow.nu = get_number(p, "nu", "physics", flow.nu);
         if (!(flow.nu > 0.0)) {
             fail("physics.nu", "must be positive");
@@ -401,6 +419,9 @@ CaseConfig parse_case(const std::string& json_text, const std::filesystem::path&
                 }
             }
             c.boundaries[name] = parse_boundary(value, path);
+            if (value.contains("alpha")) {
+                c.inlet_alpha[name] = get_number(value, "alpha", path, 0.0);
+            }
             const std::string profile = get_string(value, "profile", path, "uniform");
             if (profile == "parabolic") {
                 if (c.boundaries[name].kind != fv::FlowBoundary::VelocityInlet) {
@@ -420,7 +441,19 @@ CaseConfig parse_case(const std::string& json_text, const std::filesystem::path&
 
     if (root.contains("initial")) {
         const json& i = root["initial"];
-        check_keys(i, "initial", {"velocity", "k", "omega", "temperature"});
+        check_keys(i, "initial", {"velocity", "k", "omega", "temperature", "alpha_regions"});
+        if (i.contains("alpha_regions")) {
+            if (!i["alpha_regions"].is_array()) {
+                fail("initial.alpha_regions", "expected an array of {min, max}");
+            }
+            for (std::size_t k = 0; k < i["alpha_regions"].size(); ++k) {
+                const json& r = i["alpha_regions"][k];
+                const std::string rp = "initial.alpha_regions[" + std::to_string(k) + "]";
+                check_keys(r, rp, {"min", "max"});
+                c.initial.alpha_regions.emplace_back(get_vec3(r, "min", rp, Vec3::Zero()),
+                                                     get_vec3(r, "max", rp, Vec3::Zero()));
+            }
+        }
         if (i.contains("temperature")) {
             c.initial.temperature = get_number(i, "temperature", "initial", 0.0);
         }
@@ -434,7 +467,9 @@ CaseConfig parse_case(const std::string& json_text, const std::filesystem::path&
         const std::string path = "solver";
         check_keys(s, path,
                    {"mode", "max_iterations", "tolerance", "dt", "end_time", "alpha_u", "alpha_p",
-                    "convection", "non_orthogonal_correctors", "piso_correctors", "time_scheme"});
+                    "convection", "non_orthogonal_correctors", "piso_correctors", "time_scheme",
+                    "max_courant"});
+        c.solver.max_courant = get_number(s, "max_courant", path, c.solver.max_courant);
         const std::string mode = get_string(s, "mode", path, "steady");
         if (mode == "steady") {
             c.solver.mode = SolverMode::Steady;
@@ -572,6 +607,17 @@ CaseConfig parse_case(const std::string& json_text, const std::filesystem::path&
     if (!c.energy && (!c.solids.empty() || !c.thermal.empty() || !c.heat.patches.empty() ||
                       c.initial.temperature)) {
         fail("physics.energy", "thermal settings need the energy equation (physics.energy)");
+    }
+
+    if (c.multiphase) {
+        if (c.turbulence != TurbulenceKind::Laminar || c.energy || !c.solids.empty()) {
+            fail("physics.multiphase", "not combinable with turbulence, energy or solids (yet)");
+        }
+        if (c.solver.mode != SolverMode::Transient) {
+            fail("physics.multiphase", "needs solver.mode \"transient\"");
+        }
+    } else if (!c.initial.alpha_regions.empty() || !c.inlet_alpha.empty()) {
+        fail("physics.multiphase", "alpha settings need physics.multiphase");
     }
 
     if (root.contains("restart")) {

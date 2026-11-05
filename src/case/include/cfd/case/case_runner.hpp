@@ -36,7 +36,8 @@ struct CheckpointData {
     std::vector<Scalar> phi;           // face flux
     std::vector<Scalar> k, omega, nut; // empty without turbulence model
     std::vector<Scalar> boundary_nut;
-    std::vector<Scalar> t; // temperature (empty without energy equation)
+    std::vector<Scalar> t;     // temperature (empty without energy equation)
+    std::vector<Scalar> alpha; // multiphase volume fraction (empty otherwise)
 };
 // Reads a checkpoint; n_cells / n_faces / n_boundary_faces must match the mesh.
 [[nodiscard]] CheckpointData read_checkpoint_file(const std::filesystem::path& file, Label n_cells,
@@ -88,7 +89,13 @@ public:
     [[nodiscard]] const mesh::Mesh& global_mesh() const { return *global_mesh_; }
     // Decomposition of an MPI run (nullptr in serial runs).
     [[nodiscard]] const parallel::LocalMesh* local_mesh() const { return local_.get(); }
+    // Single-phase flow solver (not available for multiphase cases).
     [[nodiscard]] const fv::FlowSolver& flow() const { return *flow_; }
+    [[nodiscard]] const fv::MultiphaseSolver* multiphase() const { return multiphase_.get(); }
+    // Flow fields of either solver on mesh() cells (pressure: kinematic for single-phase,
+    // static [Pa] for multiphase).
+    [[nodiscard]] const std::vector<Vec3>& velocity() const;
+    [[nodiscard]] std::vector<Scalar> pressure() const;
     [[nodiscard]] const fv::KOmegaSst* sst() const { return sst_.get(); }
     [[nodiscard]] const fv::EnergyEquation* energy() const { return energy_.get(); }
     // Kinematic heat flow into the fluid through a patch times heat.rho_cp.
@@ -115,6 +122,8 @@ private:
     std::unique_ptr<fv::FlowSolver> flow_;
     std::unique_ptr<fv::KOmegaSst> sst_;
     std::unique_ptr<fv::EnergyEquation> energy_;
+    std::unique_ptr<fv::MultiphaseSolver> multiphase_;
+    Scalar dt_ = 0.0; // last time step (adaptive time stepping)
     int step_ = 0;
     Scalar time_ = 0.0;
 };

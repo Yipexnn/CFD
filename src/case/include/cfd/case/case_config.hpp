@@ -4,6 +4,7 @@
 #include <cfd/fv/energy.hpp>
 #include <cfd/fv/flow_solver.hpp>
 #include <cfd/fv/k_omega_sst.hpp>
+#include <cfd/fv/multiphase.hpp>
 #include <cfd/geometry/geometry.hpp>
 #include <cfd/mesh/box_mesher.hpp>
 #include <filesystem>
@@ -47,6 +48,8 @@ struct InitialConfig {
     Scalar k = -1.0;                   // <= 0: derived by the model
     Scalar omega = -1.0;               // <= 0: derived by the model
     std::optional<Scalar> temperature; // default: energy t_ref
+    // Multiphase: boxes filled with phase 1 (alpha = 1); everything else alpha = 0.
+    std::vector<std::pair<Vec3, Vec3>> alpha_regions;
 };
 
 // Solid region for conjugate heat transfer: cells of the mesh zone `name` (Gmsh physical
@@ -75,6 +78,7 @@ struct SolverConfig {
     Scalar tolerance = 1e-6;   // steady convergence criterion (max initial residual)
     Scalar dt = 1e-3;          // transient
     Scalar end_time = 1.0;     // transient
+    Scalar max_courant = 0.0;  // transient: > 0 adapts dt (at most `dt`) to this Courant number
     fv::FlowSettings flow;     // nu, body force, relaxation, schemes, correctors
 };
 
@@ -95,7 +99,9 @@ struct CaseConfig {
     std::optional<fv::EnergySettings> energy;     // energy equation enabled
     std::map<std::string, fv::ThermalBoundary> thermal;
     HeatConfig heat;
-    std::vector<SolidConfig> solids; // conjugate heat transfer (needs energy)
+    std::optional<fv::MultiphaseSettings> multiphase; // VOF two-phase flow (transient)
+    std::map<std::string, Scalar> inlet_alpha;        // multiphase: alpha at velocity inlets
+    std::vector<SolidConfig> solids;                  // conjugate heat transfer (needs energy)
     ForcesConfig forces;
     InitialConfig initial;
     SolverConfig solver;
