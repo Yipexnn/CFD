@@ -42,3 +42,4 @@ Goal: realistic 3D CFD desktop application, running locally on Windows.
 
 ## Notes
 - Development environment is Linux; code stays portable. Windows build/test via CI; GUI tested on user's PC.
+- Manual Windows test checklist: [docs/windows_test.md](docs/windows_test.md)
