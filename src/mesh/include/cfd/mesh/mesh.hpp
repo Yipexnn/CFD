@@ -48,6 +48,12 @@ public:
     // Changes the type of a patch (geometry is unaffected). Throws if the name is unknown.
     void set_patch_type(const std::string& name, PatchType type);
 
+    // Optional cell zones (e.g. Gmsh physical volumes): zone index per cell and zone names.
+    // Empty if the mesh has no zones.
+    void set_cell_zones(std::vector<std::string> names, std::vector<int> zone_of_cell);
+    [[nodiscard]] const std::vector<std::string>& cell_zone_names() const { return zone_names_; }
+    [[nodiscard]] const std::vector<int>& cell_zones() const { return cell_zones_; }
+
     // Geometry (computed in the constructor).
     [[nodiscard]] const std::vector<Vec3>& face_centres() const { return face_centres_; }
     [[nodiscard]] const std::vector<Vec3>& face_area_vectors() const { return face_area_vectors_; }
@@ -70,6 +76,8 @@ private:
     std::vector<Label> neighbour_;
     std::vector<Patch> patches_;
     Label n_cells_ = 0;
+    std::vector<std::string> zone_names_;
+    std::vector<int> cell_zones_;
 
     std::vector<Vec3> face_centres_;
     std::vector<Vec3> face_area_vectors_;

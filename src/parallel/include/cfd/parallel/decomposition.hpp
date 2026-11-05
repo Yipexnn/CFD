@@ -32,4 +32,21 @@ struct LocalMesh {
 [[nodiscard]] LocalMesh decompose(const mesh::Mesh& global, const std::vector<int>& parts, int part,
                                   const Comm& comm = Comm::world());
 
+// Cells of one zone of a (possibly decomposed) mesh as a mesh of their own, e.g. the fluid
+// region of a conjugate heat transfer case. Faces towards cells of another zone form one
+// patch per zone, named after it (type wall), appended after the parent patches. Cell and
+// face order follow the parent, so owned cells stay first.
+struct SubMesh {
+    mesh::Mesh mesh;
+    std::vector<Label> parent_cell; // sub cell -> parent cell
+    std::vector<Label> parent_face; // sub face -> parent face
+    std::vector<char> face_flipped; // 1: orientation opposite to the parent face
+    Halo halo;                      // parent halo restricted to the zone (if given)
+};
+
+// zone_of_cell / zone_names describe the parent cells; parent_halo may be nullptr.
+[[nodiscard]] SubMesh extract_zone(const mesh::Mesh& parent, const std::vector<int>& zone_of_cell,
+                                   const std::vector<std::string>& zone_names, int zone,
+                                   const Halo* parent_halo);
+
 } // namespace cfd::parallel

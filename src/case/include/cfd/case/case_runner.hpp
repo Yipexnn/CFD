@@ -7,7 +7,8 @@
 
 namespace cfd::parallel {
 struct LocalMesh;
-}
+struct SubMesh;
+} // namespace cfd::parallel
 
 namespace cfd::cases {
 
@@ -74,9 +75,15 @@ public:
     void read_checkpoint(const std::filesystem::path& file);
 
     [[nodiscard]] const CaseConfig& config() const { return config_; }
-    // Mesh the solver works on: the full mesh in serial runs, this process' part (owned +
-    // ghost cells) in MPI runs.
+    // Mesh the flow solver works on: the case mesh (its fluid zone for conjugate cases) in
+    // serial runs, this process' part (owned + ghost cells) in MPI runs.
     [[nodiscard]] const mesh::Mesh& mesh() const;
+    // Mesh of the energy equation / output: the case mesh incl. solid zones (this process'
+    // part in MPI runs). Same as mesh() without solids.
+    [[nodiscard]] const mesh::Mesh& full_mesh() const;
+    // Flow cell values (ncomp per cell) on full_mesh() cells (zero in solids).
+    [[nodiscard]] std::vector<Scalar> to_full_cells(const Scalar* flow_values,
+                                                    std::size_t ncomp) const;
     // The undecomposed case mesh (same as mesh() in serial runs).
     [[nodiscard]] const mesh::Mesh& global_mesh() const { return *global_mesh_; }
     // Decomposition of an MPI run (nullptr in serial runs).
@@ -92,10 +99,19 @@ public:
 
 private:
     void setup();
+    [[nodiscard]] std::vector<Scalar> to_full_faces(const std::vector<Scalar>& flow_values,
+                                                    bool oriented, bool boundary_only) const;
+    [[nodiscard]] std::vector<Scalar> from_full_cells(const std::vector<Scalar>& full,
+                                                      std::size_t ncomp) const;
+    [[nodiscard]] std::vector<Scalar> from_full_faces(const std::vector<Scalar>& full,
+                                                      bool oriented, bool boundary_only) const;
 
     CaseConfig config_;
     std::unique_ptr<mesh::Mesh> global_mesh_;
     std::unique_ptr<parallel::LocalMesh> local_;
+    std::unique_ptr<parallel::SubMesh> fluid_;      // conjugate: fluid zone of full_mesh()
+    std::unique_ptr<fv::FvGeometry> full_geometry_; // conjugate: energy geometry
+    std::unique_ptr<fv::ConjugateMesh> conjugate_;
     std::unique_ptr<fv::FlowSolver> flow_;
     std::unique_ptr<fv::KOmegaSst> sst_;
     std::unique_ptr<fv::EnergyEquation> energy_;

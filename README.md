@@ -6,7 +6,7 @@ See [PLAN.md](PLAN.md) and [Phase 0 details](docs/phase0.md).
 
 ## Status
 
-Phases 0–8 done: mesh core, laminar solver (SIMPLE/PISO), k-ω SST turbulence, JSON case files with VTU output and restart, AMG pressure solver, desktop GUI, geometry import and auto meshing (Gmsh) with force coefficients, MPI parallel runs, heat transfer with buoyancy.
+Phases 0–9 done: mesh core, laminar solver (SIMPLE/PISO), k-ω SST turbulence, JSON case files with VTU output and restart, AMG pressure solver, desktop GUI, geometry import and auto meshing (Gmsh) with force coefficients, MPI parallel runs, heat transfer with buoyancy and solid regions (conjugate), BDF2 transient benchmark.
 
 ## Windows setup (CLion)
 
@@ -78,6 +78,8 @@ Gmsh executable:
 cfd run examples/cavity.json        # run a case file (see docs/case_format.md)
 cfd run examples/cylinder_2d.json   # cylinder benchmark (needs Gmsh), forces in forces.csv
 cfd run examples/heated_cavity.json # natural convection (energy equation), Nusselt in heat.csv
+cfd run examples/conjugate_plate.json  # conjugate heat transfer (fluid + solid plate)
+cfd run examples/cylinder_2d_re100.json # vortex shedding (transient, needs Gmsh)
 cfd mesh-box 10 10 10               # create a box mesh and print statistics
 cfd check-mesh mesh.msh             # check a Gmsh 4.1 mesh
 cfd run-cavity 32 100               # quick lid-driven cavity demo

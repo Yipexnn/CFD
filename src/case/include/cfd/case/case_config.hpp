@@ -49,6 +49,16 @@ struct InitialConfig {
     std::optional<Scalar> temperature; // default: energy t_ref
 };
 
+// Solid region for conjugate heat transfer: cells of the mesh zone `name` (Gmsh physical
+// volume), or with their centre inside [min, max].
+struct SolidConfig {
+    std::string name;
+    std::optional<Vec3> min;
+    std::optional<Vec3> max;
+    Scalar conductivity = 1.0; // k [W/(m K)]
+    Scalar rho_cp = 1.0;       // [J/(m^3 K)]
+};
+
 // Heat-flow monitor (energy equation): heat.csv with the heat flow into the fluid per patch,
 // Q = rho_cp * (kinematic heat flow) and Nu = Q_kin L / (alpha dT A).
 struct HeatConfig {
@@ -85,6 +95,7 @@ struct CaseConfig {
     std::optional<fv::EnergySettings> energy;     // energy equation enabled
     std::map<std::string, fv::ThermalBoundary> thermal;
     HeatConfig heat;
+    std::vector<SolidConfig> solids; // conjugate heat transfer (needs energy)
     ForcesConfig forces;
     InitialConfig initial;
     SolverConfig solver;

@@ -96,6 +96,7 @@ Enables the temperature equation with Boussinesq buoyancy −β (T − T_ref) g.
 | `beta` | number | `0` | Thermal expansion coefficient [1/K]. |
 | `t_ref` | number | `0` | Reference temperature [K] (also inlet default and initial value). |
 | `gravity` | [num, num, num] | `[0, 0, 0]` | Gravity [m/s²]. |
+| `rho_cp` | number | `1` | Fluid volumetric heat capacity ρc_p (solid properties are relative to it). |
 
 ## Boundaries
 
@@ -146,6 +147,7 @@ Patches without an entry get a default from their patch type:
 | `convection` | string | `"linear_upwind"` | `"linear_upwind"`, `"limited_linear_upwind"` (bounded, recommended for high Reynolds numbers / coarse meshes) or `"upwind"` (first order). |
 | `non_orthogonal_correctors` | int | `0` | Must be >= 0. |
 | `piso_correctors` | int | `2` | Must be >= 1. |
+| `time_scheme` | string | `"euler"` | Transient: `"euler"` (1st order) or `"backward"` (BDF2, 2nd order). |
 
 `dt`, `end_time`, `alpha_*` and the corrector counts are validated in both modes.
 
@@ -182,6 +184,19 @@ Optional top-level object; forces on the listed patches are written to `forces.c
 | `reference_velocity` | number | `1` | Coefficients C = F / (0.5 rho U^2 A). |
 | `reference_area` | number | `1` | Reference area A (2D: diameter * depth). |
 
+## Solids (conjugate heat transfer)
+
+Optional top-level array (needs `physics.energy`). Each entry is a solid zone; the flow is
+solved in the remaining (fluid) cells, the temperature everywhere. Fluid/solid faces become
+wall patches named after the solid (usable in `boundaries`, `forces`).
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `name` | string | required | Gmsh physical volume name, or the name of a box selection. |
+| `min`, `max` | [num, num, num] | none | Box selection: cells whose centre lies inside. |
+| `conductivity` | number | `1` | Thermal conductivity k [W/(m K)]. |
+| `rho_cp` | number | `1` | Volumetric heat capacity ρc_p [J/(m³ K)]. |
+
 ## Heat
 
 Optional top-level object (energy equation): heat flow into the fluid per patch, written to
@@ -189,7 +204,7 @@ Optional top-level object (energy equation): heat flow into the fluid per patch,
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `patches` | [string] | required | Patches to integrate. |
+| `patches` | [string] | required | Patches to integrate, or solid names (heat flow solid → fluid). |
 | `rho_cp` | number | `1` | Q = ρ c_p × kinematic heat flow [W]. |
 | `reference_length`, `reference_delta_t`, `reference_area` | number | `1` | Nu = Q_kin L / (α ΔT A). |
 

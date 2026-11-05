@@ -131,7 +131,7 @@ LinearSolveResult solve_scalar(const FvGeometry& geo, const std::vector<Scalar>&
         a.diag[c] -= std::min(eq.sp[c], 0.0) * vol[c];
         a.source[c] += eq.su[c] * vol[c] + std::max(eq.sp[c], 0.0) * field[c] * vol[c];
         if (eq.dt > 0.0) {
-            const Scalar ddt = vol[c] / eq.dt;
+            const Scalar ddt = vol[c] / eq.dt * (eq.capacity != nullptr ? (*eq.capacity)[c] : 1.0);
             a.diag[c] += ddt;
             a.source[c] += ddt * (eq.old_value != nullptr ? (*eq.old_value)[c] : field[c]);
         }

@@ -74,6 +74,7 @@ int surface_nodes(int type) {
 struct RawData {
     std::map<std::pair<int, int>, std::string> physical_names; // (dim, tag) -> name
     std::unordered_map<int, int> surface_physical;             // surface entity -> phys tag
+    std::unordered_map<int, int> volume_physical;              // volume entity -> phys tag
     std::vector<Vec3> points;
     std::unordered_map<long long, Label> node_index; // node tag -> point index
     struct Element {
@@ -153,6 +154,9 @@ void read_entities(std::istream& in, RawData& data) {
         const bool is_surface = i >= n_curves && i < n_curves + n_surfaces;
         if (is_surface && !phys.empty()) {
             data.surface_physical[tag] = phys.front();
+        }
+        if (i >= n_curves + n_surfaces && !phys.empty()) {
+            data.volume_physical[tag] = phys.front();
         }
     }
     expect_end(in, "$EndEntities");
@@ -320,9 +324,26 @@ Mesh read_gmsh(std::istream& in) {
                                                  : "physical_" + std::to_string(it->second);
     };
 
+    // Cell zones from the physical volumes (in element order = cell order).
+    std::vector<std::string> zone_names;
+    std::map<std::string, int> zone_index;
+    std::vector<int> zones;
     for (const auto& e : data.elements) {
         if (e.dim == 3) {
             builder.add_cell(*volume_shape(e.type), e.nodes);
+            std::string zone = "default";
+            if (const auto it = data.volume_physical.find(e.entity);
+                it != data.volume_physical.end()) {
+                const auto name = data.physical_names.find({3, it->second});
+                zone = name != data.physical_names.end() ? name->second
+                                                         : "physical_" + std::to_string(it->second);
+            }
+            const auto [pos, inserted] =
+                zone_index.emplace(zone, static_cast<int>(zone_names.size()));
+            if (inserted) {
+                zone_names.push_back(zone);
+            }
+            zones.push_back(pos->second);
         }
     }
     if (builder.n_cells() == 0) {
@@ -335,7 +356,11 @@ Mesh read_gmsh(std::istream& in) {
             }
         }
     }
-    return builder.build();
+    Mesh mesh = builder.build();
+    if (zone_names.size() > 1) {
+        mesh.set_cell_zones(std::move(zone_names), std::move(zones));
+    }
+    return mesh;
 }
 
 Mesh read_gmsh(const std::filesystem::path& file) {

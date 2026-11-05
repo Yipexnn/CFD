@@ -194,6 +194,7 @@ std::string case_to_json(const CaseConfig& config) {
         energy["beta"] = e.beta;
         energy["t_ref"] = e.t_ref;
         energy["gravity"] = vec3_json(e.gravity);
+        energy["rho_cp"] = e.rho_cp;
         physics["energy"] = energy;
     }
     root["physics"] = physics;
@@ -248,6 +249,22 @@ std::string case_to_json(const CaseConfig& config) {
         heat["reference_delta_t"] = config.heat.reference_delta_t;
         heat["reference_area"] = config.heat.reference_area;
         root["heat"] = heat;
+    }
+
+    if (!config.solids.empty()) {
+        ordered_json solids = ordered_json::array();
+        for (const SolidConfig& sc : config.solids) {
+            ordered_json js = ordered_json::object();
+            js["name"] = sc.name;
+            if (sc.min && sc.max) {
+                js["min"] = vec3_json(*sc.min);
+                js["max"] = vec3_json(*sc.max);
+            }
+            js["conductivity"] = sc.conductivity;
+            js["rho_cp"] = sc.rho_cp;
+            solids.push_back(js);
+        }
+        root["solids"] = solids;
     }
 
     if (config.restart) {

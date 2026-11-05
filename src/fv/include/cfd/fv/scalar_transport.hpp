@@ -28,6 +28,7 @@ struct ScalarEquation {
     Scalar relaxation = 1.0;              // implicit under-relaxation (steady)
     Scalar dt = 0.0;                      // > 0: implicit Euler time term with old_value
     const std::vector<Scalar>* old_value = nullptr;
+    const std::vector<Scalar>* capacity = nullptr; // optional factor of the time term per cell
     bool linear_upwind = true;
 };
 

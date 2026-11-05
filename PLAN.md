@@ -37,7 +37,8 @@ Goal: realistic 3D CFD desktop application, running locally on Windows.
 6. ✅ **Real geometry** – STL/STEP import, Gmsh auto meshing, 2D boundary layers, forces, Schäfer–Turek cylinder validation (3D prism layers deferred) → details: [docs/phase6.md](docs/phase6.md)
 7. ✅ **MPI** – domain decomposition (RCB, ghost cells), distributed solvers, parallel CLI and GUI runs → details: [docs/phase7.md](docs/phase7.md)
 8. ✅ **Heat transfer** – energy equation, Boussinesq buoyancy, thermal BCs, Nusselt output, de Vahl Davis validation → details: [docs/phase8.md](docs/phase8.md)
-9. **Later** – conjugate heat transfer, compressible, multiphase, GPU, parallel AMG
+9. ✅ **Transient benchmark, parallel AMG, conjugate heat transfer** – BDF2, Schäfer–Turek 2D-2, distributed AMG, solid zones → details: [docs/phase9.md](docs/phase9.md)
+10. **Later** – compressible, multiphase, GPU, geometry-module solid bodies
 
 ## Notes
 - Development environment is Linux; code stays portable. Windows build/test via CI; GUI tested on user's PC.

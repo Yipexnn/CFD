@@ -1,6 +1,9 @@
 #include <cfd/geometry/geometry.hpp>
+#include <cfd/mesh/gmsh_reader.hpp>
 #include <cfd/mesh/quality.hpp>
+#include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <gtest/gtest.h>
 #include <numbers>
 #include <stdexcept>
@@ -107,6 +110,47 @@ TEST(Geometry, GenerateMesh2dCylinder) {
     EXPECT_EQ(q.n_negative_volumes, 0);
     // One cell layer: front and back have one face per cell.
     EXPECT_EQ(mesh.find_patch("front")->n_faces, mesh.n_cells());
+}
+
+} // namespace
+
+namespace {
+
+// Gmsh physical volumes become cell zones of the mesh.
+TEST(Geometry, GmshPhysicalVolumesAsZones) {
+    const std::string gmsh = cfd::geometry::find_gmsh();
+    if (gmsh.empty()) {
+        GTEST_SKIP() << "Gmsh not installed";
+    }
+    const auto dir = std::filesystem::temp_directory_path() / "cfd_test_zones";
+    std::filesystem::create_directories(dir);
+    {
+        std::ofstream geo(dir / "zones.geo");
+        geo << "SetFactory(\"OpenCASCADE\");\n"
+               "Box(1) = {0, 0, 0, 1, 1, 1};\nBox(2) = {1, 0, 0, 1, 1, 1};\n"
+               "v() = BooleanFragments{ Volume{1}; Delete; }{ Volume{2}; Delete; };\n"
+               "Mesh.MeshSizeMax = 0.25;\n"
+               "Physical Volume(\"fluid\") = {1};\nPhysical Volume(\"solid\") = {2};\n"
+               "Physical Surface(\"walls\") = {Surface{:}};\n"
+               "Mesh.MshFileVersion = 4.1;\n";
+    }
+    const std::string cmd = "\"" + gmsh + "\" \"" + (dir / "zones.geo").string() + "\" -3 -o \"" +
+                            (dir / "zones.msh").string() + "\" > \"" + (dir / "log.txt").string() +
+                            "\" 2>&1";
+    ASSERT_EQ(std::system(cmd.c_str()), 0);
+    const auto mesh = cfd::mesh::read_gmsh(dir / "zones.msh");
+    ASSERT_EQ(mesh.cell_zone_names().size(), 2U);
+    std::vector<double> volume(2, 0.0);
+    for (std::size_t c = 0; c < mesh.cell_zones().size(); ++c) {
+        volume[static_cast<std::size_t>(mesh.cell_zones()[c])] += mesh.cell_volumes()[c];
+    }
+    EXPECT_NEAR(volume[0], 1.0, 1e-9);
+    EXPECT_NEAR(volume[1], 1.0, 1e-9);
+    for (std::size_t c = 0; c < mesh.cell_zones().size(); ++c) {
+        const bool right = mesh.cell_centres()[c].x() > 1.0;
+        EXPECT_EQ(mesh.cell_zone_names()[static_cast<std::size_t>(mesh.cell_zones()[c])],
+                  right ? "solid" : "fluid");
+    }
 }
 
 } // namespace

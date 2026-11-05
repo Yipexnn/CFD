@@ -1,0 +1,29 @@
+{
+  // Conjugate heat transfer: laminar channel flow (Re = 100) over a solid plate (bottom,
+  // 0 <= y <= 0.2, k = 10 x fluid) heated at its base (T = 1); inflow T = 0.
+  // Temperature is solved in fluid and solid; heat.csv gives the heat flow plate -> fluid.
+  "name": "conjugate_plate",
+  "mesh": {
+    "type": "box",
+    "cells": [100, 30, 1],
+    "max": [5, 1.2, 0.05],
+    "patch_types": { "xmin": "inlet", "xmax": "outlet", "ymin": "wall", "ymax": "wall",
+                     "zmin": "patch", "zmax": "patch" }
+  },
+  "physics": {
+    "nu": 0.01,
+    "energy": { "prandtl": 0.71, "t_ref": 0.0 }
+  },
+  "solids": [
+    { "name": "plate", "min": [-1, -1, -1], "max": [10, 0.2, 1], "conductivity": 0.14, "rho_cp": 1.0 }
+  ],
+  "boundaries": {
+    "xmin": { "type": "velocity_inlet", "velocity": [1, 0, 0], "profile": "parabolic", "profile_axes": "y" },
+    "zmin": { "type": "empty" },
+    "zmax": { "type": "empty" },
+    "ymin": { "thermal": { "type": "fixed", "value": 1.0 } }
+  },
+  "solver": { "max_iterations": 3000, "tolerance": 1e-7, "convection": "limited_linear_upwind" },
+  "heat": { "patches": ["ymin", "plate"] },
+  "output": { "directory": "results/conjugate_plate", "log_interval": 100 }
+}

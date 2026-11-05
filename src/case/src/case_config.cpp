@@ -305,7 +305,7 @@ CaseConfig parse_case(const std::string& json_text, const std::filesystem::path&
     }
     check_keys(root, "case",
                {"name", "mesh", "physics", "boundaries", "initial", "solver", "output", "forces",
-                "heat", "restart"});
+                "heat", "solids", "restart"});
 
     CaseConfig c;
     c.base_directory = base_directory;
@@ -336,7 +336,8 @@ CaseConfig parse_case(const std::string& json_text, const std::filesystem::path&
         if (p.contains("energy")) {
             const json& e = p["energy"];
             const std::string ep = "physics.energy";
-            check_keys(e, ep, {"alpha", "prandtl", "prandtl_t", "beta", "t_ref", "gravity"});
+            check_keys(e, ep,
+                       {"alpha", "prandtl", "prandtl_t", "beta", "t_ref", "gravity", "rho_cp"});
             fv::EnergySettings es;
             if (e.contains("alpha") && e.contains("prandtl")) {
                 fail(ep, "give either alpha or prandtl");
@@ -347,6 +348,7 @@ CaseConfig parse_case(const std::string& json_text, const std::filesystem::path&
             es.beta = get_number(e, "beta", ep, es.beta);
             es.t_ref = get_number(e, "t_ref", ep, es.t_ref);
             es.gravity = get_vec3(e, "gravity", ep, es.gravity);
+            es.rho_cp = get_number(e, "rho_cp", ep, es.rho_cp);
             if (!(es.alpha > 0.0) || !(es.prandtl_t > 0.0)) {
                 fail(ep, "alpha / prandtl and prandtl_t must be positive");
             }
@@ -514,7 +516,36 @@ CaseConfig parse_case(const std::string& json_text, const std::filesystem::path&
         c.heat.reference_delta_t = get_number(h, "reference_delta_t", "heat", 1.0);
         c.heat.reference_area = get_number(h, "reference_area", "heat", 1.0);
     }
-    if (!c.energy && (!c.thermal.empty() || !c.heat.patches.empty() || c.initial.temperature)) {
+    if (root.contains("solids")) {
+        const json& sl = root["solids"];
+        if (!sl.is_array()) {
+            fail("solids", "expected an array");
+        }
+        for (std::size_t i = 0; i < sl.size(); ++i) {
+            const std::string sp = "solids[" + std::to_string(i) + "]";
+            check_keys(sl[i], sp, {"name", "min", "max", "conductivity", "rho_cp"});
+            SolidConfig sc;
+            sc.name = get_string(sl[i], "name", sp, "");
+            if (sc.name.empty() || sc.name == "fluid") {
+                fail(sp + ".name", "required (and not 'fluid')");
+            }
+            if (sl[i].contains("min") != sl[i].contains("max")) {
+                fail(sp, "give both min and max (box selection) or neither (mesh zone)");
+            }
+            if (sl[i].contains("min")) {
+                sc.min = get_vec3(sl[i], "min", sp, Vec3::Zero());
+                sc.max = get_vec3(sl[i], "max", sp, Vec3::Zero());
+            }
+            sc.conductivity = get_number(sl[i], "conductivity", sp, sc.conductivity);
+            sc.rho_cp = get_number(sl[i], "rho_cp", sp, sc.rho_cp);
+            if (!(sc.conductivity > 0.0) || !(sc.rho_cp > 0.0)) {
+                fail(sp, "conductivity and rho_cp must be positive");
+            }
+            c.solids.push_back(sc);
+        }
+    }
+    if (!c.energy && (!c.solids.empty() || !c.thermal.empty() || !c.heat.patches.empty() ||
+                      c.initial.temperature)) {
         fail("physics.energy", "thermal settings need the energy equation (physics.energy)");
     }
 

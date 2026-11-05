@@ -136,8 +136,89 @@ CaseRunner::CaseRunner(CaseConfig config, mesh::Mesh mesh)
     setup();
 }
 
-const mesh::Mesh& CaseRunner::mesh() const {
+const mesh::Mesh& CaseRunner::full_mesh() const {
     return local_ ? local_->mesh : *global_mesh_;
+}
+
+const mesh::Mesh& CaseRunner::mesh() const {
+    return fluid_ ? fluid_->mesh : full_mesh();
+}
+
+std::vector<Scalar> CaseRunner::to_full_cells(const Scalar* flow_values, std::size_t ncomp) const {
+    const auto n = static_cast<std::size_t>(mesh().n_cells());
+    if (!fluid_) {
+        return {flow_values, flow_values + n * ncomp};
+    }
+    std::vector<Scalar> full(static_cast<std::size_t>(full_mesh().n_cells()) * ncomp, 0.0);
+    for (std::size_t c = 0; c < n; ++c) {
+        const auto p = static_cast<std::size_t>(fluid_->parent_cell[c]);
+        std::copy_n(flow_values + c * ncomp, ncomp,
+                    full.begin() + static_cast<std::ptrdiff_t>(p * ncomp));
+    }
+    return full;
+}
+
+std::vector<Scalar> CaseRunner::from_full_cells(const std::vector<Scalar>& full,
+                                                std::size_t ncomp) const {
+    if (!fluid_) {
+        return full;
+    }
+    const auto n = static_cast<std::size_t>(mesh().n_cells());
+    std::vector<Scalar> values(n * ncomp);
+    for (std::size_t c = 0; c < n; ++c) {
+        const auto p = static_cast<std::size_t>(fluid_->parent_cell[c]);
+        std::copy_n(full.begin() + static_cast<std::ptrdiff_t>(p * ncomp), ncomp,
+                    values.begin() + static_cast<std::ptrdiff_t>(c * ncomp));
+    }
+    return values;
+}
+
+// Face values (all faces, or boundary faces only) between flow and full meshes; faces
+// without a counterpart (fluid/solid interface, solid faces) are zero.
+std::vector<Scalar> CaseRunner::to_full_faces(const std::vector<Scalar>& flow_values, bool oriented,
+                                              bool boundary_only) const {
+    if (!fluid_) {
+        return flow_values;
+    }
+    const mesh::Mesh& full = full_mesh();
+    const auto fnif = static_cast<std::size_t>(full.n_internal_faces());
+    const auto snif = static_cast<std::size_t>(fluid_->mesh.n_internal_faces());
+    const std::size_t foff = boundary_only ? fnif : 0;
+    const std::size_t soff = boundary_only ? snif : 0;
+    std::vector<Scalar> out(static_cast<std::size_t>(full.n_faces()) - foff, 0.0);
+    for (std::size_t sf = soff; sf < fluid_->parent_face.size(); ++sf) {
+        const auto pf = static_cast<std::size_t>(fluid_->parent_face[sf]);
+        const bool sub_internal = sf < snif;
+        if ((sub_internal && pf < fnif) || (!sub_internal && pf >= fnif)) {
+            if (pf >= foff) {
+                const Scalar v = flow_values[sf - soff];
+                out[pf - foff] = oriented && fluid_->face_flipped[sf] != 0 ? -v : v;
+            }
+        }
+    }
+    return out;
+}
+
+std::vector<Scalar> CaseRunner::from_full_faces(const std::vector<Scalar>& full_values,
+                                                bool oriented, bool boundary_only) const {
+    if (!fluid_) {
+        return full_values;
+    }
+    const mesh::Mesh& full = full_mesh();
+    const auto fnif = static_cast<std::size_t>(full.n_internal_faces());
+    const auto snif = static_cast<std::size_t>(fluid_->mesh.n_internal_faces());
+    const std::size_t foff = boundary_only ? fnif : 0;
+    const std::size_t soff = boundary_only ? snif : 0;
+    std::vector<Scalar> out(fluid_->parent_face.size() - soff, 0.0);
+    for (std::size_t sf = soff; sf < fluid_->parent_face.size(); ++sf) {
+        const auto pf = static_cast<std::size_t>(fluid_->parent_face[sf]);
+        const bool sub_internal = sf < snif;
+        if (((sub_internal && pf < fnif) || (!sub_internal && pf >= fnif)) && pf >= foff) {
+            const Scalar v = full_values[pf - foff];
+            out[sf - soff] = oriented && fluid_->face_flipped[sf] != 0 ? -v : v;
+        }
+    }
+    return out;
 }
 
 void CaseRunner::setup() {
@@ -147,14 +228,69 @@ void CaseRunner::setup() {
         local_ = std::make_unique<parallel::LocalMesh>(
             parallel::decompose(*global_mesh_, parts, comm.rank(), comm));
     }
+    const parallel::Halo* full_halo = local_ ? &local_->halo : nullptr;
+    if (!config_.solids.empty()) {
+        if (!config_.energy) {
+            throw std::runtime_error("solids need the energy equation");
+        }
+        // Zones of the global mesh: 0 = fluid, 1.. = solids.
+        const mesh::Mesh& g = *global_mesh_;
+        std::vector<std::string> names{"fluid"};
+        std::vector<int> global_zone(static_cast<std::size_t>(g.n_cells()), 0);
+        for (const SolidConfig& sc : config_.solids) {
+            const int z = static_cast<int>(names.size());
+            names.push_back(sc.name);
+            int mesh_zone = -1;
+            for (std::size_t k = 0; k < g.cell_zone_names().size(); ++k) {
+                if (g.cell_zone_names()[k] == sc.name) {
+                    mesh_zone = static_cast<int>(k);
+                }
+            }
+            if (!sc.min && mesh_zone < 0) {
+                throw std::runtime_error("solids: mesh has no zone '" + sc.name +
+                                         "' (give min/max for a box selection)");
+            }
+            Label count = 0;
+            for (std::size_t c = 0; c < global_zone.size(); ++c) {
+                const Vec3& x = g.cell_centres()[c];
+                const bool inside = sc.min ? (x.array() >= sc.min->array()).all() &&
+                                                 (x.array() <= sc.max->array()).all()
+                                           : g.cell_zones()[c] == mesh_zone;
+                if (inside) {
+                    global_zone[c] = z;
+                    ++count;
+                }
+            }
+            if (count == 0) {
+                throw std::runtime_error("solids: no cells in '" + sc.name + "'");
+            }
+        }
+        const mesh::Mesh& full = full_mesh();
+        conjugate_ = std::make_unique<fv::ConjugateMesh>();
+        conjugate_->zone_names = names;
+        conjugate_->zone_of_cell.resize(static_cast<std::size_t>(full.n_cells()));
+        for (std::size_t c = 0; c < conjugate_->zone_of_cell.size(); ++c) {
+            conjugate_->zone_of_cell[c] =
+                global_zone[local_ ? static_cast<std::size_t>(local_->global_cell[c]) : c];
+        }
+        for (const SolidConfig& sc : config_.solids) {
+            conjugate_->solids.push_back({sc.name, sc.conductivity, sc.rho_cp});
+        }
+        fluid_ = std::make_unique<parallel::SubMesh>(
+            parallel::extract_zone(full, conjugate_->zone_of_cell, names, 0, full_halo));
+        full_geometry_ = std::make_unique<fv::FvGeometry>(full, full_halo);
+        conjugate_->geometry = full_geometry_.get();
+        conjugate_->fluid = fluid_.get();
+    }
     const mesh::Mesh* const solver_mesh = &mesh();
     for (const auto& name : config_.forces.patches) {
         if (solver_mesh->find_patch(name) == nullptr) {
             throw std::runtime_error("forces: unknown patch '" + name + "'");
         }
     }
+    const parallel::Halo* flow_halo = fluid_ && local_ ? &fluid_->halo : full_halo;
     flow_ = std::make_unique<fv::FlowSolver>(*solver_mesh, config_.boundaries, config_.solver.flow,
-                                             local_ ? &local_->halo : nullptr);
+                                             flow_halo);
     for (const auto& [name, profile] : config_.profiles) {
         const mesh::Patch* patch = solver_mesh->find_patch(name);
         const auto bc = config_.boundaries.find(name);
@@ -174,12 +310,18 @@ void CaseRunner::setup() {
         flow_->set_turbulence_model(sst_.get());
     }
     for (const auto& name : config_.heat.patches) {
-        if (solver_mesh->find_patch(name) == nullptr) {
-            throw std::runtime_error("heat: unknown patch '" + name + "'");
+        const bool solid_zone = std::any_of(config_.solids.begin(), config_.solids.end(),
+                                            [&](const SolidConfig& sc) { return sc.name == name; });
+        if (full_mesh().find_patch(name) == nullptr && !solid_zone) {
+            throw std::runtime_error("heat: unknown patch or solid '" + name + "'");
         }
     }
     if (config_.energy) {
-        energy_ = std::make_unique<fv::EnergyEquation>(*flow_, *config_.energy, config_.thermal);
+        energy_ =
+            conjugate_
+                ? std::make_unique<fv::EnergyEquation>(*flow_, *conjugate_, *config_.energy,
+                                                       config_.thermal)
+                : std::make_unique<fv::EnergyEquation>(*flow_, *config_.energy, config_.thermal);
         energy_->set_uniform_temperature(
             config_.initial.temperature.value_or(config_.energy->t_ref));
     }
@@ -315,14 +457,17 @@ std::vector<Vec3> to_vec3(const std::vector<Scalar>& v) {
 void CaseRunner::write_results(const std::filesystem::path& file) const {
     const auto ng = static_cast<std::size_t>(global_mesh_->n_cells());
     const parallel::LocalMesh* lm = local_.get();
-    const std::vector<Vec3> u = to_vec3(gather_cells(lm, flow_->velocity().data()->data(), 3, ng));
-    const std::vector<Scalar> p = gather_cells(lm, flow_->pressure().data(), 1, ng);
+    auto cells = [&](const Scalar* values, std::size_t ncomp) {
+        return gather_cells(lm, to_full_cells(values, ncomp).data(), ncomp, ng);
+    };
+    const std::vector<Vec3> u = to_vec3(cells(flow_->velocity().data()->data(), 3));
+    const std::vector<Scalar> p = cells(flow_->pressure().data(), 1);
     std::vector<std::pair<std::string, std::vector<Scalar>>> turbulence;
     if (sst_) {
-        turbulence.emplace_back("k", gather_cells(lm, sst_->k().data(), 1, ng));
-        turbulence.emplace_back("omega", gather_cells(lm, sst_->omega().data(), 1, ng));
-        turbulence.emplace_back("nut", gather_cells(lm, sst_->nut().data(), 1, ng));
-        turbulence.emplace_back("yPlus", gather_cells(lm, sst_->y_plus().data(), 1, ng));
+        turbulence.emplace_back("k", cells(sst_->k().data(), 1));
+        turbulence.emplace_back("omega", cells(sst_->omega().data(), 1));
+        turbulence.emplace_back("nut", cells(sst_->nut().data(), 1));
+        turbulence.emplace_back("yPlus", cells(sst_->y_plus().data(), 1));
     }
     if (energy_) {
         turbulence.emplace_back("T", gather_cells(lm, energy_->temperature().data(), 1, ng));
@@ -344,17 +489,22 @@ void CaseRunner::write_checkpoint(const std::filesystem::path& file) const {
     const auto nf = static_cast<std::int64_t>(g.n_faces());
     const auto ng = static_cast<std::size_t>(nc);
     const parallel::LocalMesh* lm = local_.get();
-    const std::vector<Scalar> u = gather_cells(lm, flow_->velocity().data()->data(), 3, ng);
-    const std::vector<Scalar> p = gather_cells(lm, flow_->pressure().data(), 1, ng);
-    const std::vector<Scalar> phi = gather_faces(lm, g, flow_->face_flux(), true, false);
+    auto cells = [&](const Scalar* values, std::size_t ncomp) {
+        return gather_cells(lm, to_full_cells(values, ncomp).data(), ncomp, ng);
+    };
+    const std::vector<Scalar> u = cells(flow_->velocity().data()->data(), 3);
+    const std::vector<Scalar> p = cells(flow_->pressure().data(), 1);
+    const std::vector<Scalar> phi =
+        gather_faces(lm, g, to_full_faces(flow_->face_flux(), true, false), true, false);
     const std::vector<Scalar> temperature =
         energy_ ? gather_cells(lm, energy_->temperature().data(), 1, ng) : std::vector<Scalar>{};
     std::vector<std::vector<Scalar>> turbulence;
     if (sst_) {
-        turbulence.push_back(gather_cells(lm, sst_->k().data(), 1, ng));
-        turbulence.push_back(gather_cells(lm, sst_->omega().data(), 1, ng));
-        turbulence.push_back(gather_cells(lm, sst_->nut().data(), 1, ng));
-        turbulence.push_back(gather_faces(lm, g, sst_->boundary_nut(), false, true));
+        turbulence.push_back(cells(sst_->k().data(), 1));
+        turbulence.push_back(cells(sst_->omega().data(), 1));
+        turbulence.push_back(cells(sst_->nut().data(), 1));
+        turbulence.push_back(
+            gather_faces(lm, g, to_full_faces(sst_->boundary_nut(), false, true), false, true));
     }
     if (!world().is_root()) {
         return;
@@ -429,10 +579,13 @@ void CaseRunner::read_checkpoint(const std::filesystem::path& file) {
     const mesh::Mesh& g = *global_mesh_;
     CheckpointData d = read_checkpoint_file(file, g.n_cells(), g.n_faces(), g.n_boundary_faces());
     const parallel::LocalMesh* lm = local_.get();
+    auto cells = [&](const std::vector<Scalar>& global, std::size_t ncomp) {
+        return from_full_cells(scatter_cells(lm, global, ncomp), ncomp);
+    };
     if (!d.k.empty() && sst_) {
-        sst_->set_fields(scatter_cells(lm, d.k, 1), scatter_cells(lm, d.omega, 1),
-                         scatter_cells(lm, d.nut, 1),
-                         scatter_faces(lm, g, d.boundary_nut, false, true));
+        sst_->set_fields(
+            cells(d.k, 1), cells(d.omega, 1), cells(d.nut, 1),
+            from_full_faces(scatter_faces(lm, g, d.boundary_nut, false, true), false, true));
     }
     std::vector<Scalar> u_flat(3 * d.u.size());
     for (std::size_t c = 0; c < d.u.size(); ++c) {
@@ -440,8 +593,8 @@ void CaseRunner::read_checkpoint(const std::filesystem::path& file) {
             u_flat[3 * c + static_cast<std::size_t>(i)] = d.u[c][i];
         }
     }
-    flow_->set_state(to_vec3(scatter_cells(lm, u_flat, 3)), scatter_cells(lm, d.p, 1),
-                     scatter_faces(lm, g, d.phi, true, false));
+    flow_->set_state(to_vec3(cells(u_flat, 3)), cells(d.p, 1),
+                     from_full_faces(scatter_faces(lm, g, d.phi, true, false), true, false));
     if (energy_ && !d.t.empty()) {
         energy_->set_temperature(scatter_cells(lm, d.t, 1));
     }

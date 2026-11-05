@@ -165,4 +165,67 @@ TEST(ParallelSolver, HeatedCavityMatchesSerial) {
     EXPECT_LT(max_difference(lm, parallel.velocity(), serial.velocity()), 1e-4);
 }
 
+// Conjugate heat transfer (fluid zone + solid plate) on several processes = serial.
+TEST(ParallelSolver, ConjugatePlateMatchesSerial) {
+    cfd::mesh::BoxSpec spec;
+    spec.nx = 30;
+    spec.ny = 12;
+    spec.nz = 1;
+    spec.max = Vec3(3.0, 1.2, 0.1);
+    spec.patch_types[0] = cfd::mesh::PatchType::Inlet;
+    spec.patch_types[1] = cfd::mesh::PatchType::Outlet;
+    const auto global = cfd::mesh::make_box_mesh(spec);
+    const std::vector<std::string> names{"fluid", "plate"};
+    std::vector<int> global_zone(static_cast<std::size_t>(global.n_cells()));
+    for (std::size_t c = 0; c < global_zone.size(); ++c) {
+        global_zone[c] = global.cell_centres()[c].y() < 0.2 ? 1 : 0;
+    }
+    const BoundaryCondition empty{FlowBoundary::Empty, Vec3::Zero(), 0.0};
+    const std::map<std::string, BoundaryCondition> bcs{
+        {"xmin", {FlowBoundary::VelocityInlet, Vec3(1, 0, 0), 0.0}},
+        {"zmin", empty},
+        {"zmax", empty}};
+    FlowSettings settings;
+    settings.nu = 0.02;
+    EnergySettings es;
+    es.alpha = 0.02 / 0.71;
+    const std::map<std::string, ThermalBoundary> thermal{
+        {"ymin", {ThermalBoundary::Kind::FixedTemperature, 1.0}}};
+
+    auto solve = [&](const cfd::mesh::Mesh& full, const std::vector<int>& zones,
+                     const par::Halo* halo) {
+        ConjugateMesh cm;
+        cm.zone_of_cell = zones;
+        cm.zone_names = names;
+        cm.solids = {{"plate", 0.25, 1.0}};
+        const par::SubMesh fluid = par::extract_zone(full, zones, names, 0, halo);
+        const FvGeometry geo(full, halo);
+        cm.geometry = &geo;
+        cm.fluid = &fluid;
+        FlowSolver flow(fluid.mesh, bcs, settings, halo != nullptr ? &fluid.halo : nullptr);
+        EnergyEquation energy(flow, cm, es, thermal);
+        for (int it = 0; it < 3000; ++it) {
+            Residuals r = flow.simple_iteration();
+            r.t = energy.correct(flow, 0.0);
+            if (r.max() < 1e-9) {
+                break;
+            }
+        }
+        return std::make_pair(energy.patch_heat_flow(flow, "ymin"),
+                              energy.patch_heat_flow(flow, "plate"));
+    };
+    const auto [q_serial, plate_serial] = solve(global, global_zone, nullptr);
+    const auto parts = par::partition_rcb(global, comm().size());
+    const auto lm = par::decompose(global, parts, comm().rank(), comm());
+    std::vector<int> local_zone(lm.global_cell.size());
+    for (std::size_t c = 0; c < local_zone.size(); ++c) {
+        local_zone[c] = global_zone[static_cast<std::size_t>(lm.global_cell[c])];
+    }
+    const auto [q_parallel, plate_parallel] = solve(lm.mesh, local_zone, &lm.halo);
+    EXPECT_GT(q_serial, 0.0);
+    EXPECT_NEAR(q_parallel, q_serial, 1e-6 * q_serial);
+    EXPECT_NEAR(plate_parallel, plate_serial, 1e-6 * q_serial);
+    EXPECT_NEAR(plate_serial, q_serial, 1e-5 * q_serial);
+}
+
 } // namespace

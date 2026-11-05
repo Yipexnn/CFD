@@ -15,13 +15,21 @@ void SolverWorker::take_snapshot(const cases::CaseRunner& runner) {
     RunSnapshot s;
     s.step = runner.step();
     s.time = runner.time();
-    s.fields.u = runner.flow().velocity();
-    s.fields.p = runner.flow().pressure();
+    // Flow fields live on the fluid zone; the view shows the full mesh (zero in solids).
+    const auto full = [&](const std::vector<double>& v) {
+        return runner.to_full_cells(v.data(), 1);
+    };
+    const std::vector<double> u = runner.to_full_cells(runner.flow().velocity().data()->data(), 3);
+    s.fields.u.resize(u.size() / 3);
+    for (std::size_t c = 0; c < s.fields.u.size(); ++c) {
+        s.fields.u[c] = core::Vec3(u[3 * c], u[3 * c + 1], u[3 * c + 2]);
+    }
+    s.fields.p = full(runner.flow().pressure());
     if (const auto* sst = runner.sst()) {
-        s.fields.k = sst->k();
-        s.fields.omega = sst->omega();
-        s.fields.nut = sst->nut();
-        s.fields.y_plus = sst->y_plus();
+        s.fields.k = full(sst->k());
+        s.fields.omega = full(sst->omega());
+        s.fields.nut = full(sst->nut());
+        s.fields.y_plus = full(sst->y_plus());
     }
     if (const auto* energy = runner.energy()) {
         s.fields.t = energy->temperature();
@@ -40,7 +48,7 @@ void SolverWorker::run(const cases::CaseConfig& config,
     try {
         cases::CaseRunner runner =
             mesh ? cases::CaseRunner(config, *mesh) : cases::CaseRunner(config);
-        emit started(runner.mesh().n_cells());
+        emit started(runner.full_mesh().n_cells());
         auto last = std::chrono::steady_clock::now();
         auto last_progress = last - std::chrono::seconds(1);
         const auto result = runner.run([&](int step, double time, const fv::Residuals& r) {

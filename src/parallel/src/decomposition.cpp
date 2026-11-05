@@ -235,4 +235,133 @@ LocalMesh decompose(const mesh::Mesh& global, const std::vector<int>& parts, int
     return lm;
 }
 
+SubMesh extract_zone(const mesh::Mesh& parent, const std::vector<int>& zone_of_cell,
+                     const std::vector<std::string>& zone_names, int zone,
+                     const Halo* parent_halo) {
+    const auto nc = static_cast<std::size_t>(parent.n_cells());
+    const auto nif = static_cast<std::size_t>(parent.n_internal_faces());
+    if (zone_of_cell.size() != nc) {
+        throw std::invalid_argument("extract_zone: zone size mismatch");
+    }
+    SubMesh sm;
+    std::vector<Label> sub_of(nc, -1);
+    for (std::size_t c = 0; c < nc; ++c) {
+        if (zone_of_cell[c] == zone) {
+            sub_of[c] = static_cast<Label>(sm.parent_cell.size());
+            sm.parent_cell.push_back(static_cast<Label>(c));
+        }
+    }
+    const auto& own = parent.owner();
+    const auto& nei = parent.neighbour();
+    struct SubFace {
+        Label owner;
+        Label neighbour;
+        Label parent;
+        bool flip;
+    };
+    std::vector<SubFace> faces;
+    std::vector<std::vector<SubFace>> interface(zone_names.size());
+    for (std::size_t f = 0; f < nif; ++f) {
+        const Label so = sub_of[static_cast<std::size_t>(own[f])];
+        const Label sn = sub_of[static_cast<std::size_t>(nei[f])];
+        if (so >= 0 && sn >= 0) {
+            faces.push_back({so, sn, static_cast<Label>(f), false}); // order preserved
+        } else if (so >= 0) {
+            interface[static_cast<std::size_t>(zone_of_cell[static_cast<std::size_t>(nei[f])])]
+                .push_back({so, -1, static_cast<Label>(f), false});
+        } else if (sn >= 0) {
+            interface[static_cast<std::size_t>(zone_of_cell[static_cast<std::size_t>(own[f])])]
+                .push_back({sn, -1, static_cast<Label>(f), true});
+        }
+    }
+    std::vector<mesh::Patch> patches;
+    for (const mesh::Patch& pp : parent.patches()) {
+        mesh::Patch p = pp;
+        p.start_face = static_cast<Label>(faces.size());
+        for (Label i = 0; i < pp.n_faces; ++i) {
+            const auto f = static_cast<std::size_t>(pp.start_face + i);
+            const Label so = sub_of[static_cast<std::size_t>(own[f])];
+            if (so >= 0) {
+                faces.push_back({so, -1, static_cast<Label>(f), false});
+            }
+        }
+        p.n_faces = static_cast<Label>(faces.size()) - p.start_face;
+        patches.push_back(p);
+    }
+    for (std::size_t z = 0; z < zone_names.size(); ++z) {
+        if (static_cast<int>(z) == zone) {
+            continue;
+        }
+        mesh::Patch p;
+        p.name = zone_names[z];
+        p.type = mesh::PatchType::Wall;
+        p.start_face = static_cast<Label>(faces.size());
+        p.n_faces = static_cast<Label>(interface[z].size());
+        faces.insert(faces.end(), interface[z].begin(), interface[z].end());
+        patches.push_back(p);
+    }
+
+    std::vector<Label> point_of(static_cast<std::size_t>(parent.n_points()), -1);
+    std::vector<Vec3> points;
+    std::vector<Label> offsets{0};
+    std::vector<Label> face_points;
+    std::vector<Label> owner;
+    std::vector<Label> neighbour;
+    for (const SubFace& sf : faces) {
+        const std::size_t start = face_points.size();
+        for (const Label gp : parent.face(sf.parent)) {
+            Label& lp = point_of[static_cast<std::size_t>(gp)];
+            if (lp < 0) {
+                lp = static_cast<Label>(points.size());
+                points.push_back(parent.points()[static_cast<std::size_t>(gp)]);
+            }
+            face_points.push_back(lp);
+        }
+        if (sf.flip) {
+            std::reverse(face_points.begin() + static_cast<std::ptrdiff_t>(start),
+                         face_points.end());
+        }
+        offsets.push_back(static_cast<Label>(face_points.size()));
+        owner.push_back(sf.owner);
+        if (sf.neighbour >= 0) {
+            neighbour.push_back(sf.neighbour);
+        }
+        sm.parent_face.push_back(sf.parent);
+        sm.face_flipped.push_back(sf.flip ? 1 : 0);
+    }
+    sm.mesh = mesh::Mesh(std::move(points), std::move(offsets), std::move(face_points),
+                         std::move(owner), std::move(neighbour), std::move(patches),
+                         static_cast<Label>(sm.parent_cell.size()));
+
+    if (parent_halo != nullptr) {
+        sm.halo.comm = parent_halo->comm;
+        sm.halo.halo_patch = parent_halo->halo_patch;
+        Label n_owned = 0;
+        for (Label c = 0; c < parent_halo->n_owned; ++c) {
+            n_owned += sub_of[static_cast<std::size_t>(c)] >= 0 ? 1 : 0;
+        }
+        sm.halo.n_owned = n_owned;
+        for (const Halo::Neighbour& nb : parent_halo->neighbours) {
+            Halo::Neighbour s;
+            s.rank = nb.rank;
+            for (const Label c : nb.send) {
+                if (sub_of[static_cast<std::size_t>(c)] >= 0) {
+                    s.send.push_back(sub_of[static_cast<std::size_t>(c)]);
+                }
+            }
+            for (const Label c : nb.recv) {
+                if (sub_of[static_cast<std::size_t>(c)] >= 0) {
+                    s.recv.push_back(sub_of[static_cast<std::size_t>(c)]);
+                }
+            }
+            if (!s.send.empty() || !s.recv.empty()) {
+                sm.halo.neighbours.push_back(std::move(s));
+            }
+        }
+    } else {
+        sm.halo.n_owned = sm.mesh.n_cells();
+    }
+    return sm;
+}
+
 } // namespace cfd::parallel

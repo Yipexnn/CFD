@@ -43,6 +43,19 @@ void Mesh::set_patch_type(const std::string& name, PatchType type) {
     it->type = type;
 }
 
+void Mesh::set_cell_zones(std::vector<std::string> names, std::vector<int> zone_of_cell) {
+    if (zone_of_cell.size() != static_cast<std::size_t>(n_cells_)) {
+        throw std::invalid_argument("Mesh::set_cell_zones: size mismatch");
+    }
+    for (const int z : zone_of_cell) {
+        if (z < 0 || z >= static_cast<int>(names.size())) {
+            throw std::invalid_argument("Mesh::set_cell_zones: zone index out of range");
+        }
+    }
+    zone_names_ = std::move(names);
+    cell_zones_ = std::move(zone_of_cell);
+}
+
 void Mesh::validate() const {
     const Label nf = n_faces();
     if (face_point_offsets_.size() != static_cast<std::size_t>(nf) + 1 ||
