@@ -141,8 +141,7 @@ void AmgPreconditioner::setup(const CsrMatrix& a) {
         }
 
         int n_agg = 0;
-        const std::vector<int> agg =
-            amg_aggregate(current, d, settings_.strength_threshold, n_agg);
+        const std::vector<int> agg = amg_aggregate(current, d, settings_.strength_threshold, n_agg);
         if (n_agg >= current.rows() || n_agg == 0) { // no coarsening possible
             levels_.push_back(std::move(level));
             break;
