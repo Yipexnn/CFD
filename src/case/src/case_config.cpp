@@ -102,27 +102,28 @@ bool get_bool(const json& j, const std::string& key, const std::string& path, bo
     return j[key].get<bool>();
 }
 
-geometry::Body parse_body(const json& j, const std::string& path) {
+geometry::Body parse_body(const json& j, const std::string& path,
+                          std::vector<SolidConfig>& solids) {
     geometry::Body b;
     const std::string type = get_string(j, "type", path, "");
     if (type == "box") {
-        check_keys(j, path, {"type", "min", "max", "patch"});
+        check_keys(j, path, {"type", "min", "max", "patch", "solid"});
         b.kind = geometry::Body::Kind::Box;
         b.a = get_vec3(j, "min", path, b.a);
         b.b = get_vec3(j, "max", path, b.b);
     } else if (type == "cylinder") {
-        check_keys(j, path, {"type", "base", "axis", "radius", "patch"});
+        check_keys(j, path, {"type", "base", "axis", "radius", "patch", "solid"});
         b.kind = geometry::Body::Kind::Cylinder;
         b.a = get_vec3(j, "base", path, b.a);
         b.b = get_vec3(j, "axis", path, Vec3(0, 0, 1));
         b.radius = get_number(j, "radius", path, 0.0);
     } else if (type == "sphere") {
-        check_keys(j, path, {"type", "centre", "radius", "patch"});
+        check_keys(j, path, {"type", "centre", "radius", "patch", "solid"});
         b.kind = geometry::Body::Kind::Sphere;
         b.a = get_vec3(j, "centre", path, b.a);
         b.radius = get_number(j, "radius", path, 0.0);
     } else if (type == "file") {
-        check_keys(j, path, {"type", "file", "patch"});
+        check_keys(j, path, {"type", "file", "patch", "solid"});
         b.kind = geometry::Body::Kind::File;
         b.file = get_string(j, "file", path, "");
         if (b.file.empty()) {
@@ -136,10 +137,25 @@ geometry::Body parse_body(const json& j, const std::string& path) {
         fail(path + ".radius", "must be positive");
     }
     b.patch = get_string(j, "patch", path, b.patch);
+    if (j.contains("solid")) {
+        const json& sj = j["solid"];
+        const std::string sp = path + ".solid";
+        check_keys(sj, sp, {"conductivity", "rho_cp"});
+        SolidConfig sc;
+        sc.name = b.patch;
+        sc.conductivity = get_number(sj, "conductivity", sp, sc.conductivity);
+        sc.rho_cp = get_number(sj, "rho_cp", sp, sc.rho_cp);
+        if (!(sc.conductivity > 0.0) || !(sc.rho_cp > 0.0)) {
+            fail(sp, "conductivity and rho_cp must be positive");
+        }
+        b.solid = true;
+        solids.push_back(sc);
+    }
     return b;
 }
 
-geometry::GeometrySpec parse_geometry(const json& j, const std::string& path) {
+geometry::GeometrySpec parse_geometry(const json& j, const std::string& path,
+                                      std::vector<SolidConfig>& solids) {
     check_keys(j, path,
                {"type", "min", "max", "bodies", "internal", "two_d", "size", "size_near",
                 "refine_distance", "boundary_layer", "quads", "domain_patches", "patches"});
@@ -152,7 +168,7 @@ geometry::GeometrySpec parse_geometry(const json& j, const std::string& path) {
         }
         for (std::size_t i = 0; i < j["bodies"].size(); ++i) {
             g.bodies.push_back(
-                parse_body(j["bodies"][i], path + ".bodies[" + std::to_string(i) + "]"));
+                parse_body(j["bodies"][i], path + ".bodies[" + std::to_string(i) + "]", solids));
         }
     }
     g.internal = get_bool(j, "internal", path, g.internal);
@@ -202,13 +218,13 @@ geometry::GeometrySpec parse_geometry(const json& j, const std::string& path) {
     return g;
 }
 
-MeshConfig parse_mesh(const json& j) {
+MeshConfig parse_mesh(const json& j, std::vector<SolidConfig>& solids) {
     const std::string path = "mesh";
     MeshConfig m;
     const std::string type = get_string(j, "type", path, "box");
     if (type == "geometry") {
         m.source = MeshSource::Geometry;
-        m.geometry = parse_geometry(j, path);
+        m.geometry = parse_geometry(j, path, solids);
         return m;
     }
     if (type == "gmsh") {
@@ -314,7 +330,8 @@ CaseConfig parse_case(const std::string& json_text, const std::filesystem::path&
     if (!root.contains("mesh")) {
         fail("case", "missing 'mesh'");
     }
-    c.mesh = parse_mesh(root["mesh"]);
+    std::vector<SolidConfig> body_solids;
+    c.mesh = parse_mesh(root["mesh"], body_solids);
 
     fv::FlowSettings& flow = c.solver.flow;
     if (root.contains("physics")) {
@@ -542,6 +559,14 @@ CaseConfig parse_case(const std::string& json_text, const std::filesystem::path&
                 fail(sp, "conductivity and rho_cp must be positive");
             }
             c.solids.push_back(sc);
+        }
+    }
+    c.solids.insert(c.solids.end(), body_solids.begin(), body_solids.end());
+    for (std::size_t i = 0; i < c.solids.size(); ++i) {
+        for (std::size_t k = i + 1; k < c.solids.size(); ++k) {
+            if (c.solids[i].name == c.solids[k].name) {
+                fail("solids", "duplicate solid '" + c.solids[i].name + "'");
+            }
         }
     }
     if (!c.energy && (!c.solids.empty() || !c.thermal.empty() || !c.heat.patches.empty() ||

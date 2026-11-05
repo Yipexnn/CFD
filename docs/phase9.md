@@ -35,8 +35,7 @@ needed to land inside them.
   Gmsh physical volumes → zones
 - example `examples/conjugate_plate.json` (heated plate under a laminar channel flow)
 
-Limitations / later: solid bodies in the geometry module (Gmsh fragments), editing solids in the
-GUI (kept from the case file), heat sources in solids.
+Limitations / later: heat sources in solids. (Solid geometry bodies and GUI editing: Phase 10.)
 
 ## Definition of Done
 - [x] BDF2 + 2D-2 validation

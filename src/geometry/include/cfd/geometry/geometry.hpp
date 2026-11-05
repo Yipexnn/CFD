@@ -21,6 +21,9 @@ struct Body {
     Scalar radius = 0.0;            // Cylinder, Sphere
     std::filesystem::path file;     // File: .step/.stp (OpenCASCADE) or .stl (triangulation)
     std::string patch = "obstacle"; // boundary patch name of the body surface
+    // Solid body (conjugate heat transfer): meshed as its own cell zone named `patch`
+    // instead of being cut out of the fluid (not with STL bodies or internal flow).
+    bool solid = false;
 };
 
 // Named boundary patch selected by an axis-aligned box: every boundary surface entirely

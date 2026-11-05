@@ -74,9 +74,10 @@ private:
     void watch(QCheckBox* widget, bool mesh);
 
     [[nodiscard]] QWidget* build_geometry_page(QWidget* parent);
-    void add_body_row(const geometry::Body& body);
+    void add_body_row(const geometry::Body& body, const cases::SolidConfig* solid);
     void set_geometry(const geometry::GeometrySpec& spec);
-    void read_geometry(geometry::GeometrySpec& spec) const;
+    // Reads the geometry page; solid bodies are returned as solids (conjugate heat transfer).
+    void read_geometry(geometry::GeometrySpec& spec, std::vector<cases::SolidConfig>& solids) const;
 
     // Mesh tab.
     QComboBox* source_combo_ = nullptr;

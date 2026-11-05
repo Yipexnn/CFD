@@ -73,7 +73,11 @@ Bodies:
 | `sphere` | `centre`, `radius` |
 | `file` | `file`: `.stl` (closed triangulation) or `.step`/`.stp`, relative to the case file |
 
-Every body has `patch` (default `"obstacle"`); body patches are walls by default. Patch types of
+Every body has `patch` (default `"obstacle"`); body patches are walls by default.
+`"solid": {"conductivity": k, "rho_cp": c}` meshes the body as a solid region named `patch`
+(conjugate heat transfer, needs `physics.energy`; not with STL bodies or internal flow): it is
+kept as its own cell zone instead of being cut out, and its fluid-side surfaces become the wall
+patch `patch` of the flow mesh. Patch types of
 other patches follow their names (`inlet*`, `outlet*`, `wall*`, `sym*`), otherwise an entry in
 `boundaries` is required.
 

@@ -22,6 +22,7 @@
 #include <QTableWidget>
 #include <QTableWidgetItem>
 #include <QVBoxLayout>
+#include <algorithm>
 #include <cstddef>
 #include <filesystem>
 #include <utility>
@@ -176,7 +177,17 @@ constexpr std::array<const char*, 4> kBodyTypeNames{"box", "cylinder", "sphere",
 constexpr std::array<geometry::Body::Kind, 4> kBodyKinds{
     geometry::Body::Kind::Box, geometry::Body::Kind::Cylinder, geometry::Body::Kind::Sphere,
     geometry::Body::Kind::File};
-enum BodyColumn { kBodyType, kBodyA, kBodyB, kBodyRadius, kBodyFile, kBodyPatch, kBodyColumns };
+enum BodyColumn {
+    kBodyType,
+    kBodyA,
+    kBodyB,
+    kBodyRadius,
+    kBodyFile,
+    kBodyPatch,
+    kBodySolidK,     // solid body: conductivity (empty: obstacle cut out of the fluid)
+    kBodySolidRhoCp, // solid body: volumetric heat capacity
+    kBodyColumns
+};
 
 QString vec_text(const core::Vec3& v) {
     return QStringLiteral("%1 %2 %3")
@@ -553,7 +564,22 @@ cases::CaseConfig CaseEditor::config() const {
                       : source == 2 ? cases::MeshSource::Geometry
                                     : cases::MeshSource::Box;
     cfg.mesh.file = to_path(gmsh_path_->text());
-    read_geometry(cfg.mesh.geometry);
+    std::vector<cases::SolidConfig> body_solids;
+    read_geometry(cfg.mesh.geometry, body_solids);
+    if (cfg.mesh.source == cases::MeshSource::Geometry) {
+        // Solids of the geometry bodies come from the table; box/zone solids are kept.
+        std::vector<cases::SolidConfig> kept;
+        for (const auto& sc : config_.solids) {
+            const bool from_body = std::any_of(
+                config_.mesh.geometry.bodies.begin(), config_.mesh.geometry.bodies.end(),
+                [&](const geometry::Body& b) { return b.solid && b.patch == sc.name; });
+            if (!from_body) {
+                kept.push_back(sc);
+            }
+        }
+        kept.insert(kept.end(), body_solids.begin(), body_solids.end());
+        cfg.solids = kept;
+    }
     mesh::BoxSpec& box = cfg.mesh.box;
     box.nx = cells_[0]->value();
     box.ny = cells_[1]->value();
@@ -808,7 +834,11 @@ QWidget* CaseEditor::build_geometry_page(QWidget* parent) {
     bodies_table_ = new QTableWidget(0, kBodyColumns, bodies);
     bodies_table_->setHorizontalHeaderLabels(QStringList{
         QStringLiteral("type"), QStringLiteral("min / base / centre"), QStringLiteral("max / axis"),
-        QStringLiteral("radius"), QStringLiteral("file"), QStringLiteral("patch")});
+        QStringLiteral("radius"), QStringLiteral("file"), QStringLiteral("patch"),
+        QStringLiteral("solid k"), QStringLiteral("solid rho cp")});
+    bodies_table_->setToolTip(QStringLiteral(
+        "Fill 'solid k' to mesh the body as a solid region (conjugate heat transfer, needs the "
+        "energy equation); empty = obstacle cut out of the fluid."));
     bodies_table_->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
     bodies_table_->setMinimumHeight(120);
     bodies_layout->addWidget(bodies_table_);
@@ -832,7 +862,7 @@ QWidget* CaseEditor::build_geometry_page(QWidget* parent) {
         body.b = core::Vec3(0, 0, hi.z() - lo.z());
         body.a.z() = lo.z();
         body.radius = 0.1 * (hi - lo).head<2>().minCoeff();
-        add_body_row(body);
+        add_body_row(body, nullptr);
         notify(true);
     });
     connect(add_file, &QPushButton::clicked, this, [this] {
@@ -843,7 +873,7 @@ QWidget* CaseEditor::build_geometry_page(QWidget* parent) {
             geometry::Body body;
             body.kind = geometry::Body::Kind::File;
             body.file = to_path(file);
-            add_body_row(body);
+            add_body_row(body, nullptr);
             notify(true);
         }
     });
@@ -891,7 +921,7 @@ QWidget* CaseEditor::build_geometry_page(QWidget* parent) {
     return page;
 }
 
-void CaseEditor::add_body_row(const geometry::Body& body) {
+void CaseEditor::add_body_row(const geometry::Body& body, const cases::SolidConfig* solid) {
     const UpdateScope scope(updating_);
     const int row = bodies_table_->rowCount();
     bodies_table_->insertRow(row);
@@ -907,6 +937,13 @@ void CaseEditor::add_body_row(const geometry::Body& body) {
     bodies_table_->setItem(row, kBodyFile, new QTableWidgetItem(to_qstring(body.file)));
     bodies_table_->setItem(row, kBodyPatch,
                            new QTableWidgetItem(QString::fromStdString(body.patch)));
+    const bool is_solid = body.solid && solid != nullptr;
+    bodies_table_->setItem(
+        row, kBodySolidK,
+        new QTableWidgetItem(is_solid ? QString::number(solid->conductivity, 'g', 12) : QString()));
+    bodies_table_->setItem(
+        row, kBodySolidRhoCp,
+        new QTableWidgetItem(is_solid ? QString::number(solid->rho_cp, 'g', 12) : QString()));
 }
 
 void CaseEditor::set_geometry(const geometry::GeometrySpec& spec) {
@@ -927,11 +964,18 @@ void CaseEditor::set_geometry(const geometry::GeometrySpec& spec) {
     }
     bodies_table_->setRowCount(0);
     for (const geometry::Body& body : spec.bodies) {
-        add_body_row(body);
+        const cases::SolidConfig* solid = nullptr;
+        for (const auto& sc : config_.solids) {
+            if (sc.name == body.patch) {
+                solid = &sc;
+            }
+        }
+        add_body_row(body, solid);
     }
 }
 
-void CaseEditor::read_geometry(geometry::GeometrySpec& spec) const {
+void CaseEditor::read_geometry(geometry::GeometrySpec& spec,
+                               std::vector<cases::SolidConfig>& solids) const {
     spec.domain_min = get_vec(geo_min_);
     spec.domain_max = get_vec(geo_max_);
     spec.two_d = geo_two_d_->isChecked();
@@ -961,6 +1005,18 @@ void CaseEditor::read_geometry(geometry::GeometrySpec& spec) const {
         const QString patch = table_text(bodies_table_, row, kBodyPatch);
         if (!patch.isEmpty()) {
             body.patch = patch.toStdString();
+        }
+        bool ok = false;
+        const double k = QLocale::c().toDouble(table_text(bodies_table_, row, kBodySolidK), &ok);
+        if (ok && k > 0.0) {
+            body.solid = true;
+            cases::SolidConfig sc;
+            sc.name = body.patch;
+            sc.conductivity = k;
+            const double c =
+                QLocale::c().toDouble(table_text(bodies_table_, row, kBodySolidRhoCp), &ok);
+            sc.rho_cp = ok && c > 0.0 ? c : 1.0;
+            solids.push_back(sc);
         }
         spec.bodies.push_back(body);
     }

@@ -176,3 +176,52 @@ TEST(CaseGeometry, RunGeometryCase) {
 }
 
 } // namespace
+
+namespace {
+
+// Solid geometry body: meshed as a zone, conjugate heat transfer through the case file.
+TEST(CaseGeometry, SolidBodyConjugate) {
+    const std::string json = R"({
+        "mesh": {"type": "geometry", "min": [0, 0, 0], "max": [2, 0.5, 0.05], "two_d": true,
+                 "bodies": [{"type": "box", "min": [0.6, 0, 0], "max": [1.0, 0.15, 0],
+                             "patch": "block", "solid": {"conductivity": 0.4, "rho_cp": 2}}],
+                 "size": 0.05,
+                 "domain_patches": {"xmin": "inlet", "xmax": "outlet", "ymin": "bottom",
+                                    "ymax": "top", "zmin": "front", "zmax": "back"}},
+        "physics": {"nu": 0.01, "energy": {"prandtl": 0.71}},
+        "boundaries": {"inlet": {"type": "velocity_inlet", "velocity": [1, 0, 0]},
+                       "outlet": {"type": "pressure_outlet"},
+                       "bottom": {"type": "wall", "thermal": {"type": "fixed", "value": 1}},
+                       "top": {"type": "wall"},
+                       "front": {"type": "empty"}, "back": {"type": "empty"}},
+        "solver": {"max_iterations": 1500, "tolerance": 1e-8},
+        "heat": {"patches": ["block"]}
+    })";
+    cc::CaseConfig c = cc::parse_case(json);
+    ASSERT_EQ(c.solids.size(), 1U);
+    EXPECT_EQ(c.solids[0].name, "block");
+    EXPECT_FALSE(c.solids[0].min.has_value());
+    EXPECT_TRUE(c.mesh.geometry.bodies[0].solid);
+    // Round trip: the solid stays with its body, not in the top-level list.
+    const std::string text = cc::case_to_json(c);
+    EXPECT_EQ(text.find("\"solids\""), std::string::npos);
+    const cc::CaseConfig b = cc::parse_case(text);
+    ASSERT_EQ(b.solids.size(), 1U);
+    EXPECT_DOUBLE_EQ(b.solids[0].rho_cp, 2.0);
+
+    if (cfd::geometry::find_gmsh().empty()) {
+        GTEST_SKIP() << "Gmsh not installed";
+    }
+    const auto dir = std::filesystem::temp_directory_path() / "cfd_case_solid_body";
+    std::filesystem::remove_all(dir);
+    c.base_directory = dir;
+    cc::CaseRunner runner(c);
+    EXPECT_EQ(runner.full_mesh().find_patch("block"), nullptr); // interface is internal
+    ASSERT_NE(runner.mesh().find_patch("block"), nullptr);      // wall of the fluid mesh
+    EXPECT_LT(runner.mesh().n_cells(), runner.full_mesh().n_cells());
+    const auto result = runner.run();
+    EXPECT_TRUE(result.converged);
+    EXPECT_GT(runner.heat_flow("block"), 0.0); // the heated block warms the fluid
+}
+
+} // namespace

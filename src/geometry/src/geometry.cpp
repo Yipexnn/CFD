@@ -126,6 +126,22 @@ private:
             if (b.kind == Body::Kind::File && b.file.empty()) {
                 throw std::invalid_argument("write_geo: file body without a file name");
             }
+            if (b.solid && (stl || s_.internal)) {
+                throw std::invalid_argument("write_geo: solid bodies need STEP or primitive bodies "
+                                            "(no STL, no internal flow)");
+            }
+            if (b.solid && (b.patch.empty() || b.patch == "fluid")) {
+                throw std::invalid_argument(
+                    "write_geo: solid body needs a name (patch) other than 'fluid'");
+            }
+        }
+        for (std::size_t i = 0; i < s_.bodies.size(); ++i) {
+            for (std::size_t j = i + 1; j < s_.bodies.size(); ++j) {
+                if (s_.bodies[i].solid && s_.bodies[j].solid &&
+                    s_.bodies[i].patch == s_.bodies[j].patch) {
+                    throw std::invalid_argument("write_geo: solid body names must be unique");
+                }
+            }
         }
         if (s_.bl_layers > 0 && !s_.two_d) {
             throw std::invalid_argument(
@@ -142,6 +158,33 @@ private:
             << hi.x() + eps_ << ", " << hi.y() + eps_ << ", " << hi.z() + eps_;
     }
 
+    [[nodiscard]] bool has_solids() const {
+        return std::any_of(s_.bodies.begin(), s_.bodies.end(),
+                           [](const Body& b) { return b.solid; });
+    }
+
+    // Bounding box arguments of solid body i ("x0, y0, z0, x1, y1, z1" with tolerance); in 2D
+    // `extruded` spans the final z range, otherwise the sketch plane.
+    [[nodiscard]] std::string solid_bbox(std::size_t i, bool extruded) const {
+        const Body& b = s_.bodies[i];
+        std::ostringstream o;
+        o << std::setprecision(17);
+        if (b.kind == Body::Kind::File) {
+            o << "bb" << i << "(0) - " << eps_ << ", bb" << i << "(1) - " << eps_ << ", bb" << i
+              << "(2) - " << eps_ << ", bb" << i << "(3) + " << eps_ << ", bb" << i << "(4) + "
+              << eps_ << ", bb" << i << "(5) + " << eps_;
+            return o.str();
+        }
+        Box3 bb = body_bounds(b);
+        if (s_.two_d) {
+            bb.lo.z() = s_.domain_min.z();
+            bb.hi.z() = extruded ? z_top() : s_.domain_min.z();
+        }
+        o << bb.lo.x() - eps_ << ", " << bb.lo.y() - eps_ << ", " << bb.lo.z() - eps_ << ", "
+          << bb.hi.x() + eps_ << ", " << bb.hi.y() + eps_ << ", " << bb.hi.z() + eps_;
+        return o.str();
+    }
+
     // z-extent of the final (extruded) geometry.
     [[nodiscard]] Scalar z_top() const { return s_.domain_max.z(); }
 
@@ -152,7 +195,7 @@ private:
         os_ << "Rectangle(1) = {" << lo.x() << ", " << lo.y() << ", " << lo.z() << ", " << ext.x()
             << ", " << ext.y() << "};\n";
         int tag = 2;
-        for (const Body& b : s_.bodies) {
+        auto shape = [&](const Body& b) {
             if (b.kind == Body::Kind::Cylinder) {
                 os_ << "Disk(" << tag << ") = {" << b.a.x() << ", " << b.a.y() << ", " << lo.z()
                     << ", " << b.radius << "};\n";
@@ -162,11 +205,29 @@ private:
                 os_ << "Rectangle(" << tag << ") = {" << bl.x() << ", " << bl.y() << ", " << lo.z()
                     << ", " << bh.x() - bl.x() << ", " << bh.y() - bl.y() << "};\n";
             }
-            ++tag;
+            return tag++;
+        };
+        os_ << "tools() = {};\nsolids() = {};\n";
+        for (const Body& b : s_.bodies) {
+            if (!b.solid) {
+                const int t = shape(b);
+                os_ << "tools() += {" << t << "};\n";
+            }
         }
-        if (!s_.bodies.empty()) {
-            os_ << "BooleanDifference{ Surface{1}; Delete; }{ Surface{2:" << tag - 1
-                << "}; Delete; }\n";
+        if (std::any_of(s_.bodies.begin(), s_.bodies.end(),
+                        [](const Body& b) { return !b.solid; })) {
+            os_ << "BooleanDifference{ Surface{1}; Delete; }{ Surface{tools()}; Delete; }\n";
+        }
+        if (has_solids()) {
+            os_ << "fluid_s() = Surface{:};\n";
+            for (const Body& b : s_.bodies) {
+                if (b.solid) {
+                    const int t = shape(b);
+                    os_ << "solids() += {" << t << "};\n";
+                }
+            }
+            os_ << "BooleanFragments{ Surface{fluid_s()}; Delete; }{ Surface{solids()}; Delete; "
+                   "}\n";
         }
         // Curves on the domain rectangle vs. body curves (for sizing / boundary layers).
         const Vec3& hi = s_.domain_max;
@@ -182,13 +243,20 @@ private:
         bbox(Vec3(lo.x(), hi.y(), lo.z()), hi2);
         os_ << "};\nbody_c() = Curve{:};\nbody_c() -= dom_c();\n";
         refinement("Curves", "body_c()");
+        // Boundary layers on the obstacles only (not on fluid/solid interfaces).
+        os_ << "bl_c() = body_c();\n";
+        for (std::size_t i = 0; i < s_.bodies.size(); ++i) {
+            if (s_.bodies[i].solid) {
+                os_ << "bl_c() -= Curve In BoundingBox{" << solid_bbox(i, false) << "};\n";
+            }
+        }
         if (s_.bl_layers > 0) {
             const Scalar r = s_.bl_ratio;
             const Scalar n = static_cast<Scalar>(s_.bl_layers);
             const Scalar thickness = r > 1.0 + 1e-12
                                          ? s_.bl_first * (std::pow(r, n) - 1.0) / (r - 1.0)
                                          : s_.bl_first * n;
-            os_ << "Field[3] = BoundaryLayer;\nField[3].CurvesList = {body_c()};\n"
+            os_ << "Field[3] = BoundaryLayer;\nField[3].CurvesList = {bl_c()};\n"
                 << "Field[3].Size = " << s_.bl_first << ";\nField[3].Ratio = " << r << ";\n"
                 << "Field[3].Thickness = " << thickness
                 << ";\nField[3].Quads = " << (s_.quads ? 1 : 0) << ";\nBoundaryLayer Field = 3;\n";
@@ -204,37 +272,49 @@ private:
         os_ << "SetFactory(\"OpenCASCADE\");\n";
         os_ << "Box(1) = {" << lo.x() << ", " << lo.y() << ", " << lo.z() << ", " << ext.x() << ", "
             << ext.y() << ", " << ext.z() << "};\n";
-        os_ << "tools() = {};\n";
+        os_ << "tools() = {};\nsolids() = {};\n";
         int tag = 2;
+        std::size_t index = 0;
         for (const Body& b : s_.bodies) {
+            const std::string list = b.solid ? "solids" : "tools";
+            const std::size_t i = index++;
             switch (b.kind) {
             case Body::Kind::Box: {
                 const Vec3 bl = b.a.cwiseMin(b.b);
                 const Vec3 be = b.a.cwiseMax(b.b) - bl;
                 os_ << "Box(" << tag << ") = {" << bl.x() << ", " << bl.y() << ", " << bl.z()
                     << ", " << be.x() << ", " << be.y() << ", " << be.z() << "};\n";
-                os_ << "tools() += {" << tag << "};\n";
+                os_ << list << "() += {" << tag << "};\n";
                 break;
             }
             case Body::Kind::Cylinder:
                 os_ << "Cylinder(" << tag << ") = {" << b.a.x() << ", " << b.a.y() << ", "
                     << b.a.z() << ", " << b.b.x() << ", " << b.b.y() << ", " << b.b.z() << ", "
                     << b.radius << "};\n";
-                os_ << "tools() += {" << tag << "};\n";
+                os_ << list << "() += {" << tag << "};\n";
                 break;
             case Body::Kind::Sphere:
                 os_ << "Sphere(" << tag << ") = {" << b.a.x() << ", " << b.a.y() << ", " << b.a.z()
                     << ", " << b.radius << "};\n";
-                os_ << "tools() += {" << tag << "};\n";
+                os_ << list << "() += {" << tag << "};\n";
                 break;
             case Body::Kind::File:
-                os_ << "tools() += ShapeFromFile(" << geo_path(b.file) << ");\n";
+                os_ << "sf" << i << "() = ShapeFromFile(" << geo_path(b.file) << ");\n"
+                    << list << "() += sf" << i << "();\n";
+                if (b.solid) {
+                    os_ << "bb" << i << "() = BoundingBox Volume{sf" << i << "(0)};\n";
+                }
                 break;
             }
             ++tag;
         }
-        if (!s_.bodies.empty()) {
+        if (std::any_of(s_.bodies.begin(), s_.bodies.end(),
+                        [](const Body& b) { return !b.solid; })) {
             os_ << "BooleanDifference{ Volume{1}; Delete; }{ Volume{tools()}; Delete; }\n";
+        }
+        if (has_solids()) {
+            os_ << "fluid_v() = Volume{:};\nfluid_v() -= {solids()};\n"
+                << "BooleanFragments{ Volume{fluid_v()}; Delete; }{ Volume{solids()}; Delete; }\n";
         }
         domain_faces();
         os_ << "body_s() = Surface{:};\nbody_s() -= {s_dom()};\n";
@@ -357,12 +437,20 @@ private:
         // Body surfaces: assigned by body bounds in order; the rest to the first body / "walls".
         os_ << "s_rest() = Surface{:};\ns_rest() -= {s_dom()};\ns_rest() -= {s_sel_all()};\n"
             << "s_claimed() = {};\n";
+        // Surfaces of solid bodies are fluid/solid interfaces (internal faces): no patch.
+        for (std::size_t i = 0; i < s_.bodies.size(); ++i) {
+            if (s_.bodies[i].solid) {
+                os_ << "s_rest() -= Surface In BoundingBox{" << solid_bbox(i, true) << "};\n"
+                    << "s_claimed() += Surface In BoundingBox{" << solid_bbox(i, true) << "};\n"
+                    << "s_claimed() -= {s_dom()};\n";
+            }
+        }
         if (s_.internal) {
             add_to_group("walls", "s_rest()");
         } else {
             for (std::size_t i = 0; i < s_.bodies.size(); ++i) {
                 const Body& b = s_.bodies[i];
-                if (b.kind == Body::Kind::File) {
+                if (b.kind == Body::Kind::File || b.solid) {
                     continue;
                 }
                 Box3 bb = body_bounds(b);
@@ -378,13 +466,28 @@ private:
                     << "()};\n";
                 add_to_group(b.patch, "s_body" + std::to_string(i) + "()");
             }
-            add_to_group(s_.bodies.empty() ? "obstacle" : s_.bodies.front().patch, "s_rest()");
+            std::string rest_name = "obstacle";
+            for (const Body& b : s_.bodies) {
+                if (!b.solid) {
+                    rest_name = b.patch;
+                    break;
+                }
+            }
+            add_to_group(rest_name, "s_rest()");
         }
         for (std::size_t g = 0; g < group_names_.size(); ++g) {
             os_ << "If (#g" << g << "() > 0)\n  Physical Surface(\"" << group_names_[g]
                 << "\") = {g" << g << "()};\nEndIf\n";
         }
-        os_ << "Physical Volume(\"fluid\") = Volume{:};\n";
+        os_ << "v_fluid() = Volume{:};\n";
+        for (std::size_t i = 0; i < s_.bodies.size(); ++i) {
+            if (s_.bodies[i].solid) {
+                os_ << "v_sol" << i << "() = Volume In BoundingBox{" << solid_bbox(i, true)
+                    << "};\nv_fluid() -= {v_sol" << i << "()};\nPhysical Volume(\""
+                    << s_.bodies[i].patch << "\") = {v_sol" << i << "()};\n";
+            }
+        }
+        os_ << "Physical Volume(\"fluid\") = {v_fluid()};\n";
     }
 
     const GeometrySpec& s_;
@@ -491,7 +594,7 @@ mesh::Mesh read_generated_mesh(const GeometrySpec& spec, const std::filesystem::
     // Body surfaces are no-slip walls unless the name says otherwise.
     for (const Body& body : spec.bodies) {
         const mesh::Patch* patch = mesh.find_patch(body.patch);
-        if (patch != nullptr && patch->type == mesh::PatchType::Patch) {
+        if (!body.solid && patch != nullptr && patch->type == mesh::PatchType::Patch) {
             mesh.set_patch_type(body.patch, mesh::PatchType::Wall);
         }
     }

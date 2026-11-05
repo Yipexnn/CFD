@@ -1,0 +1,33 @@
+{
+  // Conjugate heat transfer with a meshed solid body: a copper-like block (k = 50 x fluid)
+  // sits on the heated bottom wall (T = 1) of a laminar channel; inflow T = 0.
+  // Needs Gmsh. heat.csv: heat through the bottom wall and from the block into the fluid.
+  "name": "conjugate_block_2d",
+  "mesh": {
+    "type": "geometry",
+    "min": [0, 0, 0],
+    "max": [3, 0.5, 0.02],
+    "two_d": true,
+    "bodies": [
+      { "type": "box", "min": [0.8, 0, 0], "max": [1.2, 0.15, 0], "patch": "block",
+        "solid": { "conductivity": 1.0, "rho_cp": 1.0 } }
+    ],
+    "size": 0.025,
+    "size_near": 0.006,
+    "refine_distance": 0.15,
+    "domain_patches": { "xmin": "inlet", "xmax": "outlet", "ymin": "bottom", "ymax": "top",
+                        "zmin": "front", "zmax": "back" }
+  },
+  "physics": { "nu": 0.005, "energy": { "prandtl": 0.71 } },
+  "boundaries": {
+    "inlet": { "type": "velocity_inlet", "velocity": [1, 0, 0], "profile": "parabolic", "profile_axes": "y" },
+    "outlet": { "type": "pressure_outlet" },
+    "bottom": { "type": "wall", "thermal": { "type": "fixed", "value": 1.0 } },
+    "top": { "type": "wall" },
+    "front": { "type": "empty" },
+    "back": { "type": "empty" }
+  },
+  "solver": { "max_iterations": 3000, "tolerance": 1e-7, "convection": "limited_linear_upwind" },
+  "heat": { "patches": ["bottom", "block"] },
+  "output": { "directory": "results/conjugate_block_2d", "log_interval": 100 }
+}

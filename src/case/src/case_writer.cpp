@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <array>
 #include <cfd/case/case_config.hpp>
 #include <fstream>
@@ -58,7 +59,7 @@ const char* convection_name(fv::ConvectionScheme s) {
     return "linear_upwind";
 }
 
-ordered_json body_json(const geometry::Body& b) {
+ordered_json body_json(const geometry::Body& b, const std::vector<SolidConfig>& solids) {
     ordered_json j = ordered_json::object();
     switch (b.kind) {
     case geometry::Body::Kind::Box:
@@ -83,17 +84,25 @@ ordered_json body_json(const geometry::Body& b) {
         break;
     }
     j["patch"] = b.patch;
+    if (b.solid) {
+        for (const SolidConfig& sc : solids) {
+            if (sc.name == b.patch) {
+                j["solid"] = {{"conductivity", sc.conductivity}, {"rho_cp", sc.rho_cp}};
+            }
+        }
+    }
     return j;
 }
 
-ordered_json geometry_json(const geometry::GeometrySpec& g) {
+ordered_json geometry_json(const geometry::GeometrySpec& g,
+                           const std::vector<SolidConfig>& solids) {
     ordered_json j = ordered_json::object();
     j["type"] = "geometry";
     j["min"] = vec3_json(g.domain_min);
     j["max"] = vec3_json(g.domain_max);
     ordered_json bodies = ordered_json::array();
     for (const auto& b : g.bodies) {
-        bodies.push_back(body_json(b));
+        bodies.push_back(body_json(b, solids));
     }
     j["bodies"] = bodies;
     j["internal"] = g.internal;
@@ -117,10 +126,10 @@ ordered_json geometry_json(const geometry::GeometrySpec& g) {
     return j;
 }
 
-ordered_json mesh_json(const MeshConfig& m) {
+ordered_json mesh_json(const MeshConfig& m, const std::vector<SolidConfig>& solids) {
     ordered_json j = ordered_json::object();
     if (m.source == MeshSource::Geometry) {
-        return geometry_json(m.geometry);
+        return geometry_json(m.geometry, solids);
     }
     if (m.source == MeshSource::Gmsh) {
         j["type"] = "gmsh";
@@ -173,12 +182,20 @@ ordered_json boundaries_json(const std::map<std::string, fv::BoundaryCondition>&
     return j;
 }
 
+bool is_body_solid(const CaseConfig& config, const std::string& name) {
+    if (config.mesh.source != MeshSource::Geometry) {
+        return false;
+    }
+    return std::any_of(config.mesh.geometry.bodies.begin(), config.mesh.geometry.bodies.end(),
+                       [&](const geometry::Body& b) { return b.solid && b.patch == name; });
+}
+
 } // namespace
 
 std::string case_to_json(const CaseConfig& config) {
     ordered_json root = ordered_json::object();
     root["name"] = config.name;
-    root["mesh"] = mesh_json(config.mesh);
+    root["mesh"] = mesh_json(config.mesh, config.solids);
 
     const fv::FlowSettings& flow = config.solver.flow;
     ordered_json physics = ordered_json::object();
@@ -251,9 +268,13 @@ std::string case_to_json(const CaseConfig& config) {
         root["heat"] = heat;
     }
 
-    if (!config.solids.empty()) {
+    if (std::any_of(config.solids.begin(), config.solids.end(),
+                    [&](const SolidConfig& sc) { return !is_body_solid(config, sc.name); })) {
         ordered_json solids = ordered_json::array();
         for (const SolidConfig& sc : config.solids) {
+            if (is_body_solid(config, sc.name)) {
+                continue; // written with its geometry body
+            }
             ordered_json js = ordered_json::object();
             js["name"] = sc.name;
             if (sc.min && sc.max) {
