@@ -6,13 +6,11 @@
 namespace cfd::fv {
 
 namespace {
-
 using Triplet = Eigen::Triplet<Scalar, int>;
+} // namespace
 
-// Greedy aggregation on the strength graph (Vanek, Mandel & Brezina 1996).
-// Returns the aggregate index of every row and the number of aggregates.
-std::vector<int> aggregate(const CsrMatrix& a, const DenseVector& diag, Scalar theta,
-                           int& n_aggregates) {
+std::vector<int> amg_aggregate(const CsrMatrix& a, const DenseVector& diag, Scalar theta,
+                               int& n_aggregates) {
     const auto n = static_cast<int>(a.rows());
     std::vector<int> agg(static_cast<std::size_t>(n), -1);
     auto strong = [&](Eigen::Index i, Eigen::Index j, Scalar v) {
@@ -79,6 +77,8 @@ std::vector<int> aggregate(const CsrMatrix& a, const DenseVector& diag, Scalar t
     return agg;
 }
 
+namespace {
+
 DenseVector diagonal(const CsrMatrix& a) {
     DenseVector d = DenseVector::Zero(a.rows());
     for (int i = 0; i < a.outerSize(); ++i) {
@@ -141,7 +141,8 @@ void AmgPreconditioner::setup(const CsrMatrix& a) {
         }
 
         int n_agg = 0;
-        const std::vector<int> agg = aggregate(current, d, settings_.strength_threshold, n_agg);
+        const std::vector<int> agg =
+            amg_aggregate(current, d, settings_.strength_threshold, n_agg);
         if (n_agg >= current.rows() || n_agg == 0) { // no coarsening possible
             levels_.push_back(std::move(level));
             break;

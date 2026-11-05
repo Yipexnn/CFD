@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cfd/fv/amg.hpp>
 #include <cfd/fv/ldu_matrix.hpp>
+#include <cfd/fv/parallel_amg.hpp>
 #include <cfd/mesh/box_mesher.hpp>
 #include <cmath>
 #include <cstddef>
@@ -261,4 +262,40 @@ TEST(Amg, SingularNeumannWithReference) {
     for (const Scalar v : x) {
         EXPECT_NEAR(v, 3.0, 1e-6);
     }
+}
+
+// The distributed AMG on a single process (no ghosts) is a working V-cycle preconditioner.
+TEST(Amg, ParallelAmgSingleProcess) {
+    const Mesh m = box(96, 96, 1);
+    const CsrMatrix a = to_csr(build_poisson(m, true));
+    cfd::parallel::Halo halo;
+    halo.n_owned = static_cast<Label>(a.rows());
+    cfd::fv::ParallelAmg amg;
+    amg.setup(a, halo);
+    EXPECT_GE(amg.levels(), 3);
+    for (int l = 1; l < amg.levels(); ++l) {
+        EXPECT_LT(amg.level_size(l), amg.level_size(l - 1));
+    }
+    // Preconditioned CG.
+    const DenseVector b = DenseVector::Ones(a.rows());
+    DenseVector x = DenseVector::Zero(a.rows());
+    DenseVector r = b;
+    DenseVector z;
+    amg.apply(r, z);
+    DenseVector p = z;
+    Scalar rz = r.dot(z);
+    int it = 0;
+    while (it < 100 && r.norm() > 1e-8 * b.norm()) {
+        const DenseVector q = a * p;
+        const Scalar alpha = rz / p.dot(q);
+        x += alpha * p;
+        r -= alpha * q;
+        amg.apply(r, z);
+        const Scalar rz_new = r.dot(z);
+        p = z + (rz_new / rz) * p;
+        rz = rz_new;
+        ++it;
+    }
+    EXPECT_LT(it, 25);
+    EXPECT_LT((b - a * x).norm(), 1e-7 * b.norm());
 }

@@ -19,9 +19,10 @@ meaning to serial runs; serial build and behaviour unchanged.
   distance, gradients); owned values sent to the neighbouring ranks' ghosts
 - **Linear solvers**: own distributed CG / BiCGStab (owned rows only, matvec after ghost
   exchange, dot products with allreduce)
-  - pressure: CG with overlapping additive Schwarz (local AMG on owned + ghost cells, ghost rows
-    with their full diagonal, corrections added back to the owners) plus an additive coarse
-    correction with 16 aggregates per process
+  - pressure: CG with a distributed smoothed-aggregation AMG (`ParallelAmg`): per-process
+    aggregation, Jacobi-smoothed prolongation over process-local couplings, Galerkin coarse
+    levels with their own halo (prolongation rows of ghost cells exchanged), hybrid symmetric
+    Gauss–Seidel, coarsest level gathered to rank 0 (direct solve)
   - momentum / turbulence: Jacobi-preconditioned BiCGStab
 - **Global reductions**: residual normalisation, continuity error, mass-balance check, forces,
   convergence test
@@ -39,11 +40,15 @@ meaning to serial runs; serial build and behaviour unchanged.
 
 | Case | 1 process | 2 | 4 |
 |---|---|---|---|
-| Cavity 256² (65k cells), 100 SIMPLE iterations | 8.8 s | 6.3 s | 3.8 s (2.3×) |
-| Cylinder 2D-1 (5.3k cells, incl. Gmsh) | 3.8 s | 4.3 s | 2.8 s |
+| Cavity 256² (65k cells), 100 SIMPLE iterations | 8.4 s | 7.3 s | 3.0 s (2.8×) |
+| Cylinder 2D-1 (5.3k cells, incl. Gmsh) | 3.8 s | 3.6 s | 2.7 s |
 
-- Limitation: the pressure CG needs ~2.5× the serial iterations (domain decomposition
-  preconditioner instead of a global AMG). A true parallel AMG would raise the speed-up further.
+- Pressure CG iterations: serial AMG ~4 per solve, parallel AMG ~7.5 (first version: overlapping
+  Schwarz + coarse space, ~11). The restricted (process-local) prolongation smoothing and the
+  hybrid smoother cost some convergence; fully coupled smoothing across processes is a possible
+  next step.
+- AMG cache: after a stale-hierarchy rebuild the reference iteration count is kept (lowering it
+  caused a rebuild cascade).
 
 ## Usage
 - Use at most one process per core: MS-MPI processes busy-wait, so oversubscribed runs are
@@ -68,4 +73,5 @@ meaning to serial runs; serial build and behaviour unchanged.
 - [x] GUI parallel runs
 - [ ] Windows build with MS-MPI in CI (GUI workflow)
 - [ ] User tested on Windows (manual)
-- [ ] later: parallel AMG, parallel mesh reading (each process reads the full mesh today)
+- [x] parallel AMG (Phase 9)
+- [ ] later: parallel mesh reading (each process reads the full mesh today)

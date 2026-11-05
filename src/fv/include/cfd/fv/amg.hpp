@@ -54,6 +54,11 @@ private:
     std::unique_ptr<Eigen::SimplicialLDLT<Eigen::SparseMatrix<Scalar>>> coarse_solver_;
 };
 
+// Greedy aggregation on the strength graph (Vanek, Mandel & Brezina 1996) of a square
+// matrix: aggregate index per row; n_aggregates receives their number.
+[[nodiscard]] std::vector<int> amg_aggregate(const CsrMatrix& a, const DenseVector& diag,
+                                             Scalar theta, int& n_aggregates);
+
 struct KrylovResult {
     int iterations = 0;
     Scalar residual_norm = 0.0; // |b - Ax|_2

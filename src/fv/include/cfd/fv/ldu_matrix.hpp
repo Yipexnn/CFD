@@ -37,6 +37,7 @@ struct LinearSolveResult {
 //                          = source[P]
 // i.e. upper[f] = a(owner, neighbour) and lower[f] = a(neighbour, owner).
 class AmgPreconditioner;
+class ParallelAmg;
 
 // CSR sparsity pattern of the cell-to-cell matrix of a mesh with the value positions of
 // the LDU coefficients, so assembled matrices can be converted to CSR without sorting.
@@ -58,6 +59,7 @@ struct AmgCache {
     AmgCache& operator=(AmgCache&&) = delete;
 
     std::unique_ptr<AmgPreconditioner> amg;
+    std::unique_ptr<ParallelAmg> parallel_amg; // decomposed meshes
     int age = 0;              // solves since the last setup
     int setup_iterations = 0; // CG iterations of the first solve after setup
     int max_age = 20;         // rebuild at the latest after this many solves
@@ -96,9 +98,9 @@ public:
     const CsrPattern* pattern = nullptr;
     // Decomposed mesh (optional): only the owned rows [0, n_owned) are part of the global
     // system; ghost values of x are taken from their owners (halo exchange). Residual norms
-    // are global and solve() uses distributed Krylov solvers: CG with an overlapping additive
-    // Schwarz AMG preconditioner plus a coarse-space correction, or Jacobi-preconditioned
-    // BiCGStab. Must outlive the matrix.
+    // are global and solve() uses distributed Krylov solvers: CG with the parallel
+    // smoothed-aggregation AMG (ParallelAmg) or Jacobi-preconditioned BiCGStab. Must outlive
+    // the matrix.
     const parallel::Halo* halo = nullptr;
 
     std::vector<Scalar> diag;

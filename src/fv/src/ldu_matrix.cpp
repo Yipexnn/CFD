@@ -5,7 +5,7 @@
 #include <array>
 #include <cfd/fv/amg.hpp>
 #include <cfd/fv/ldu_matrix.hpp>
-#include <cfd/parallel/decomposition.hpp>
+#include <cfd/fv/parallel_amg.hpp>
 #include <cmath>
 #include <numeric>
 #include <stdexcept>
@@ -19,8 +19,6 @@ using SparseMatrix = Eigen::SparseMatrix<Scalar, Eigen::RowMajor, int>;
 using EigenVector = Eigen::Matrix<Scalar, Eigen::Dynamic, 1>;
 
 constexpr Scalar k_small = 1e-20;
-// Coarse-space aggregates per process of the parallel pressure preconditioner.
-constexpr int k_coarse_aggregates = 16;
 
 } // namespace
 
@@ -266,16 +264,10 @@ LinearSolveResult LduMatrix::solve_distributed(std::vector<Scalar>& x,
     }
     const auto ino = static_cast<Eigen::Index>(no);
     const bool symmetric = settings.type != LinearSolverType::BiCgStab;
-    // Overlapping (additive Schwarz) preconditioner matrix: owned + ghost rows, ghost rows with
-    // the full diagonal of their owner, i.e. the principal submatrix of the global matrix.
-    CsrMatrix a_ext;
+    // Owned rows of the local matrix (columns: owned + ghost cells) for the parallel AMG.
+    CsrMatrix a_rows;
     if (symmetric) {
-        a_ext = a;
-        std::vector<Scalar> full_diag(diag);
-        halo->exchange(full_diag);
-        for (std::size_t c = no; c < n; ++c) {
-            a_ext.coeffRef(static_cast<int>(c), static_cast<int>(c)) = full_diag[c];
-        }
+        a_rows = a.topRows(ino);
     }
 
     std::vector<Scalar> work(x);
@@ -298,21 +290,21 @@ LinearSolveResult LduMatrix::solve_distributed(std::vector<Scalar>& x,
                  settings.tolerance / std::max(result.initial_residual, k_small)) *
         r0_norm;
 
-    AmgPreconditioner local_amg;
-    const AmgPreconditioner* amg = nullptr;
+    ParallelAmg local_amg;
+    const ParallelAmg* amg = nullptr;
     bool fresh = true;
     if (symmetric) {
         if (settings.type == LinearSolverType::AmgCg && amg_cache != nullptr) {
-            if (!amg_cache->amg || amg_cache->age >= amg_cache->max_age) {
-                amg_cache->amg = std::make_unique<AmgPreconditioner>();
-                amg_cache->amg->setup(a_ext);
+            if (!amg_cache->parallel_amg || amg_cache->age >= amg_cache->max_age) {
+                amg_cache->parallel_amg = std::make_unique<ParallelAmg>();
+                amg_cache->parallel_amg->setup(a_rows, *halo);
                 amg_cache->age = 0;
             } else {
                 fresh = false;
             }
-            amg = amg_cache->amg.get();
+            amg = amg_cache->parallel_amg.get();
         } else {
-            local_amg.setup(a_ext);
+            local_amg.setup(a_rows, *halo);
             amg = &local_amg;
         }
     }
@@ -322,71 +314,11 @@ LinearSolveResult LduMatrix::solve_distributed(std::vector<Scalar>& x,
         inv_diag[c] = std::abs(d) > k_small ? 1.0 / d : 1.0;
     }
 
-    // Two-level preconditioner: block-Jacobi AMG plus an additive coarse correction
-    // (z += Z E^-1 Z^T r, E = Z^T A Z) on k_aggregates aggregates of every process, which
-    // restores the global low-frequency coupling that the block-Jacobi AMG misses.
-    const int n_procs = comm.size();
-    const int n_agg = std::max(1, std::min(k_coarse_aggregates, static_cast<int>(no)));
-    const int n_coarse = n_procs * k_coarse_aggregates;
-    std::vector<Label> aggregate(n, 0);
-    Eigen::LDLT<Eigen::MatrixXd> coarse;
-    if (symmetric) {
-        std::vector<Vec3> centres(mesh_->cell_centres().begin(),
-                                  mesh_->cell_centres().begin() + static_cast<std::ptrdiff_t>(no));
-        const std::vector<int> local_agg = parallel::partition_points(centres, n_agg);
-        for (std::size_t c = 0; c < no; ++c) {
-            aggregate[c] = comm.rank() * k_coarse_aggregates + local_agg[c];
-        }
-        halo->exchange(aggregate);
-        std::vector<Scalar> e(
-            static_cast<std::size_t>(n_coarse) * static_cast<std::size_t>(n_coarse), 0.0);
-        const int* outer = a.outerIndexPtr();
-        const int* inner = a.innerIndexPtr();
-        const Scalar* val = a.valuePtr();
-        for (std::size_t row = 0; row < no; ++row) {
-            const auto i = static_cast<std::size_t>(aggregate[row]);
-            for (int k = outer[row]; k < outer[row + 1]; ++k) {
-                const auto j =
-                    static_cast<std::size_t>(aggregate[static_cast<std::size_t>(inner[k])]);
-                e[i * static_cast<std::size_t>(n_coarse) + j] += val[k];
-            }
-        }
-        comm.sum(e.data(), e.size());
-        Eigen::MatrixXd ec = Eigen::Map<const Eigen::MatrixXd>(e.data(), n_coarse, n_coarse);
-        for (Eigen::Index i = 0; i < n_coarse; ++i) {
-            if (ec(i, i) == 0.0) {
-                ec(i, i) = 1.0; // unused aggregate (process with fewer cells)
-            }
-        }
-        coarse.compute(0.5 * (ec + ec.transpose()));
-    }
-    const auto coarse_correct = [&](const EigenVector& res, EigenVector& z) {
-        std::vector<Scalar> zr(static_cast<std::size_t>(n_coarse), 0.0);
-        for (std::size_t c = 0; c < no; ++c) {
-            zr[static_cast<std::size_t>(aggregate[c])] += res[static_cast<Eigen::Index>(c)];
-        }
-        comm.sum(zr.data(), zr.size());
-        const Eigen::VectorXd y =
-            coarse.solve(Eigen::Map<const Eigen::VectorXd>(zr.data(), n_coarse));
-        for (std::size_t c = 0; c < no; ++c) {
-            z[static_cast<Eigen::Index>(c)] += y[aggregate[c]];
-        }
-    };
-
     int iterations = 0;
     if (symmetric) {
-        auto pcg_run = [&](const AmgPreconditioner& amg_m) {
-            std::vector<Scalar> ext(n);
-            EigenVector z_ext(static_cast<Eigen::Index>(n));
+        auto pcg_run = [&](const ParallelAmg& amg_m) {
             const auto m_apply = [&](const EigenVector& res, EigenVector& z) {
-                std::copy(res.data(), res.data() + ino, ext.begin());
-                halo->exchange(ext);
-                amg_m.apply(Eigen::Map<const EigenVector>(ext.data(), static_cast<Eigen::Index>(n)),
-                            z_ext);
-                std::copy(z_ext.data(), z_ext.data() + z_ext.size(), ext.begin());
-                halo->reverse_add(ext);
-                z = Eigen::Map<const EigenVector>(ext.data(), ino);
-                coarse_correct(res, z);
+                amg_m.apply(res, z);
             };
             int its = 0;
             EigenVector z(ino);
@@ -418,11 +350,13 @@ LinearSolveResult LduMatrix::solve_distributed(std::vector<Scalar>& x,
             if (fresh) {
                 amg_cache->setup_iterations = std::max(its, 1);
             } else if (its > 2 * amg_cache->setup_iterations + 2) {
-                amg_cache->amg->setup(a_ext);
-                const int more = pcg_run(*amg_cache->amg);
+                amg_cache->parallel_amg->setup(a_rows, *halo);
+                const int more = pcg_run(*amg_cache->parallel_amg);
                 iterations += more;
                 amg_cache->age = 0;
-                amg_cache->setup_iterations = std::max(more, 1);
+                // The re-solve starts from a partly converged iterate: keep the reference
+                // count (lowering it would trigger a rebuild on almost every solve).
+                amg_cache->setup_iterations = std::max(amg_cache->setup_iterations, more);
             }
             ++amg_cache->age;
         }

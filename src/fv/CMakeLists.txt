@@ -7,6 +7,7 @@ add_library(cfd_fv STATIC
     src/wall_distance.cpp
     src/k_omega_sst.cpp
     src/energy.cpp
+    src/parallel_amg.cpp
 )
 add_library(cfd::fv ALIAS cfd_fv)
 
