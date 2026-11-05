@@ -1,6 +1,7 @@
 #include <cfd/fv/flow_solver.hpp>
 #include <cfd/mesh/box_mesher.hpp>
 #include <cmath>
+#include <cstdio>
 #include <gtest/gtest.h>
 
 using cfd::core::Scalar;
@@ -23,6 +24,9 @@ std::vector<Vec3> startup(TimeScheme scheme, Scalar dt) {
     settings.body_force = Vec3(1.0, 0.0, 0.0);
     settings.time_scheme = scheme;
     settings.n_piso_correctors = 3;
+    // Tight linear solves: only the temporal discretisation error may remain.
+    settings.u_solver = {LinearSolverType::BiCgStab, 1e-14, 1e-10, 1000};
+    settings.p_solver = {LinearSolverType::AmgCg, 1e-14, 1e-10, 500};
     const BoundaryCondition empty{FlowBoundary::Empty, Vec3::Zero(), 0.0};
     FlowSolver flow(mesh, {{"xmin", empty}, {"xmax", empty}, {"zmin", empty}, {"zmax", empty}},
                     settings);
@@ -47,6 +51,7 @@ TEST(TimeScheme, BackwardIsSecondOrderEulerFirstOrder) {
                                error(startup(TimeScheme::Euler, 0.005), reference);
     const Scalar bdf2_ratio = error(startup(TimeScheme::Backward, 0.01), reference) /
                               error(startup(TimeScheme::Backward, 0.005), reference);
+    std::printf("convergence ratios: Euler %.3f, BDF2 %.3f\n", euler_ratio, bdf2_ratio);
     EXPECT_NEAR(euler_ratio, 2.0, 0.3);
     EXPECT_GT(bdf2_ratio, 3.3); // ~4 (first step Euler)
     EXPECT_LT(error(startup(TimeScheme::Backward, 0.01), reference),

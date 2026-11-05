@@ -11,6 +11,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
+#include <iomanip>
 #include <vector>
 
 using cfd::core::Scalar;
@@ -75,20 +77,19 @@ int main(int argc, char** argv) {
     std::vector<Scalar> cl;
     const auto t0 = std::chrono::steady_clock::now();
     const int steps = static_cast<int>(end_time / dt + 0.5);
-    std::FILE* csv = std::fopen("cylinder_2d2_forces.csv", "w");
-    std::fprintf(csv, "time,Cd,Cl\n");
+    std::ofstream csv("cylinder_2d2_forces.csv");
+    csv << "time,Cd,Cl\n" << std::setprecision(10);
     for (int n = 1; n <= steps; ++n) {
         (void)flow.piso_step(dt);
         const Vec3 c = flow.patch_force("cylinder").total() * scale;
         times.push_back(n * dt);
         cd.push_back(c.x());
         cl.push_back(c.y());
-        std::fprintf(csv, "%.6f,%.8f,%.8f\n", n * dt, c.x(), c.y());
+        csv << n * dt << ',' << c.x() << ',' << c.y() << '\n';
         if (n % 500 == 0) {
             std::printf("t = %.3f  Cd %.4f  Cl %+.4f\n", n * dt, c.x(), c.y());
         }
     }
-    std::fclose(csv);
     const double seconds =
         std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
 
