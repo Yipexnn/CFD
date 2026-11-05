@@ -60,9 +60,9 @@ struct AmgCache {
 
     std::unique_ptr<AmgPreconditioner> amg;
     std::unique_ptr<ParallelAmg> parallel_amg; // decomposed meshes
-    int age = 0;              // solves since the last setup
-    int setup_iterations = 0; // CG iterations of the first solve after setup
-    int max_age = 20;         // rebuild at the latest after this many solves
+    int age = 0;                               // solves since the last setup
+    int setup_iterations = 0;                  // CG iterations of the first solve after setup
+    int max_age = 20;                          // rebuild at the latest after this many solves
 };
 
 class LduMatrix {
