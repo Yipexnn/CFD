@@ -134,9 +134,12 @@ TEST(Geometry, GmshPhysicalVolumesAsZones) {
                "Physical Surface(\"walls\") = {Surface{:}};\n"
                "Mesh.MshFileVersion = 4.1;\n";
     }
-    const std::string cmd = "\"" + gmsh + "\" \"" + (dir / "zones.geo").string() + "\" -3 -o \"" +
-                            (dir / "zones.msh").string() + "\" > \"" + (dir / "log.txt").string() +
-                            "\" 2>&1";
+    std::string cmd = "\"" + gmsh + "\" \"" + (dir / "zones.geo").string() + "\" -3 -o \"" +
+                      (dir / "zones.msh").string() + "\" > \"" + (dir / "log.txt").string() +
+                      "\" 2>&1";
+#ifdef _WIN32
+    cmd = "\"" + cmd + "\""; // cmd.exe strips one level of quotes
+#endif
     ASSERT_EQ(std::system(cmd.c_str()), 0);
     const auto mesh = cfd::mesh::read_gmsh(dir / "zones.msh");
     ASSERT_EQ(mesh.cell_zone_names().size(), 2U);
