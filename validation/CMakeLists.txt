@@ -13,3 +13,7 @@ cfd_target_defaults(cavity_de_vahl_davis)
 add_executable(cylinder_schaefer_turek_2d2 cylinder_schaefer_turek_2d2.cpp)
 target_link_libraries(cylinder_schaefer_turek_2d2 PRIVATE cfd::fv cfd::geometry)
 cfd_target_defaults(cylinder_schaefer_turek_2d2)
+
+add_executable(dam_break dam_break.cpp)
+target_link_libraries(dam_break PRIVATE cfd::fv)
+cfd_target_defaults(dam_break)
