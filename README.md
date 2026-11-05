@@ -80,6 +80,8 @@ cfd run examples/cylinder_2d.json   # cylinder benchmark (needs Gmsh), forces in
 cfd run examples/heated_cavity.json # natural convection (energy equation), Nusselt in heat.csv
 cfd run examples/conjugate_plate.json  # conjugate heat transfer (fluid + solid plate)
 cfd run examples/cylinder_2d_re100.json # vortex shedding (transient, needs Gmsh)
+cfd run examples/dam_break.json     # two-phase VOF (water column collapse)
+cfd run examples/conjugate_block_2d.json # meshed solid body (CHT, needs Gmsh)
 cfd mesh-box 10 10 10               # create a box mesh and print statistics
 cfd check-mesh mesh.msh             # check a Gmsh 4.1 mesh
 cfd run-cavity 32 100               # quick lid-driven cavity demo

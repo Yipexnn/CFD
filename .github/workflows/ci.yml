@@ -141,6 +141,8 @@ jobs:
           grep -q xmin_Nu examples/results/heated_cavity/heat.csv
           mpiexec --oversubscribe -n 2 ./build/linux-system-gui/src/app/cfd run examples/conjugate_plate.json
           grep -q plate_Q examples/results/conjugate_plate/heat.csv
+          mpiexec --oversubscribe -n 2 ./build/linux-system-gui/src/app/cfd run examples/dam_break.json
+          test -s examples/results/dam_break/dam_break.vtu
 
       - name: Upload screenshots
         uses: actions/upload-artifact@v4

@@ -89,6 +89,23 @@ other patches follow their names (`inlet*`, `outlet*`, `wall*`, `sym*`), otherwi
 | `body_force` | [num, num, num] | `[0, 0, 0]` | Acceleration [m/s^2], e.g. a driving pressure gradient. |
 | `turbulence` | string | `"laminar"` | `"laminar"` or `"kOmegaSST"`. |
 
+### Multiphase (`physics.multiphase`)
+
+Two immiscible incompressible fluids (volume of fluid, transient only; not combinable with
+turbulence, energy or solids yet). `alpha` = volume fraction of phase 1.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `rho1`, `nu1` | number | `1000`, `1e-6` | Phase 1 density [kg/m³] and kinematic viscosity [m²/s]. |
+| `rho2`, `nu2` | number | `1`, `1.48e-5` | Phase 2. |
+| `sigma` | number | `0` | Surface tension [N/m]. |
+| `gravity` | [num, num, num] | `[0, 0, 0]` | [m/s²]. |
+| `compression` | number | `1` | Interface compression coefficient. |
+
+`initial.alpha_regions`: `[{"min", "max"}, ...]` boxes filled with phase 1 (cell centres).
+`boundaries.<inlet>.alpha`: phase fraction entering through a velocity inlet (default 0).
+Outlet `pressure` is the static pressure [Pa]; output fields: U, p, p_rgh, alpha, rho.
+
 ### Energy (`physics.energy`)
 
 Enables the temperature equation with Boussinesq buoyancy −β (T − T_ref) g.
@@ -151,6 +168,7 @@ Patches without an entry get a default from their patch type:
 | `convection` | string | `"linear_upwind"` | `"linear_upwind"`, `"limited_linear_upwind"` (bounded, recommended for high Reynolds numbers / coarse meshes) or `"upwind"` (first order). |
 | `non_orthogonal_correctors` | int | `0` | Must be >= 0. |
 | `piso_correctors` | int | `2` | Must be >= 1. |
+| `max_courant` | number | `0` | Transient multiphase: adapt the time step (at most `dt`) to this Courant number; `0` = fixed `dt`. |
 | `time_scheme` | string | `"euler"` | Transient: `"euler"` (1st order) or `"backward"` (BDF2, 2nd order). |
 
 `dt`, `end_time`, `alpha_*` and the corrector counts are validated in both modes.
