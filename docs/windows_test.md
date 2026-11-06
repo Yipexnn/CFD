@@ -48,5 +48,14 @@ Start `build\windows-msvc-gui-release\src\gui\cfd_gui.exe`.
 - [ ] File → Save case as… → reopen → same settings
 - [ ] File → Save screenshot works
 
-## 5. Report
+## 5. GPU (NVIDIA, optional)
+- [ ] Install the CUDA Toolkit 12.x (with Visual Studio integration); restart CLion
+- [ ] Enable preset `windows-msvc-gui-cuda-release`, reload CMake, build `cfd_gui`
+- [ ] `cfd.exe --info` shows `GPU: cuda (device: <your GPU>)`
+- [ ] Run "All CTest" (Gpu.* tests now run on the GPU)
+- [ ] Copy `examples\cavity.json`, add `"device": "gpu"` to `"solver"`, run → converges like
+      the CPU run; note the run time of both
+- [ ] GUI: Solver page → "Linear solvers: GPU" → Run cavity → same result
+
+## 6. Report
 For each failed item: what you did, what happened, Log text, screenshot.

@@ -24,9 +24,25 @@ Scalar laminar_y_plus(Scalar kappa, Scalar e) {
 
 } // namespace
 
+namespace {
+
+std::vector<BoundaryCondition> boundary_conditions(const FlowSolver& flow) {
+    std::vector<BoundaryCondition> bcs(
+        static_cast<std::size_t>(flow.geometry().mesh().n_boundary_faces()));
+    for (std::size_t b = 0; b < bcs.size(); ++b) {
+        bcs[b] = flow.boundary_condition(static_cast<Label>(b));
+    }
+    return bcs;
+}
+
+} // namespace
+
 KOmegaSst::KOmegaSst(const FlowSolver& flow, SstSettings settings)
-    : geo_(&flow.geometry()), settings_(settings), nu_(flow.settings().nu),
-      y_plus_lam_(laminar_y_plus(k_kappa, k_e)) {
+    : KOmegaSst(flow.geometry(), boundary_conditions(flow), flow.settings().nu, settings) {}
+
+KOmegaSst::KOmegaSst(const FvGeometry& geo, const std::vector<BoundaryCondition>& boundary,
+                     Scalar nu, SstSettings settings)
+    : geo_(&geo), settings_(settings), nu_(nu), y_plus_lam_(laminar_y_plus(k_kappa, k_e)) {
     const Mesh& m = geo_->mesh();
     const auto nc = static_cast<std::size_t>(m.n_cells());
     const auto nb = static_cast<std::size_t>(m.n_boundary_faces());
@@ -37,7 +53,7 @@ KOmegaSst::KOmegaSst(const FlowSolver& flow, SstSettings settings)
     Scalar k_inlet = 0.0;
     Scalar omega_inlet = 0.0;
     for (std::size_t b = 0; b < nb; ++b) {
-        const BoundaryCondition& c = flow.boundary_condition(static_cast<Label>(b));
+        const BoundaryCondition& c = boundary[b];
         if (c.kind == FlowBoundary::Wall) {
             is_wall_face_[b] = 1;
         } else if (c.kind == FlowBoundary::VelocityInlet) {
@@ -117,6 +133,18 @@ void KOmegaSst::update_nut(const std::vector<Scalar>& s2, const std::vector<Scal
 }
 
 std::pair<Scalar, Scalar> KOmegaSst::correct(const FlowSolver& flow, Scalar dt) {
+    const auto nb = static_cast<std::size_t>(geo_->mesh().n_boundary_faces());
+    const auto nif = static_cast<Label>(geo_->mesh().n_internal_faces());
+    std::vector<Vec3> ub(nb);
+    for (std::size_t b = 0; b < nb; ++b) {
+        ub[b] = flow.boundary_velocity(nif + static_cast<Label>(b));
+    }
+    return correct(SstFlowState{flow.velocity(), flow.face_flux(), flow.velocity_gradient(),
+                                std::move(ub), nullptr},
+                   dt);
+}
+
+std::pair<Scalar, Scalar> KOmegaSst::correct(const SstFlowState& flow, Scalar dt) {
     const Mesh& m = geo_->mesh();
     const auto nc = static_cast<std::size_t>(m.n_cells());
     const auto nf = static_cast<std::size_t>(m.n_faces());
@@ -124,15 +152,16 @@ std::pair<Scalar, Scalar> KOmegaSst::correct(const FlowSolver& flow, Scalar dt) 
     const auto& own = m.owner();
     const auto& nei = m.neighbour();
     const auto& w = geo_->weights();
-    const auto& u = flow.velocity();
-    const auto& phi = flow.face_flux();
+    const auto& u = flow.u;
+    const auto& phi = flow.phi;
+    auto nu_at = [&](std::size_t c) { return flow.nu != nullptr ? (*flow.nu)[c] : nu_; };
 
     if (dt > 0.0) {
         k_old_ = k_;
         omega_old_ = omega_;
     }
 
-    const std::vector<Mat3> grad_u = flow.velocity_gradient();
+    const std::vector<Mat3>& grad_u = flow.grad_u;
     const std::vector<Vec3> grad_k = scalar_gradient(*geo_, k_, k_bc_);
     const std::vector<Vec3> grad_omega = scalar_gradient(*geo_, omega_, omega_bc_);
 
@@ -150,7 +179,7 @@ std::pair<Scalar, Scalar> KOmegaSst::correct(const FlowSolver& flow, Scalar dt) 
         cd_k_omega[c] = 2.0 * k_alpha_omega2 * grad_k[c].dot(grad_omega[c]) / wc;
         const Scalar cd_plus = std::max(cd_k_omega[c], 1e-10);
         const Scalar sqrt_k = std::sqrt(kc);
-        const Scalar arg_visc = 500.0 * nu_ / (y * y * wc);
+        const Scalar arg_visc = 500.0 * nu_at(c) / (y * y * wc);
         const Scalar arg1 = std::min(std::min(std::max(sqrt_k / (k_beta_star * wc * y), arg_visc),
                                               4.0 * k_alpha_omega2 * kc / (cd_plus * y * y)),
                                      10.0);
@@ -175,27 +204,28 @@ std::pair<Scalar, Scalar> KOmegaSst::correct(const FlowSolver& flow, Scalar dt) 
         const auto p = static_cast<std::size_t>(own[f]);
         const Scalar y = y_[p];
         const Scalar sqrt_k = std::sqrt(k_[p]);
-        const Scalar y_plus_k = cmu25 * sqrt_k * y / nu_;
+        const Scalar nu = nu_at(p);
+        const Scalar y_plus_k = cmu25 * sqrt_k * y / nu;
 
-        const Scalar omega_vis = 6.0 * nu_ / (k_beta1 * y * y);
+        const Scalar omega_vis = 6.0 * nu / (k_beta1 * y * y);
         const Scalar omega_log = sqrt_k / (cmu25 * k_kappa * y);
         omega_wall[p] += std::sqrt(omega_vis * omega_vis + omega_log * omega_log);
 
         const Vec3& n = geo_->unit_normals()[f];
-        Vec3 ut = u[p] - flow.boundary_velocity(static_cast<Label>(f));
+        Vec3 ut = u[p] - flow.boundary_velocity[b];
         ut -= ut.dot(n) * n;
         const Scalar mag_grad_uw = ut.norm() / y;
 
         Scalar nut_w = 0.0;
         if (y_plus_k > y_plus_lam_) {
-            nut_w = nu_ * (y_plus_k * k_kappa / std::log(k_e * y_plus_k) - 1.0);
-            g_wall[p] += (nu_ + nut_w) * mag_grad_uw * cmu25 * sqrt_k / (k_kappa * y);
+            nut_w = nu * (y_plus_k * k_kappa / std::log(k_e * y_plus_k) - 1.0);
+            g_wall[p] += (nu + nut_w) * mag_grad_uw * cmu25 * sqrt_k / (k_kappa * y);
         } else {
             g_wall[p] += g[p];
         }
         nut_b_[b] = std::max(nut_w, 0.0);
-        const Scalar u_tau = std::sqrt((nu_ + nut_b_[b]) * mag_grad_uw);
-        y_plus_[p] = std::max(y_plus_[p], u_tau * y / nu_);
+        const Scalar u_tau = std::sqrt((nu + nut_b_[b]) * mag_grad_uw);
+        y_plus_[p] = std::max(y_plus_[p], u_tau * y / nu);
         ++wall_count[p];
     }
 
@@ -219,12 +249,13 @@ std::pair<Scalar, Scalar> KOmegaSst::correct(const FlowSolver& flow, Scalar dt) 
         for (std::size_t f = 0; f < nif; ++f) {
             const auto p = static_cast<std::size_t>(own[f]);
             const auto n = static_cast<std::size_t>(nei[f]);
-            gamma[f] = nu_ + w[f] * cell_sigma_nut[p] + (1.0 - w[f]) * cell_sigma_nut[n];
+            gamma[f] = w[f] * (nu_at(p) + cell_sigma_nut[p]) +
+                       (1.0 - w[f]) * (nu_at(n) + cell_sigma_nut[n]);
         }
         for (std::size_t f = nif; f < nf; ++f) {
             const auto p = static_cast<std::size_t>(own[f]);
             const Scalar sigma = f1[p] * alpha1 + (1.0 - f1[p]) * alpha2;
-            gamma[f] = nu_ + sigma * nut_b_[f - nif];
+            gamma[f] = nu_at(p) + sigma * nut_b_[f - nif];
         }
         return gamma;
     };

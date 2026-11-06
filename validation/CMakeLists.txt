@@ -25,3 +25,11 @@ cfd_target_defaults(sod_shock_tube)
 add_executable(supersonic_ramp supersonic_ramp.cpp)
 target_link_libraries(supersonic_ramp PRIVATE cfd::fv)
 cfd_target_defaults(supersonic_ramp)
+
+add_executable(flat_plate_turbulent flat_plate_turbulent.cpp)
+target_link_libraries(flat_plate_turbulent PRIVATE cfd::fv)
+cfd_target_defaults(flat_plate_turbulent)
+
+add_executable(droplet_contact_angle droplet_contact_angle.cpp)
+target_link_libraries(droplet_contact_angle PRIVATE cfd::fv)
+cfd_target_defaults(droplet_contact_angle)

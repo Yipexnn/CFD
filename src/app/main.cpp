@@ -3,6 +3,7 @@
 #include <cfd/core/build_info.hpp>
 #include <cfd/core/version.hpp>
 #include <cfd/fv/flow_solver.hpp>
+#include <cfd/gpu/krylov.hpp>
 #include <cfd/mesh/box_mesher.hpp>
 #include <cfd/mesh/gmsh_reader.hpp>
 #include <cfd/mesh/mesh.hpp>
@@ -235,7 +236,7 @@ int main(int argc, char* argv[]) {
     if (arg == "--info") {
         std::cout << cfd::core::build_info_string()
                   << "MPI: " << (cfd::parallel::Environment::mpi_available() ? "yes" : "no")
-                  << "\n";
+                  << "\nGPU: " << cfd::gpu::device_description() << "\n";
         return 0;
     }
 

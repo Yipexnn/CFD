@@ -11,6 +11,7 @@
 #include <limits>
 #include <sstream>
 #include <stdexcept>
+#include <tuple>
 
 namespace cfd::cases {
 
@@ -520,6 +521,20 @@ std::vector<Vec3> to_vec3(const std::vector<Scalar>& v) {
 
 } // namespace
 
+const fv::KOmegaSst* CaseRunner::sst() const {
+    if (sst_) {
+        return sst_.get();
+    }
+    return multiphase_ ? multiphase_->sst() : nullptr;
+}
+
+fv::KOmegaSst* CaseRunner::mutable_sst() {
+    if (sst_) {
+        return sst_.get();
+    }
+    return multiphase_ ? multiphase_->sst() : nullptr;
+}
+
 void CaseRunner::write_results(const std::filesystem::path& file) const {
     const auto ng = static_cast<std::size_t>(global_mesh_->n_cells());
     const parallel::LocalMesh* lm = local_.get();
@@ -535,17 +550,27 @@ void CaseRunner::write_results(const std::filesystem::path& file) const {
         turbulence.emplace_back("rho", cells(compressible_->density().data(), 1));
         turbulence.emplace_back("T", cells(compressible_->temperature().data(), 1));
         turbulence.emplace_back("Mach", cells(compressible_->mach().data(), 1));
+        if (compressible_->settings().turbulence) {
+            std::vector<Scalar> nut = compressible_->eddy_viscosity();
+            const std::vector<Scalar> rho = compressible_->density();
+            for (std::size_t c = 0; c < nut.size(); ++c) {
+                nut[c] /= rho[c];
+            }
+            turbulence.emplace_back("k", cells(compressible_->k().data(), 1));
+            turbulence.emplace_back("omega", cells(compressible_->omega().data(), 1));
+            turbulence.emplace_back("nut", cells(nut.data(), 1));
+        }
     }
     if (multiphase_) {
         turbulence.emplace_back("alpha", cells(multiphase_->alpha().data(), 1));
         turbulence.emplace_back("p_rgh", cells(multiphase_->p_rgh().data(), 1));
         turbulence.emplace_back("rho", cells(multiphase_->density().data(), 1));
     }
-    if (sst_) {
-        turbulence.emplace_back("k", cells(sst_->k().data(), 1));
-        turbulence.emplace_back("omega", cells(sst_->omega().data(), 1));
-        turbulence.emplace_back("nut", cells(sst_->nut().data(), 1));
-        turbulence.emplace_back("yPlus", cells(sst_->y_plus().data(), 1));
+    if (sst() != nullptr) {
+        turbulence.emplace_back("k", cells(sst()->k().data(), 1));
+        turbulence.emplace_back("omega", cells(sst()->omega().data(), 1));
+        turbulence.emplace_back("nut", cells(sst()->nut().data(), 1));
+        turbulence.emplace_back("yPlus", cells(sst()->y_plus().data(), 1));
     }
     if (energy_) {
         turbulence.emplace_back("T", gather_cells(lm, energy_->temperature().data(), 1, ng));
@@ -593,12 +618,20 @@ void CaseRunner::write_checkpoint(const std::filesystem::path& file) const {
     const std::vector<Scalar> temperature =
         energy_ ? gather_cells(lm, energy_->temperature().data(), 1, ng) : std::vector<Scalar>{};
     std::vector<std::vector<Scalar>> turbulence;
-    if (sst_) {
-        turbulence.push_back(cells(sst_->k().data(), 1));
-        turbulence.push_back(cells(sst_->omega().data(), 1));
-        turbulence.push_back(cells(sst_->nut().data(), 1));
+    const bool compressible_turbulence = compressible_ && compressible_->settings().turbulence;
+    if (compressible_turbulence) {
+        // k, omega, mu_t; no boundary-face values (mu_t = 0 on walls, owner value elsewhere).
+        turbulence.push_back(cells(compressible_->k().data(), 1));
+        turbulence.push_back(cells(compressible_->omega().data(), 1));
+        turbulence.push_back(cells(compressible_->eddy_viscosity().data(), 1));
+        turbulence.emplace_back(static_cast<std::size_t>(g.n_boundary_faces()), 0.0);
+    }
+    if (sst() != nullptr) {
+        turbulence.push_back(cells(sst()->k().data(), 1));
+        turbulence.push_back(cells(sst()->omega().data(), 1));
+        turbulence.push_back(cells(sst()->nut().data(), 1));
         turbulence.push_back(
-            gather_faces(lm, g, to_full_faces(sst_->boundary_nut(), false, true), false, true));
+            gather_faces(lm, g, to_full_faces(sst()->boundary_nut(), false, true), false, true));
     }
     if (!world().is_root()) {
         return;
@@ -612,7 +645,7 @@ void CaseRunner::write_checkpoint(const std::filesystem::path& file) const {
     write_pod(out, nf);
     write_pod(out, static_cast<std::int64_t>(step_));
     write_pod(out, time_);
-    write_pod(out, static_cast<std::uint8_t>(sst_ ? 1 : 0));
+    write_pod(out, static_cast<std::uint8_t>(sst() != nullptr || compressible_turbulence ? 1 : 0));
     write_array(out, u.data(), u.size());
     write_array(out, p.data(), p.size());
     write_array(out, phi.data(), phi.size());
@@ -688,8 +721,8 @@ void CaseRunner::read_checkpoint(const std::filesystem::path& file) {
     auto cells = [&](const std::vector<Scalar>& global, std::size_t ncomp) {
         return from_full_cells(scatter_cells(lm, global, ncomp), ncomp);
     };
-    if (!d.k.empty() && sst_) {
-        sst_->set_fields(
+    if (!d.k.empty() && sst() != nullptr) {
+        mutable_sst()->set_fields(
             cells(d.k, 1), cells(d.omega, 1), cells(d.nut, 1),
             from_full_faces(scatter_faces(lm, g, d.boundary_nut, false, true), false, true));
     }
@@ -709,6 +742,9 @@ void CaseRunner::read_checkpoint(const std::filesystem::path& file) {
             q[c] = Eigen::Map<const fv::CompressibleSolver::Conserved>(flat.data() + 5 * c);
         }
         compressible_->set_conserved(std::move(q));
+        if (compressible_->settings().turbulence && !d.k.empty()) {
+            compressible_->set_turbulence(cells(d.k, 1), cells(d.omega, 1));
+        }
         step_ = d.step;
         time_ = d.time;
         return;
@@ -839,13 +875,20 @@ RunResult CaseRunner::run(const ProgressCallback& progress) {
                 r.p = compressible_->step(dt);
                 time_ += dt;
             }
-            if (residual0_ <= 0.0) {
-                residual0_ = std::max(r.p, 1e-300);
+            // Density residual relative to the largest of the first five iterations (a uniform
+            // initial state can have an almost vanishing first residual).
+            if (residual_count_ < 5) {
+                residual0_ = std::max({residual0_, r.p, 1e-300});
+                ++residual_count_;
             }
-            r.p /= residual0_; // density residual relative to the first iteration
+            r.p /= residual0_;
+            if (compressible_->settings().turbulence) {
+                std::tie(r.k, r.omega) = compressible_->turbulence_residuals();
+            }
             ++step_;
             result.final_residuals = r;
-            log << step_ << ',' << time_ << ",0,0,0," << r.p << ",0,0,0,0\n";
+            log << step_ << ',' << time_ << ",0,0,0," << r.p << ',' << r.k << ',' << r.omega
+                << ",0,0\n";
             log.flush();
             if (o.write_interval > 0 && step_ % o.write_interval == 0) {
                 std::ostringstream name;
@@ -856,7 +899,7 @@ RunResult CaseRunner::run(const ProgressCallback& progress) {
                 write_checkpoint(dir / "checkpoint.bin");
             }
             const bool keep_going = !progress || progress(step_, time_, r);
-            if (steady && r.p < s.tolerance) {
+            if (steady && r.max() < s.tolerance) {
                 result.converged = true;
                 break;
             }
@@ -879,7 +922,8 @@ RunResult CaseRunner::run(const ProgressCallback& progress) {
             ++step_;
             result.final_residuals = r;
             log << step_ << ',' << time_ << ',' << r.u.x() << ',' << r.u.y() << ',' << r.u.z()
-                << ',' << r.p << ",0,0," << r.continuity << ',' << r.t << '\n';
+                << ',' << r.p << ',' << r.k << ',' << r.omega << ',' << r.continuity << ',' << r.t
+                << '\n';
             log.flush();
             if (o.write_interval > 0 && step_ % o.write_interval == 0) {
                 std::ostringstream name;

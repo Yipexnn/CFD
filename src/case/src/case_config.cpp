@@ -283,7 +283,7 @@ MeshConfig parse_mesh(const json& j, std::vector<SolidConfig>& solids) {
 fv::BoundaryCondition parse_boundary(const json& j, const std::string& path) {
     check_keys(j, path,
                {"type", "velocity", "pressure", "turbulence_intensity", "viscosity_ratio",
-                "profile", "profile_axes", "thermal", "alpha", "temperature"});
+                "profile", "profile_axes", "thermal", "alpha", "temperature", "contact_angle"});
     fv::BoundaryCondition bc;
     const std::string type = get_string(j, "type", path, "");
     if (type == "velocity_inlet") {
@@ -308,6 +308,10 @@ fv::BoundaryCondition parse_boundary(const json& j, const std::string& path) {
     bc.turbulence_intensity = get_number(j, "turbulence_intensity", path, bc.turbulence_intensity);
     bc.viscosity_ratio = get_number(j, "viscosity_ratio", path, bc.viscosity_ratio);
     bc.temperature = get_number(j, "temperature", path, bc.temperature);
+    bc.contact_angle = get_number(j, "contact_angle", path, bc.contact_angle);
+    if (!(bc.contact_angle > 0.0 && bc.contact_angle < 180.0)) {
+        fail(path + ".contact_angle", "must be between 0 and 180 degrees");
+    }
     return bc;
 }
 
@@ -342,7 +346,9 @@ CaseConfig parse_case(const std::string& json_text, const std::filesystem::path&
         if (p.contains("compressible")) {
             const json& cp = p["compressible"];
             const std::string cpp = "physics.compressible";
-            check_keys(cp, cpp, {"gamma", "r_gas", "mu", "prandtl", "cfl", "second_order"});
+            check_keys(cp, cpp,
+                       {"gamma", "r_gas", "mu", "prandtl", "cfl", "second_order", "limiter",
+                        "venkat_k", "implicit", "krylov_dim", "krylov_tolerance", "prandtl_t"});
             fv::CompressibleSettings cs;
             cs.gamma = get_number(cp, "gamma", cpp, cs.gamma);
             cs.r_gas = get_number(cp, "r_gas", cpp, cs.r_gas);
@@ -350,6 +356,24 @@ CaseConfig parse_case(const std::string& json_text, const std::filesystem::path&
             cs.prandtl = get_number(cp, "prandtl", cpp, cs.prandtl);
             cs.cfl = get_number(cp, "cfl", cpp, cs.cfl);
             cs.second_order = get_bool(cp, "second_order", cpp, cs.second_order);
+            const std::string limiter = get_string(cp, "limiter", cpp, "barthJespersen");
+            if (limiter == "barthJespersen") {
+                cs.limiter = fv::Limiter::BarthJespersen;
+            } else if (limiter == "venkatakrishnan") {
+                cs.limiter = fv::Limiter::Venkatakrishnan;
+            } else {
+                fail(cpp + ".limiter",
+                     "unknown limiter '" + limiter + "' (barthJespersen, venkatakrishnan)");
+            }
+            cs.venkat_k = get_number(cp, "venkat_k", cpp, cs.venkat_k);
+            cs.implicit = get_bool(cp, "implicit", cpp, cs.implicit);
+            cs.krylov_dim = static_cast<int>(get_number(cp, "krylov_dim", cpp, cs.krylov_dim));
+            cs.krylov_tolerance = get_number(cp, "krylov_tolerance", cpp, cs.krylov_tolerance);
+            cs.prandtl_t = get_number(cp, "prandtl_t", cpp, cs.prandtl_t);
+            if (cs.krylov_dim < 0 || !(cs.krylov_tolerance > 0.0) || !(cs.prandtl_t > 0.0) ||
+                !(cs.venkat_k > 0.0)) {
+                fail(cpp, "needs krylov_dim >= 0, krylov_tolerance, prandtl_t, venkat_k > 0");
+            }
             if (!(cs.gamma > 1.0 && cs.r_gas > 0.0 && cs.prandtl > 0.0 && cs.cfl > 0.0) ||
                 cs.mu < 0.0) {
                 fail(cpp, "needs gamma > 1, r_gas, prandtl, cfl > 0, mu >= 0");
@@ -509,7 +533,7 @@ CaseConfig parse_case(const std::string& json_text, const std::filesystem::path&
         check_keys(s, path,
                    {"mode", "max_iterations", "tolerance", "dt", "end_time", "alpha_u", "alpha_p",
                     "convection", "non_orthogonal_correctors", "piso_correctors", "time_scheme",
-                    "max_courant"});
+                    "max_courant", "device"});
         c.solver.max_courant = get_number(s, "max_courant", path, c.solver.max_courant);
         const std::string mode = get_string(s, "mode", path, "steady");
         if (mode == "steady") {
@@ -523,6 +547,13 @@ CaseConfig parse_case(const std::string& json_text, const std::filesystem::path&
         c.solver.tolerance = get_number(s, "tolerance", path, c.solver.tolerance);
         c.solver.dt = get_number(s, "dt", path, c.solver.dt);
         c.solver.end_time = get_number(s, "end_time", path, c.solver.end_time);
+        const std::string device = get_string(s, "device", path, "cpu");
+        if (device == "gpu") {
+            flow.p_solver.type = fv::LinearSolverType::GpuCg;
+            flow.u_solver.type = fv::LinearSolverType::GpuBiCgStab;
+        } else if (device != "cpu") {
+            fail(path + ".device", "unknown device '" + device + "' (cpu, gpu)");
+        }
         flow.alpha_u = get_number(s, "alpha_u", path, flow.alpha_u);
         flow.alpha_p = get_number(s, "alpha_p", path, flow.alpha_p);
         const std::string conv = get_string(s, "convection", path, "linear_upwind");
@@ -654,16 +685,25 @@ CaseConfig parse_case(const std::string& json_text, const std::filesystem::path&
     }
 
     if (c.compressible) {
-        if (c.turbulence != TurbulenceKind::Laminar || c.energy || !c.solids.empty() ||
-            c.multiphase) {
-            fail("physics.compressible",
-                 "not combinable with turbulence, energy, solids or multiphase (yet)");
+        if (c.energy || !c.solids.empty() || c.multiphase) {
+            fail("physics.compressible", "not combinable with energy, solids or multiphase");
+        }
+        c.compressible->turbulence = c.turbulence == TurbulenceKind::KOmegaSst;
+        if (c.compressible->turbulence && !(c.compressible->mu > 0.0)) {
+            fail("physics.compressible", "turbulence needs mu > 0");
         }
     }
     if (c.multiphase) {
-        if (c.turbulence != TurbulenceKind::Laminar || c.energy || !c.solids.empty()) {
-            fail("physics.multiphase", "not combinable with turbulence, energy or solids (yet)");
+        if (c.energy || !c.solids.empty()) {
+            fail("physics.multiphase", "not combinable with energy or solids (yet)");
         }
+        c.multiphase->turbulence = c.turbulence == TurbulenceKind::KOmegaSst;
+        c.multiphase->p_solver.type = c.solver.flow.p_solver.type == fv::LinearSolverType::GpuCg
+                                          ? fv::LinearSolverType::GpuCg
+                                          : c.multiphase->p_solver.type;
+        c.multiphase->u_solver.type = c.solver.flow.u_solver.type;
+        c.multiphase->sst.k_init = c.initial.k;
+        c.multiphase->sst.omega_init = c.initial.omega;
         if (c.solver.mode != SolverMode::Transient) {
             fail("physics.multiphase", "needs solver.mode \"transient\"");
         }

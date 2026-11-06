@@ -6,6 +6,7 @@
 #include <cfd/fv/amg.hpp>
 #include <cfd/fv/ldu_matrix.hpp>
 #include <cfd/fv/parallel_amg.hpp>
+#include <cfd/gpu/krylov.hpp>
 #include <cmath>
 #include <numeric>
 #include <stdexcept>
@@ -163,7 +164,17 @@ LinearSolveResult LduMatrix::solve(std::vector<Scalar>& x, const LinearSolverSet
         r0_norm;
     const Scalar eigen_tol = b_norm > k_small ? std::clamp(target / b_norm, 1e-15, 1.0) : 1e-15;
 
-    if (settings.type == LinearSolverType::AmgCg) {
+    if (settings.type == LinearSolverType::GpuCg ||
+        settings.type == LinearSolverType::GpuBiCgStab) {
+        a.makeCompressed();
+        const gpu::CsrView view{static_cast<int>(n), static_cast<int>(a.nonZeros()),
+                                a.outerIndexPtr(), a.innerIndexPtr(), a.valuePtr()};
+        const gpu::SolveStats st = gpu::solve(
+            view, source.data(), x.data(),
+            settings.type == LinearSolverType::GpuCg ? gpu::Method::Cg : gpu::Method::BiCgStab,
+            {std::max(target, 1e-300), settings.max_iterations});
+        result.iterations = st.iterations;
+    } else if (settings.type == LinearSolverType::AmgCg) {
         AmgPreconditioner local;
         AmgPreconditioner* amg = &local;
         bool fresh = true;
@@ -207,12 +218,15 @@ LinearSolveResult LduMatrix::solve(std::vector<Scalar>& x, const LinearSolverSet
         xv = solver.solveWithGuess(b, EigenVector(xv));
         result.iterations = static_cast<int>(solver.iterations());
     } else {
-        Eigen::BiCGSTAB<SparseMatrix, Eigen::DiagonalPreconditioner<Scalar>> solver;
-        solver.setTolerance(eigen_tol);
-        solver.setMaxIterations(settings.max_iterations);
-        solver.compute(a);
-        xv = solver.solveWithGuess(b, EigenVector(xv));
-        result.iterations = static_cast<int>(solver.iterations());
+        // Own Jacobi-BiCGStab (host threads): identical behaviour with every Eigen version
+        // (Eigen 5 changed the BiCGSTAB restart logic).
+        a.makeCompressed();
+        const gpu::CsrView view{static_cast<int>(n), static_cast<int>(a.nonZeros()),
+                                a.outerIndexPtr(), a.innerIndexPtr(), a.valuePtr()};
+        const gpu::SolveStats st =
+            gpu::solve_host(view, source.data(), x.data(), gpu::Method::BiCgStab,
+                            {std::max(target, 1e-300), settings.max_iterations});
+        result.iterations = st.iterations;
     }
 
     result.final_residual = normalised_residual(x);
@@ -220,8 +234,15 @@ LinearSolveResult LduMatrix::solve(std::vector<Scalar>& x, const LinearSolverSet
 }
 
 LinearSolveResult LduMatrix::solve_distributed(std::vector<Scalar>& x,
-                                               const LinearSolverSettings& settings,
+                                               const LinearSolverSettings& requested,
                                                AmgCache* amg_cache) const {
+    // Accelerator solvers are single-process: use the distributed CPU equivalents.
+    LinearSolverSettings settings = requested;
+    if (settings.type == LinearSolverType::GpuCg) {
+        settings.type = LinearSolverType::AmgCg;
+    } else if (settings.type == LinearSolverType::GpuBiCgStab) {
+        settings.type = LinearSolverType::BiCgStab;
+    }
     const parallel::Comm& comm = *halo->comm;
     const std::size_t n = diag.size();
     const std::size_t no = n_owned();

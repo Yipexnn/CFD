@@ -98,7 +98,8 @@ public:
     // static [Pa] for multiphase).
     [[nodiscard]] std::vector<Vec3> velocity() const;
     [[nodiscard]] std::vector<Scalar> pressure() const;
-    [[nodiscard]] const fv::KOmegaSst* sst() const { return sst_.get(); }
+    // Active k-omega SST model (single-phase or multiphase mixture; nullptr if laminar).
+    [[nodiscard]] const fv::KOmegaSst* sst() const;
     [[nodiscard]] const fv::EnergyEquation* energy() const { return energy_.get(); }
     // Kinematic heat flow into the fluid through a patch times heat.rho_cp.
     [[nodiscard]] Scalar heat_flow(const std::string& patch) const;
@@ -123,11 +124,13 @@ private:
     std::unique_ptr<fv::ConjugateMesh> conjugate_;
     std::unique_ptr<fv::FlowSolver> flow_;
     std::unique_ptr<fv::KOmegaSst> sst_;
+    [[nodiscard]] fv::KOmegaSst* mutable_sst();
     std::unique_ptr<fv::EnergyEquation> energy_;
     std::unique_ptr<fv::MultiphaseSolver> multiphase_;
     std::unique_ptr<fv::CompressibleSolver> compressible_;
-    Scalar residual0_ = 0.0; // compressible: first density residual (steady convergence)
-    Scalar dt_ = 0.0;        // last time step (adaptive time stepping)
+    Scalar residual0_ = 0.0; // compressible: reference density residual (steady convergence)
+    int residual_count_ = 0;
+    Scalar dt_ = 0.0; // last time step (adaptive time stepping)
     int step_ = 0;
     Scalar time_ = 0.0;
 };

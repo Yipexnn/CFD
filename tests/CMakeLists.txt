@@ -23,6 +23,7 @@ add_executable(cfd_tests
     test_conjugate.cpp
     test_multiphase.cpp
     test_compressible.cpp
+    test_gpu.cpp
 )
 target_link_libraries(cfd_tests PRIVATE cfd::core cfd::mesh cfd::fv cfd::parallel cfd::geometry cfd::case GTest::gtest_main)
 cfd_target_defaults(cfd_tests)

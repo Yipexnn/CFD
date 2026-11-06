@@ -2,7 +2,8 @@
 // The oblique shock angle beta and the pressure ratio p2/p1 behind it are compared with
 // theta-beta-M theory (weak shock).
 //
-// Usage: supersonic_ramp [nx=120] [max_iterations=4000]
+// Usage: supersonic_ramp [nx=120] [max_iterations=4000] [implicit_cfl=0 (explicit RK3)]
+//        [bj|venkat]
 #include <array>
 #include <cfd/fv/compressible.hpp>
 #include <cfd/mesh/mesh_builder.hpp>
@@ -10,6 +11,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <numbers>
+#include <string>
 
 using cfd::core::Scalar;
 using cfd::core::Vec3;
@@ -18,6 +20,7 @@ using namespace cfd::fv;
 int main(int argc, char** argv) {
     const int nx = argc > 1 ? std::atoi(argv[1]) : 120;
     const int max_iterations = argc > 2 ? std::atoi(argv[2]) : 4000;
+    const Scalar implicit_cfl = argc > 3 ? std::atof(argv[3]) : 0.0;
     const int ny = nx / 2;
     const Scalar length = 2.0;
     const Scalar height = 1.0;
@@ -71,7 +74,11 @@ int main(int argc, char** argv) {
 
     CompressibleSettings s;
     s.gamma = gamma;
-    s.cfl = 0.8;
+    s.cfl = implicit_cfl > 0.0 ? implicit_cfl : 0.8;
+    s.implicit = implicit_cfl > 0.0;
+    if (argc > 4 && std::string(argv[4]) == "venkat") {
+        s.limiter = Limiter::Venkatakrishnan;
+    }
     const Scalar p1 = 1e5;
     const Scalar t1 = 300.0;
     const Scalar u1 = mach * std::sqrt(gamma * s.r_gas * t1);
