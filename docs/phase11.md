@@ -76,7 +76,9 @@ Shock: p2/p1 2.4674 vs theory 2.4675, angle 36.98° vs 36.94°.
   decomposed (MPI) systems fall back to the distributed CPU solvers; `cfd --info` prints the
   backend and device; GUI: "Linear solvers" CPU / GPU
 - Trade-off: Jacobi-PCG needs many more iterations than AMG-PCG for the pressure (O(N^½) vs
-  ~constant), so the GPU pays off for large meshes (≳ 10⁵ cells); on the CPU keep AMG
+  ~constant), so the GPU pays off for large meshes (≳ 10⁵ cells); on the CPU keep AMG.
+  Cavity 128², 3000 SIMPLE iterations, 4 cores: CPU AMG 29 s, GPU solvers on host threads
+  (no device) 67 s
 - CI (`gpu-backends` job): CUDA 12.6 container build (tests use the host fallback — no GPU on
   the runners) and GCC 13 with real nvptx offload code; local: same lid-driven cavity result
   with GPU and CPU solvers (1e-5)
