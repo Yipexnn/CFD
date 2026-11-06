@@ -219,9 +219,20 @@ std::string case_to_json(const CaseConfig& config) {
     }
     if (config.compressible) {
         const fv::CompressibleSettings& cs = *config.compressible;
-        physics["compressible"] = {{"gamma", cs.gamma}, {"r_gas", cs.r_gas},
-                                   {"mu", cs.mu},       {"prandtl", cs.prandtl},
-                                   {"cfl", cs.cfl},     {"second_order", cs.second_order}};
+        physics["compressible"] = {{"gamma", cs.gamma},
+                                   {"r_gas", cs.r_gas},
+                                   {"mu", cs.mu},
+                                   {"prandtl", cs.prandtl},
+                                   {"cfl", cs.cfl},
+                                   {"second_order", cs.second_order},
+                                   {"limiter", cs.limiter == fv::Limiter::Venkatakrishnan
+                                                   ? "venkatakrishnan"
+                                                   : "barthJespersen"},
+                                   {"venkat_k", cs.venkat_k},
+                                   {"implicit", cs.implicit},
+                                   {"krylov_dim", cs.krylov_dim},
+                                   {"krylov_tolerance", cs.krylov_tolerance},
+                                   {"prandtl_t", cs.prandtl_t}};
     }
     if (config.multiphase) {
         const fv::MultiphaseSettings& m = *config.multiphase;

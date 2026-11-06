@@ -126,8 +126,9 @@ private:
     std::unique_ptr<fv::EnergyEquation> energy_;
     std::unique_ptr<fv::MultiphaseSolver> multiphase_;
     std::unique_ptr<fv::CompressibleSolver> compressible_;
-    Scalar residual0_ = 0.0; // compressible: first density residual (steady convergence)
-    Scalar dt_ = 0.0;        // last time step (adaptive time stepping)
+    Scalar residual0_ = 0.0; // compressible: reference density residual (steady convergence)
+    int residual_count_ = 0;
+    Scalar dt_ = 0.0; // last time step (adaptive time stepping)
     int step_ = 0;
     Scalar time_ = 0.0;
 };

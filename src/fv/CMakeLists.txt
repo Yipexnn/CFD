@@ -10,6 +10,7 @@ add_library(cfd_fv STATIC
     src/parallel_amg.cpp
     src/multiphase.cpp
     src/compressible.cpp
+    src/compressible_turbulence.cpp
 )
 add_library(cfd::fv ALIAS cfd_fv)
 

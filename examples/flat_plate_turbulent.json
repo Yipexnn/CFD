@@ -1,0 +1,29 @@
+{
+  // Turbulent flat plate (zero pressure gradient), Mach 0.2, Re = 5e6 per metre: compressible
+  // k-omega SST with implicit Newton-Krylov iterations on a wall-resolved grid (first cell
+  // y+ < 1). Fields "nut", "k", "Mach"; Cf ~ 0.0027 at x = 1 (1/5-power law 0.0028).
+  "name": "flat_plate_turbulent",
+  "mesh": {
+    "type": "box",
+    "cells": [48, 48, 1],
+    "max": [2, 1, 0.01],
+    "grading": [8, 50000, 1],
+    "patch_types": { "xmin": "inlet", "xmax": "outlet", "ymin": "wall", "ymax": "outlet",
+                     "zmin": "patch", "zmax": "patch" }
+  },
+  "physics": {
+    "turbulence": "kOmegaSST",
+    "compressible": { "mu": 1.6118e-5, "implicit": true, "krylov_dim": 30, "cfl": 1000,
+                      "limiter": "venkatakrishnan" }
+  },
+  "boundaries": {
+    "xmin": { "type": "velocity_inlet", "velocity": [69.44, 0, 0], "pressure": 1e5,
+              "temperature": 300, "turbulence_intensity": 0.001, "viscosity_ratio": 0.1 },
+    "xmax": { "type": "pressure_outlet", "pressure": 1e5 },
+    "ymax": { "type": "pressure_outlet", "pressure": 1e5 },
+    "zmin": { "type": "empty" }, "zmax": { "type": "empty" }
+  },
+  "initial": { "velocity": [69.44, 0, 0], "pressure": 1e5, "temperature": 300 },
+  "solver": { "mode": "steady", "max_iterations": 3000, "tolerance": 1e-7 },
+  "output": { "directory": "results/flat_plate_turbulent", "log_interval": 100 }
+}

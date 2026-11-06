@@ -30,6 +30,16 @@ void SolverWorker::take_snapshot(const cases::CaseRunner& runner) {
         s.fields.t = full(cs->temperature());
         s.fields.rho = full(cs->density());
         s.fields.mach = full(cs->mach());
+        if (cs->settings().turbulence) {
+            std::vector<Scalar> nut = cs->eddy_viscosity();
+            const std::vector<Scalar> rho = cs->density();
+            for (std::size_t c = 0; c < nut.size(); ++c) {
+                nut[c] /= rho[c];
+            }
+            s.fields.k = full(cs->k());
+            s.fields.omega = full(cs->omega());
+            s.fields.nut = full(nut);
+        }
     }
     if (const auto* mp = runner.multiphase()) {
         s.fields.alpha = full(mp->alpha());

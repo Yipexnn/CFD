@@ -308,3 +308,69 @@ TEST(ParallelSolver, SodShockTubeMatchesSerial) {
 }
 
 } // namespace
+
+// Turbulent flat plate with implicit Newton-Krylov (compressible SST) on several processes:
+// the converged steady solution equals the serial one (iterations differ: LU-SGS treats the
+// process boundaries explicitly).
+TEST(ParallelSolver, CompressibleSstPlateMatchesSerial) {
+    cfd::mesh::BoxSpec spec;
+    spec.nx = 16;
+    spec.ny = 20;
+    spec.nz = 1;
+    spec.max = Vec3(2.0, 1.0, 0.01);
+    spec.grading = Vec3(4.0, 5000.0, 1.0);
+    const auto global = cfd::mesh::make_box_mesh(spec);
+    const Scalar t = 300.0;
+    const Scalar p = 1e5;
+    const Scalar rho = p / (287.0 * t);
+    const Scalar u = 69.4;
+    CompressibleSettings s;
+    s.mu = rho * u / 5e6;
+    s.implicit = true;
+    s.krylov_dim = 20;
+    s.cfl = 1000.0;
+    s.turbulence = true;
+    s.limiter = Limiter::Venkatakrishnan;
+    BoundaryCondition inlet{FlowBoundary::VelocityInlet, Vec3(u, 0, 0), p};
+    inlet.temperature = t;
+    const BoundaryCondition outlet{FlowBoundary::PressureOutlet, Vec3::Zero(), p};
+    const BoundaryCondition empty{FlowBoundary::Empty, Vec3::Zero(), 0.0};
+    const std::map<std::string, BoundaryCondition> bcs{
+        {"xmin", inlet},  {"xmax", outlet},
+        {"ymax", outlet}, {"ymin", {FlowBoundary::Wall, Vec3::Zero(), 0.0}},
+        {"zmin", empty},  {"zmax", empty}};
+    auto solve = [&](const cfd::mesh::Mesh& mesh, const par::Halo* halo) {
+        CompressibleSolver solver(mesh, bcs, s, halo);
+        solver.set_uniform({rho, Vec3(u, 0, 0), p});
+        Scalar r0 = 0.0;
+        int n = 0;
+        for (; n < 4000; ++n) {
+            const Scalar r = solver.steady_iteration();
+            r0 = n < 5 ? std::max(r0, r) : r0;
+            const auto [rk, rw] = solver.turbulence_residuals();
+            if (r < 1e-10 * r0 && rk < 1e-10 && rw < 1e-10) {
+                break;
+            }
+        }
+        EXPECT_LT(n, 4000);
+        std::vector<Scalar> ux(static_cast<std::size_t>(mesh.n_cells()));
+        for (std::size_t c = 0; c < ux.size(); ++c) {
+            ux[c] = solver.state(c).u.x();
+        }
+        return std::make_pair(ux, solver.k());
+    };
+    const auto [u_serial, k_serial] = solve(global, nullptr);
+    const auto parts = par::partition_rcb(global, comm().size());
+    const auto lm = par::decompose(global, parts, comm().rank(), comm());
+    const auto [u_par, k_par] = solve(lm.mesh, &lm.halo);
+    Scalar du = 0.0;
+    Scalar dk = 0.0;
+    for (cfd::core::Label c = 0; c < lm.halo.n_owned; ++c) {
+        const auto cs = static_cast<std::size_t>(c);
+        const auto g = static_cast<std::size_t>(lm.global_cell[cs]);
+        du = std::max(du, std::abs(u_par[cs] - u_serial[g]) / u);
+        dk = std::max(dk, std::abs(k_par[cs] - k_serial[g]) / (k_serial[g] + 1e-12));
+    }
+    EXPECT_LT(comm().max(du), 1e-6);
+    EXPECT_LT(comm().max(dk), 1e-4);
+}

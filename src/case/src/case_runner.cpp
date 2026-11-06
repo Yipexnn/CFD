@@ -11,6 +11,7 @@
 #include <limits>
 #include <sstream>
 #include <stdexcept>
+#include <tuple>
 
 namespace cfd::cases {
 
@@ -535,6 +536,16 @@ void CaseRunner::write_results(const std::filesystem::path& file) const {
         turbulence.emplace_back("rho", cells(compressible_->density().data(), 1));
         turbulence.emplace_back("T", cells(compressible_->temperature().data(), 1));
         turbulence.emplace_back("Mach", cells(compressible_->mach().data(), 1));
+        if (compressible_->settings().turbulence) {
+            std::vector<Scalar> nut = compressible_->eddy_viscosity();
+            const std::vector<Scalar> rho = compressible_->density();
+            for (std::size_t c = 0; c < nut.size(); ++c) {
+                nut[c] /= rho[c];
+            }
+            turbulence.emplace_back("k", cells(compressible_->k().data(), 1));
+            turbulence.emplace_back("omega", cells(compressible_->omega().data(), 1));
+            turbulence.emplace_back("nut", cells(nut.data(), 1));
+        }
     }
     if (multiphase_) {
         turbulence.emplace_back("alpha", cells(multiphase_->alpha().data(), 1));
@@ -593,6 +604,14 @@ void CaseRunner::write_checkpoint(const std::filesystem::path& file) const {
     const std::vector<Scalar> temperature =
         energy_ ? gather_cells(lm, energy_->temperature().data(), 1, ng) : std::vector<Scalar>{};
     std::vector<std::vector<Scalar>> turbulence;
+    const bool compressible_turbulence = compressible_ && compressible_->settings().turbulence;
+    if (compressible_turbulence) {
+        // k, omega, mu_t; no boundary-face values (mu_t = 0 on walls, owner value elsewhere).
+        turbulence.push_back(cells(compressible_->k().data(), 1));
+        turbulence.push_back(cells(compressible_->omega().data(), 1));
+        turbulence.push_back(cells(compressible_->eddy_viscosity().data(), 1));
+        turbulence.emplace_back(static_cast<std::size_t>(g.n_boundary_faces()), 0.0);
+    }
     if (sst_) {
         turbulence.push_back(cells(sst_->k().data(), 1));
         turbulence.push_back(cells(sst_->omega().data(), 1));
@@ -612,7 +631,7 @@ void CaseRunner::write_checkpoint(const std::filesystem::path& file) const {
     write_pod(out, nf);
     write_pod(out, static_cast<std::int64_t>(step_));
     write_pod(out, time_);
-    write_pod(out, static_cast<std::uint8_t>(sst_ ? 1 : 0));
+    write_pod(out, static_cast<std::uint8_t>(sst_ || compressible_turbulence ? 1 : 0));
     write_array(out, u.data(), u.size());
     write_array(out, p.data(), p.size());
     write_array(out, phi.data(), phi.size());
@@ -709,6 +728,9 @@ void CaseRunner::read_checkpoint(const std::filesystem::path& file) {
             q[c] = Eigen::Map<const fv::CompressibleSolver::Conserved>(flat.data() + 5 * c);
         }
         compressible_->set_conserved(std::move(q));
+        if (compressible_->settings().turbulence && !d.k.empty()) {
+            compressible_->set_turbulence(cells(d.k, 1), cells(d.omega, 1));
+        }
         step_ = d.step;
         time_ = d.time;
         return;
@@ -839,13 +861,20 @@ RunResult CaseRunner::run(const ProgressCallback& progress) {
                 r.p = compressible_->step(dt);
                 time_ += dt;
             }
-            if (residual0_ <= 0.0) {
-                residual0_ = std::max(r.p, 1e-300);
+            // Density residual relative to the largest of the first five iterations (a uniform
+            // initial state can have an almost vanishing first residual).
+            if (residual_count_ < 5) {
+                residual0_ = std::max({residual0_, r.p, 1e-300});
+                ++residual_count_;
             }
-            r.p /= residual0_; // density residual relative to the first iteration
+            r.p /= residual0_;
+            if (compressible_->settings().turbulence) {
+                std::tie(r.k, r.omega) = compressible_->turbulence_residuals();
+            }
             ++step_;
             result.final_residuals = r;
-            log << step_ << ',' << time_ << ",0,0,0," << r.p << ",0,0,0,0\n";
+            log << step_ << ',' << time_ << ",0,0,0," << r.p << ',' << r.k << ',' << r.omega
+                << ",0,0\n";
             log.flush();
             if (o.write_interval > 0 && step_ % o.write_interval == 0) {
                 std::ostringstream name;
@@ -856,7 +885,7 @@ RunResult CaseRunner::run(const ProgressCallback& progress) {
                 write_checkpoint(dir / "checkpoint.bin");
             }
             const bool keep_going = !progress || progress(step_, time_, r);
-            if (steady && r.p < s.tolerance) {
+            if (steady && r.max() < s.tolerance) {
                 result.converged = true;
                 break;
             }

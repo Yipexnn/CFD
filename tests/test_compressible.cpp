@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cfd/fv/compressible.hpp>
 #include <cfd/mesh/box_mesher.hpp>
 #include <cmath>
@@ -114,6 +115,173 @@ TEST(Compressible, FreeStreamPreserved) {
     EXPECT_NEAR(solver.mach()[0], 700.0 / std::sqrt(1.4 * 287.0 * 300.0), 1e-10);
 }
 
+// Implicit LU-SGS (with and without Krylov acceleration) converges to the explicit RK3
+// steady solution of an oblique shock reflecting from a slip wall, in far fewer iterations.
+TEST(Compressible, ImplicitMatchesExplicitSteadyShock) {
+    cfd::mesh::BoxSpec spec;
+    spec.nx = 30;
+    spec.ny = 15;
+    spec.nz = 1;
+    spec.max = Vec3(2.0, 1.0, 0.05);
+    const auto mesh = cfd::mesh::make_box_mesh(spec);
+    const Scalar t = 300.0;
+    const Scalar p = 1e5;
+    const Vec3 u = 2.5 * std::sqrt(1.4 * 287.0 * t) * Vec3(std::cos(0.2), -std::sin(0.2), 0.0);
+    BoundaryCondition inlet{FlowBoundary::VelocityInlet, u, p};
+    inlet.temperature = t;
+    const BoundaryCondition empty{FlowBoundary::Empty, Vec3::Zero(), 0.0};
+    const std::map<std::string, BoundaryCondition> bcs{
+        {"xmin", inlet},
+        {"ymax", inlet},
+        {"xmax", {FlowBoundary::PressureOutlet, Vec3::Zero(), 0.0}},
+        {"ymin", {FlowBoundary::Symmetry, Vec3::Zero(), 0.0}},
+        {"zmin", empty},
+        {"zmax", empty}};
+    auto run = [&](bool implicit, int krylov, Scalar cfl, int& iterations) {
+        CompressibleSettings s;
+        s.limiter = Limiter::Venkatakrishnan;
+        s.implicit = implicit;
+        s.krylov_dim = krylov;
+        s.cfl = cfl;
+        CompressibleSolver solver(mesh, bcs, s);
+        solver.set_uniform({p / (287.0 * t), u, p});
+        Scalar r0 = 0.0;
+        for (iterations = 0; iterations < 20000; ++iterations) {
+            const Scalar r = solver.steady_iteration();
+            r0 = iterations < 5 ? std::max(r0, r) : r0;
+            if (r < 1e-10 * r0) {
+                break;
+            }
+        }
+        return solver.pressure();
+    };
+    int n_explicit = 0;
+    int n_lusgs = 0;
+    int n_krylov = 0;
+    const auto p_explicit = run(false, 0, 0.8, n_explicit);
+    const auto p_lusgs = run(true, 0, 50.0, n_lusgs);
+    const auto p_krylov = run(true, 10, 1000.0, n_krylov);
+    EXPECT_LT(n_explicit, 20000);
+    EXPECT_LT(3 * n_lusgs, n_explicit);
+    EXPECT_LT(5 * n_krylov, n_explicit);
+    Scalar p_max = 0.0;
+    for (std::size_t c = 0; c < p_explicit.size(); ++c) {
+        EXPECT_NEAR(p_lusgs[c] / p_explicit[c], 1.0, 1e-6);
+        EXPECT_NEAR(p_krylov[c] / p_explicit[c], 1.0, 1e-6);
+        p_max = std::max(p_max, p_explicit[c]);
+    }
+    EXPECT_GT(p_max, 1.5 * p); // reflected shock present
+}
+
+// Compressible Couette flow at low Mach number: the implicit Newton-Krylov solver gives the
+// linear velocity profile on a strongly stretched wall grid (explicit stepping would need
+// ~1e7 iterations; low-Mach stiffness still costs some hundred implicit iterations).
+TEST(Compressible, KrylovCouetteOnStretchedGrid) {
+    cfd::mesh::BoxSpec spec;
+    spec.nx = 1;
+    spec.ny = 24;
+    spec.nz = 1;
+    spec.max = Vec3(0.01, 0.01, 0.01);
+    spec.grading = Vec3(1.0, 200.0, 1.0);
+    const auto mesh = cfd::mesh::make_box_mesh(spec);
+    CompressibleSettings s;
+    s.mu = 1.8e-5;
+    s.implicit = true;
+    s.krylov_dim = 20;
+    s.cfl = 1e5;
+    const BoundaryCondition empty{FlowBoundary::Empty, Vec3::Zero(), 0.0};
+    const Scalar u_wall = 10.0;
+    CompressibleSolver solver(mesh,
+                              {{"xmin", empty},
+                               {"xmax", empty},
+                               {"zmin", empty},
+                               {"zmax", empty},
+                               {"ymin", {FlowBoundary::Wall, Vec3::Zero(), 0.0}},
+                               {"ymax", {FlowBoundary::Wall, Vec3(u_wall, 0, 0), 0.0}}},
+                              s);
+    solver.set_uniform({1.16, Vec3::Zero(), 1e5});
+    auto error = [&] {
+        Scalar e = 0.0;
+        for (std::size_t c = 0; c < static_cast<std::size_t>(mesh.n_cells()); ++c) {
+            const Scalar y = mesh.cell_centres()[c].y();
+            e = std::max(e, std::abs(solver.state(c).u.x() - u_wall * y / 0.01));
+        }
+        return e / u_wall;
+    };
+    int it = 0;
+    for (; it < 1500 && error() > 5e-4; ++it) {
+        (void)solver.steady_iteration();
+    }
+    EXPECT_LT(it, 1500);
+    for (std::size_t c = 0; c < static_cast<std::size_t>(mesh.n_cells()); ++c) {
+        const Scalar y = mesh.cell_centres()[c].y();
+        EXPECT_NEAR(solver.state(c).u.x(), u_wall * y / 0.01, 1e-3 * u_wall) << "y = " << y;
+    }
+}
+
+// Turbulent flat plate (Mach 0.2, Re 5e6 per metre) with compressible k-omega SST on a
+// coarse wall-resolved grid: skin friction near the 1/5-power-law value.
+TEST(Compressible, TurbulentFlatPlateSkinFriction) {
+    cfd::mesh::BoxSpec spec;
+    spec.nx = 24;
+    spec.ny = 32;
+    spec.nz = 1;
+    spec.max = Vec3(2.0, 1.0, 0.01);
+    spec.grading = Vec3(8.0, 2.0e4, 1.0);
+    const auto mesh = cfd::mesh::make_box_mesh(spec);
+    const Scalar t = 300.0;
+    const Scalar p = 1e5;
+    const Scalar rho = p / (287.0 * t);
+    const Scalar u = 0.2 * std::sqrt(1.4 * 287.0 * t);
+    CompressibleSettings s;
+    s.mu = rho * u / 5e6;
+    s.implicit = true;
+    s.krylov_dim = 30;
+    s.cfl = 1000.0;
+    s.turbulence = true;
+    s.limiter = Limiter::Venkatakrishnan;
+    BoundaryCondition inlet{FlowBoundary::VelocityInlet, Vec3(u, 0, 0), p};
+    inlet.temperature = t;
+    inlet.turbulence_intensity = 0.001;
+    inlet.viscosity_ratio = 0.1;
+    const BoundaryCondition outlet{FlowBoundary::PressureOutlet, Vec3::Zero(), p};
+    const BoundaryCondition empty{FlowBoundary::Empty, Vec3::Zero(), 0.0};
+    CompressibleSolver solver(mesh,
+                              {{"xmin", inlet},
+                               {"xmax", outlet},
+                               {"ymax", outlet},
+                               {"ymin", {FlowBoundary::Wall, Vec3::Zero(), 0.0}},
+                               {"zmin", empty},
+                               {"zmax", empty}},
+                              s);
+    solver.set_uniform({rho, Vec3(u, 0, 0), p});
+    Scalar r0 = 0.0;
+    int it = 0;
+    for (; it < 3000; ++it) {
+        const Scalar r = solver.steady_iteration();
+        r0 = it < 5 ? std::max(r0, r) : r0;
+        if (r < 1e-6 * r0) {
+            break;
+        }
+    }
+    EXPECT_LT(it, 3000);
+    // Wall cell closest to x = 1.
+    Scalar best = 1e9;
+    Scalar cf = 0.0;
+    for (std::size_t c = 0; c < static_cast<std::size_t>(mesh.n_cells()); ++c) {
+        const Vec3& x = mesh.cell_centres()[c];
+        if (x.y() < 1e-4 && std::abs(x.x() - 1.0) < best) {
+            best = std::abs(x.x() - 1.0);
+            cf = s.mu * solver.state(c).u.x() / x.y() / (0.5 * rho * u * u);
+        }
+    }
+    const Scalar re_x = 5e6 * 1.0;
+    EXPECT_NEAR(cf / (0.0592 * std::pow(re_x, -0.2)), 1.0, 0.15) << "Cf = " << cf;
+    for (const Scalar m : solver.eddy_viscosity()) {
+        EXPECT_GE(m, 0.0);
+    }
+}
+
 } // namespace
 
 #include <cfd/case/case_config.hpp>
@@ -166,6 +334,63 @@ TEST(Compressible, CaseFileRunAndRestart) {
     }
     (void)second.run();
     EXPECT_NEAR(second.time(), 0.12, 1e-12);
+}
+
+// Turbulent, implicit compressible case from a case file: options round-trip, residuals of
+// k / omega, k in the results and an exact restart of the turbulence fields.
+TEST(Compressible, TurbulentImplicitCaseFile) {
+    const auto dir = std::filesystem::temp_directory_path() / "cfd_compressible_sst_case";
+    std::filesystem::remove_all(dir);
+    const std::string json = R"({
+        "name": "plate",
+        "mesh": {"type": "box", "cells": [12, 16, 1], "max": [2, 1, 0.01],
+                 "grading": [4, 2000, 1],
+                 "patch_types": {"xmin": "inlet", "xmax": "outlet", "ymin": "wall",
+                                 "ymax": "outlet", "zmin": "patch", "zmax": "patch"}},
+        "physics": {"turbulence": "kOmegaSST",
+                    "compressible": {"mu": 1.6e-5, "implicit": true, "krylov_dim": 10,
+                                     "cfl": 500, "limiter": "venkatakrishnan",
+                                     "prandtl_t": 0.85}},
+        "boundaries": {"xmin": {"type": "velocity_inlet", "velocity": [69.4, 0, 0],
+                                "pressure": 1e5, "temperature": 300,
+                                "turbulence_intensity": 0.01},
+                       "xmax": {"type": "pressure_outlet", "pressure": 1e5},
+                       "ymax": {"type": "pressure_outlet", "pressure": 1e5},
+                       "zmin": {"type": "empty"}, "zmax": {"type": "empty"}},
+        "initial": {"velocity": [69.4, 0, 0], "pressure": 1e5, "temperature": 300},
+        "solver": {"mode": "steady", "max_iterations": 20, "tolerance": 1e-12},
+        "output": {"checkpoint_interval": 20}
+    })";
+    cfd::cases::CaseConfig c = cfd::cases::parse_case(json, dir);
+    ASSERT_TRUE(c.compressible.has_value());
+    EXPECT_TRUE(c.compressible->turbulence);
+    const auto b = cfd::cases::parse_case(cfd::cases::case_to_json(c), dir);
+    ASSERT_TRUE(b.compressible.has_value());
+    EXPECT_TRUE(b.compressible->implicit);
+    EXPECT_EQ(b.compressible->krylov_dim, 10);
+    EXPECT_EQ(b.compressible->limiter, Limiter::Venkatakrishnan);
+    EXPECT_DOUBLE_EQ(b.compressible->prandtl_t, 0.85);
+    EXPECT_TRUE(b.compressible->turbulence);
+
+    cfd::cases::CaseRunner runner(c);
+    const auto result = runner.run();
+    EXPECT_GT(result.final_residuals.k, 0.0);
+    EXPECT_GT(result.final_residuals.omega, 0.0);
+    const auto* cs = runner.compressible();
+    ASSERT_NE(cs, nullptr);
+    Scalar mut_max = 0.0;
+    for (const Scalar m : cs->eddy_viscosity()) {
+        mut_max = std::max(mut_max, m);
+    }
+    EXPECT_GT(mut_max, 0.0);
+    EXPECT_TRUE(std::filesystem::exists(dir / "results" / "plate.vtu"));
+
+    c.restart = "results/checkpoint.bin";
+    cfd::cases::CaseRunner second(c);
+    for (std::size_t i = 0; i < cs->k().size(); ++i) {
+        EXPECT_DOUBLE_EQ(second.compressible()->k()[i], cs->k()[i]);
+        EXPECT_DOUBLE_EQ(second.compressible()->omega()[i], cs->omega()[i]);
+    }
 }
 
 } // namespace

@@ -342,7 +342,9 @@ CaseConfig parse_case(const std::string& json_text, const std::filesystem::path&
         if (p.contains("compressible")) {
             const json& cp = p["compressible"];
             const std::string cpp = "physics.compressible";
-            check_keys(cp, cpp, {"gamma", "r_gas", "mu", "prandtl", "cfl", "second_order"});
+            check_keys(cp, cpp,
+                       {"gamma", "r_gas", "mu", "prandtl", "cfl", "second_order", "limiter",
+                        "venkat_k", "implicit", "krylov_dim", "krylov_tolerance", "prandtl_t"});
             fv::CompressibleSettings cs;
             cs.gamma = get_number(cp, "gamma", cpp, cs.gamma);
             cs.r_gas = get_number(cp, "r_gas", cpp, cs.r_gas);
@@ -350,6 +352,24 @@ CaseConfig parse_case(const std::string& json_text, const std::filesystem::path&
             cs.prandtl = get_number(cp, "prandtl", cpp, cs.prandtl);
             cs.cfl = get_number(cp, "cfl", cpp, cs.cfl);
             cs.second_order = get_bool(cp, "second_order", cpp, cs.second_order);
+            const std::string limiter = get_string(cp, "limiter", cpp, "barthJespersen");
+            if (limiter == "barthJespersen") {
+                cs.limiter = fv::Limiter::BarthJespersen;
+            } else if (limiter == "venkatakrishnan") {
+                cs.limiter = fv::Limiter::Venkatakrishnan;
+            } else {
+                fail(cpp + ".limiter",
+                     "unknown limiter '" + limiter + "' (barthJespersen, venkatakrishnan)");
+            }
+            cs.venkat_k = get_number(cp, "venkat_k", cpp, cs.venkat_k);
+            cs.implicit = get_bool(cp, "implicit", cpp, cs.implicit);
+            cs.krylov_dim = static_cast<int>(get_number(cp, "krylov_dim", cpp, cs.krylov_dim));
+            cs.krylov_tolerance = get_number(cp, "krylov_tolerance", cpp, cs.krylov_tolerance);
+            cs.prandtl_t = get_number(cp, "prandtl_t", cpp, cs.prandtl_t);
+            if (cs.krylov_dim < 0 || !(cs.krylov_tolerance > 0.0) || !(cs.prandtl_t > 0.0) ||
+                !(cs.venkat_k > 0.0)) {
+                fail(cpp, "needs krylov_dim >= 0, krylov_tolerance, prandtl_t, venkat_k > 0");
+            }
             if (!(cs.gamma > 1.0 && cs.r_gas > 0.0 && cs.prandtl > 0.0 && cs.cfl > 0.0) ||
                 cs.mu < 0.0) {
                 fail(cpp, "needs gamma > 1, r_gas, prandtl, cfl > 0, mu >= 0");
@@ -654,10 +674,12 @@ CaseConfig parse_case(const std::string& json_text, const std::filesystem::path&
     }
 
     if (c.compressible) {
-        if (c.turbulence != TurbulenceKind::Laminar || c.energy || !c.solids.empty() ||
-            c.multiphase) {
-            fail("physics.compressible",
-                 "not combinable with turbulence, energy, solids or multiphase (yet)");
+        if (c.energy || !c.solids.empty() || c.multiphase) {
+            fail("physics.compressible", "not combinable with energy, solids or multiphase");
+        }
+        c.compressible->turbulence = c.turbulence == TurbulenceKind::KOmegaSst;
+        if (c.compressible->turbulence && !(c.compressible->mu > 0.0)) {
+            fail("physics.compressible", "turbulence needs mu > 0");
         }
     }
     if (c.multiphase) {
