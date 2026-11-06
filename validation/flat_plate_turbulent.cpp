@@ -131,8 +131,8 @@ int main(int argc, char** argv) {
     s.limiter = Limiter::Venkatakrishnan;
     BoundaryCondition inlet{FlowBoundary::VelocityInlet, Vec3(u_inf, 0, 0), p_inf};
     inlet.temperature = t_inf;
-    inlet.turbulence_intensity = 0.001;
-    inlet.viscosity_ratio = 0.1;
+    inlet.turbulence_intensity = 0.01; // turbulent from the leading edge (SST is bistable)
+    inlet.viscosity_ratio = 1.0;
     BoundaryCondition outlet{FlowBoundary::PressureOutlet, Vec3::Zero(), p_inf};
     CompressibleSolver solver(mesh,
                               {{"inlet", inlet},

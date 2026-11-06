@@ -18,7 +18,7 @@
   },
   "boundaries": {
     "xmin": { "type": "velocity_inlet", "velocity": [69.44, 0, 0], "pressure": 1e5,
-              "temperature": 300, "turbulence_intensity": 0.001, "viscosity_ratio": 0.1 },
+              "temperature": 300, "turbulence_intensity": 0.01, "viscosity_ratio": 1 },
     "xmax": { "type": "pressure_outlet", "pressure": 1e5 },
     "ymax": { "type": "pressure_outlet", "pressure": 1e5 },
     "zmin": { "type": "empty" }, "zmax": { "type": "empty" }

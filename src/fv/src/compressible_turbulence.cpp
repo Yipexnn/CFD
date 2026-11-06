@@ -218,9 +218,8 @@ void CompressibleSolver::correct_turbulence(Scalar dt) {
             gamma[f] = mu + w[f] * sigma_mut[p] + (1.0 - w[f]) * sigma_mut[n];
         }
         for (std::size_t f = nif; f < nf; ++f) {
-            gamma[f] =
-                mu +
-                (is_wall_face_[f - nif] != 0 ? 0.0 : sigma_mut[static_cast<std::size_t>(own[f])]);
+            const auto p = static_cast<std::size_t>(own[f]);
+            gamma[f] = is_wall_face_[f - nif] != 0 ? mu : mu + sigma_mut[p];
         }
         return gamma;
     };

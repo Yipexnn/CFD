@@ -242,8 +242,8 @@ TEST(Compressible, TurbulentFlatPlateSkinFriction) {
     s.limiter = Limiter::Venkatakrishnan;
     BoundaryCondition inlet{FlowBoundary::VelocityInlet, Vec3(u, 0, 0), p};
     inlet.temperature = t;
-    inlet.turbulence_intensity = 0.001;
-    inlet.viscosity_ratio = 0.1;
+    inlet.turbulence_intensity = 0.01; // enough free-stream turbulence for a turbulent
+    inlet.viscosity_ratio = 1.0;       // solution from the leading edge (SST is bistable)
     const BoundaryCondition outlet{FlowBoundary::PressureOutlet, Vec3::Zero(), p};
     const BoundaryCondition empty{FlowBoundary::Empty, Vec3::Zero(), 0.0};
     CompressibleSolver solver(mesh,
