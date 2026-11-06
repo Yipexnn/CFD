@@ -283,7 +283,7 @@ MeshConfig parse_mesh(const json& j, std::vector<SolidConfig>& solids) {
 fv::BoundaryCondition parse_boundary(const json& j, const std::string& path) {
     check_keys(j, path,
                {"type", "velocity", "pressure", "turbulence_intensity", "viscosity_ratio",
-                "profile", "profile_axes", "thermal", "alpha"});
+                "profile", "profile_axes", "thermal", "alpha", "temperature"});
     fv::BoundaryCondition bc;
     const std::string type = get_string(j, "type", path, "");
     if (type == "velocity_inlet") {
@@ -307,6 +307,7 @@ fv::BoundaryCondition parse_boundary(const json& j, const std::string& path) {
     bc.pressure = get_number(j, "pressure", path, 0.0);
     bc.turbulence_intensity = get_number(j, "turbulence_intensity", path, bc.turbulence_intensity);
     bc.viscosity_ratio = get_number(j, "viscosity_ratio", path, bc.viscosity_ratio);
+    bc.temperature = get_number(j, "temperature", path, bc.temperature);
     return bc;
 }
 
@@ -336,7 +337,25 @@ CaseConfig parse_case(const std::string& json_text, const std::filesystem::path&
     fv::FlowSettings& flow = c.solver.flow;
     if (root.contains("physics")) {
         const json& p = root["physics"];
-        check_keys(p, "physics", {"nu", "body_force", "turbulence", "energy", "multiphase"});
+        check_keys(p, "physics",
+                   {"nu", "body_force", "turbulence", "energy", "multiphase", "compressible"});
+        if (p.contains("compressible")) {
+            const json& cp = p["compressible"];
+            const std::string cpp = "physics.compressible";
+            check_keys(cp, cpp, {"gamma", "r_gas", "mu", "prandtl", "cfl", "second_order"});
+            fv::CompressibleSettings cs;
+            cs.gamma = get_number(cp, "gamma", cpp, cs.gamma);
+            cs.r_gas = get_number(cp, "r_gas", cpp, cs.r_gas);
+            cs.mu = get_number(cp, "mu", cpp, cs.mu);
+            cs.prandtl = get_number(cp, "prandtl", cpp, cs.prandtl);
+            cs.cfl = get_number(cp, "cfl", cpp, cs.cfl);
+            cs.second_order = get_bool(cp, "second_order", cpp, cs.second_order);
+            if (!(cs.gamma > 1.0 && cs.r_gas > 0.0 && cs.prandtl > 0.0 && cs.cfl > 0.0) ||
+                cs.mu < 0.0) {
+                fail(cpp, "needs gamma > 1, r_gas, prandtl, cfl > 0, mu >= 0");
+            }
+            c.compressible = cs;
+        }
         if (p.contains("multiphase")) {
             const json& mp = p["multiphase"];
             const std::string mpp = "physics.multiphase";
@@ -441,7 +460,29 @@ CaseConfig parse_case(const std::string& json_text, const std::filesystem::path&
 
     if (root.contains("initial")) {
         const json& i = root["initial"];
-        check_keys(i, "initial", {"velocity", "k", "omega", "temperature", "alpha_regions"});
+        check_keys(
+            i, "initial",
+            {"velocity", "k", "omega", "temperature", "alpha_regions", "pressure", "regions"});
+        c.initial.pressure = get_number(i, "pressure", "initial", c.initial.pressure);
+        c.initial.temperature_gas =
+            get_number(i, "temperature", "initial", c.initial.temperature_gas);
+        if (i.contains("regions")) {
+            if (!i["regions"].is_array()) {
+                fail("initial.regions", "expected an array");
+            }
+            for (std::size_t k = 0; k < i["regions"].size(); ++k) {
+                const json& r = i["regions"][k];
+                const std::string rp = "initial.regions[" + std::to_string(k) + "]";
+                check_keys(r, rp, {"min", "max", "velocity", "pressure", "temperature"});
+                InitialConfig::GasRegion g;
+                g.min = get_vec3(r, "min", rp, Vec3::Zero());
+                g.max = get_vec3(r, "max", rp, Vec3::Zero());
+                g.velocity = get_vec3(r, "velocity", rp, c.initial.velocity);
+                g.pressure = get_number(r, "pressure", rp, c.initial.pressure);
+                g.temperature = get_number(r, "temperature", rp, c.initial.temperature_gas);
+                c.initial.regions.push_back(g);
+            }
+        }
         if (i.contains("alpha_regions")) {
             if (!i["alpha_regions"].is_array()) {
                 fail("initial.alpha_regions", "expected an array of {min, max}");
@@ -604,11 +645,21 @@ CaseConfig parse_case(const std::string& json_text, const std::filesystem::path&
             }
         }
     }
+    if (c.compressible) {
+        c.initial.temperature.reset(); // the gas temperature (initial.temperature_gas)
+    }
     if (!c.energy && (!c.solids.empty() || !c.thermal.empty() || !c.heat.patches.empty() ||
                       c.initial.temperature)) {
         fail("physics.energy", "thermal settings need the energy equation (physics.energy)");
     }
 
+    if (c.compressible) {
+        if (c.turbulence != TurbulenceKind::Laminar || c.energy || !c.solids.empty() ||
+            c.multiphase) {
+            fail("physics.compressible",
+                 "not combinable with turbulence, energy, solids or multiphase (yet)");
+        }
+    }
     if (c.multiphase) {
         if (c.turbulence != TurbulenceKind::Laminar || c.energy || !c.solids.empty()) {
             fail("physics.multiphase", "not combinable with turbulence, energy or solids (yet)");

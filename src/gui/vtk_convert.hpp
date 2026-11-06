@@ -22,6 +22,8 @@ struct FieldSet {
     std::vector<Scalar> y_plus;
     std::vector<Scalar> t;     // temperature
     std::vector<Scalar> alpha; // volume fraction (multiphase)
+    std::vector<Scalar> rho;   // density (compressible)
+    std::vector<Scalar> mach;  // Mach number (compressible)
 };
 
 // Builds an unstructured grid with one VTK_POLYHEDRON per mesh cell (works for any

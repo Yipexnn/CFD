@@ -19,12 +19,18 @@ void SolverWorker::take_snapshot(const cases::CaseRunner& runner) {
     const auto full = [&](const std::vector<double>& v) {
         return runner.to_full_cells(v.data(), 1);
     };
-    const std::vector<double> u = runner.to_full_cells(runner.velocity().data()->data(), 3);
+    const std::vector<core::Vec3> u_cells = runner.velocity();
+    const std::vector<double> u = runner.to_full_cells(u_cells.data()->data(), 3);
     s.fields.u.resize(u.size() / 3);
     for (std::size_t c = 0; c < s.fields.u.size(); ++c) {
         s.fields.u[c] = core::Vec3(u[3 * c], u[3 * c + 1], u[3 * c + 2]);
     }
     s.fields.p = full(runner.pressure());
+    if (const auto* cs = runner.compressible()) {
+        s.fields.t = full(cs->temperature());
+        s.fields.rho = full(cs->density());
+        s.fields.mach = full(cs->mach());
+    }
     if (const auto* mp = runner.multiphase()) {
         s.fields.alpha = full(mp->alpha());
     }

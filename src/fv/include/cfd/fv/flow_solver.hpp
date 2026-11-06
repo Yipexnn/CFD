@@ -22,6 +22,7 @@ struct BoundaryCondition {
     // Inlet turbulence: k = 1.5 (I |U|)^2, nu_t / nu = viscosity_ratio.
     Scalar turbulence_intensity = 0.05;
     Scalar viscosity_ratio = 10.0;
+    Scalar temperature = 0.0; // compressible: inlet static temperature [K]
 };
 
 // LimitedLinearUpwind: linear upwind with a Barth-Jespersen gradient limiter (bounded,

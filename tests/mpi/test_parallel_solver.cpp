@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cfd/fv/compressible.hpp>
 #include <cfd/fv/energy.hpp>
 #include <cfd/fv/flow_solver.hpp>
 #include <cfd/fv/k_omega_sst.hpp>
@@ -266,6 +267,44 @@ TEST(ParallelSolver, DamBreakMatchesSerial) {
         da = std::max(da, std::abs(a_parallel[static_cast<std::size_t>(c)] - a_serial[g]));
     }
     EXPECT_LT(comm().max(da), 1e-3);
+}
+
+// Sod shock tube on several processes = serial.
+TEST(ParallelSolver, SodShockTubeMatchesSerial) {
+    cfd::mesh::BoxSpec spec;
+    spec.nx = 100;
+    spec.ny = 1;
+    spec.nz = 1;
+    spec.max = Vec3(1.0, 0.01, 0.01);
+    const auto global = cfd::mesh::make_box_mesh(spec);
+    const BoundaryCondition empty{FlowBoundary::Empty, Vec3::Zero(), 0.0};
+    const BoundaryCondition out{FlowBoundary::PressureOutlet, Vec3::Zero(), 0.0};
+    const std::map<std::string, BoundaryCondition> bcs{{"ymin", empty}, {"ymax", empty},
+                                                       {"zmin", empty}, {"zmax", empty},
+                                                       {"xmin", out},   {"xmax", out}};
+    auto solve = [&](const cfd::mesh::Mesh& mesh, const par::Halo* halo) {
+        CompressibleSolver solver(mesh, bcs, CompressibleSettings{}, halo);
+        std::vector<GasState> init(static_cast<std::size_t>(mesh.n_cells()));
+        for (std::size_t c = 0; c < init.size(); ++c) {
+            init[c] = mesh.cell_centres()[c].x() < 0.5 ? GasState{1.0, Vec3::Zero(), 1.0}
+                                                       : GasState{0.125, Vec3::Zero(), 0.1};
+        }
+        solver.set_state(init);
+        for (int n = 0; n < 100; ++n) {
+            (void)solver.step(1e-3);
+        }
+        return solver.density();
+    };
+    const auto serial = solve(global, nullptr);
+    const auto parts = par::partition_rcb(global, comm().size());
+    const auto lm = par::decompose(global, parts, comm().rank(), comm());
+    const auto parallel = solve(lm.mesh, &lm.halo);
+    Scalar d = 0.0;
+    for (cfd::core::Label c = 0; c < lm.halo.n_owned; ++c) {
+        const auto g = static_cast<std::size_t>(lm.global_cell[static_cast<std::size_t>(c)]);
+        d = std::max(d, std::abs(parallel[static_cast<std::size_t>(c)] - serial[g]));
+    }
+    EXPECT_LT(comm().max(d), 1e-12);
 }
 
 } // namespace

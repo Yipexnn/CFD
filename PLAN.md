@@ -38,7 +38,8 @@ Goal: realistic 3D CFD desktop application, running locally on Windows.
 7. ✅ **MPI** – domain decomposition (RCB, ghost cells), distributed solvers, parallel CLI and GUI runs → details: [docs/phase7.md](docs/phase7.md)
 8. ✅ **Heat transfer** – energy equation, Boussinesq buoyancy, thermal BCs, Nusselt output, de Vahl Davis validation → details: [docs/phase8.md](docs/phase8.md)
 9. ✅ **Transient benchmark, parallel AMG, conjugate heat transfer** – BDF2, Schäfer–Turek 2D-2, distributed AMG, solid zones → details: [docs/phase9.md](docs/phase9.md)
-10. **Later** – compressible, multiphase, GPU, geometry-module solid bodies
+10. ✅ **Geometry solids, multiphase, compressible** – solid bodies in Gmsh meshing, VOF two-phase flow (dam break), density-based compressible solver (Sod, oblique shock), Windows test checklist → details: [docs/phase10.md](docs/phase10.md)
+11. **Later** – GPU, multiphase/compressible turbulence, implicit compressible, contact angles
 
 ## Notes
 - Development environment is Linux; code stays portable. Windows build/test via CI; GUI tested on user's PC.

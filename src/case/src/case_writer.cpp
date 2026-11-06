@@ -161,6 +161,9 @@ ordered_json boundaries_json(const std::map<std::string, fv::BoundaryCondition>&
         b["pressure"] = bc.pressure;
         b["turbulence_intensity"] = bc.turbulence_intensity;
         b["viscosity_ratio"] = bc.viscosity_ratio;
+        if (bc.temperature > 0.0) {
+            b["temperature"] = bc.temperature;
+        }
         if (const auto it = profiles.find(name);
             it != profiles.end() && bc.kind == fv::FlowBoundary::VelocityInlet) {
             b["profile"] = "parabolic";
@@ -214,6 +217,12 @@ std::string case_to_json(const CaseConfig& config) {
         energy["rho_cp"] = e.rho_cp;
         physics["energy"] = energy;
     }
+    if (config.compressible) {
+        const fv::CompressibleSettings& cs = *config.compressible;
+        physics["compressible"] = {{"gamma", cs.gamma}, {"r_gas", cs.r_gas},
+                                   {"mu", cs.mu},       {"prandtl", cs.prandtl},
+                                   {"cfl", cs.cfl},     {"second_order", cs.second_order}};
+    }
     if (config.multiphase) {
         const fv::MultiphaseSettings& m = *config.multiphase;
         physics["multiphase"] = {{"rho1", m.rho1},
@@ -240,6 +249,21 @@ std::string case_to_json(const CaseConfig& config) {
     initial["omega"] = config.initial.omega;
     if (config.initial.temperature) {
         initial["temperature"] = *config.initial.temperature;
+    }
+    if (config.compressible) {
+        initial["pressure"] = config.initial.pressure;
+        initial["temperature"] = config.initial.temperature_gas;
+        ordered_json regions = ordered_json::array();
+        for (const auto& g : config.initial.regions) {
+            regions.push_back({{"min", vec3_json(g.min)},
+                               {"max", vec3_json(g.max)},
+                               {"velocity", vec3_json(g.velocity)},
+                               {"pressure", g.pressure},
+                               {"temperature", g.temperature}});
+        }
+        if (!regions.empty()) {
+            initial["regions"] = regions;
+        }
     }
     if (!config.initial.alpha_regions.empty()) {
         ordered_json regions = ordered_json::array();

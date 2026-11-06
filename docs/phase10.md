@@ -7,7 +7,7 @@ Order of work (each merged separately when CI is green):
 3. [x] Multiphase VOF: two immiscible incompressible fluids, MULES-like bounded interface
        capturing (or CICSAM), density/viscosity blending, surface tension (CSF); validation:
        dam break (Martin & Moyce), static droplet (pressure jump)
-4. [ ] Compressible: pressure-based (rhoPimple-like) solver, ideal gas, total energy;
+4. [x] Compressible: pressure-based (rhoPimple-like) solver, ideal gas, total energy;
        validation: Sod shock tube, supersonic flow (wedge / forward step)
 
 ## 2. Solid bodies (done)
@@ -38,4 +38,22 @@ Order of work (each merged separately when CI is green):
 - example `examples/dam_break.json`
 - later: momentum predictor / higher-order momentum convection, multiphase with turbulence,
   contact angle
+
+## 4. Compressible flow (done)
+- `fv::CompressibleSolver`: density-based (conservative variables), HLLC Riemann fluxes,
+  MUSCL reconstruction with Barth–Jespersen limiter and positivity fallback, laminar viscous
+  fluxes (no-slip adiabatic walls), explicit SSP-RK3 with global (transient) or local
+  (steady) time steps; serial and MPI (bitwise equal to serial)
+- case file `physics.compressible`, inlet `temperature`, initial `pressure` / `temperature` /
+  `regions`; output U, p, rho, T, Mach; checkpoint/restart; GUI fields rho, T, Mach
+- validation:
+  - Sod shock tube (`validation/sod_shock_tube`): L1 density error 0.0048 (100 cells),
+    0.0014 (400), 0.0008 (800); first order 0.021 (100)
+  - Mach 2.5 flow onto a 15° ramp (`validation/supersonic_ramp`): p2/p1 2.4677 vs 2.4675
+    (oblique-shock theory), shock angle 37.00° vs 36.94°
+- tests: Sod plateau values, exact mass/energy conservation, free-stream preservation (viscous,
+  graded mesh), case file + restart, MPI = serial
+- examples `examples/sod_shock_tube.json`, `examples/forward_step_mach3.json` (Woodward–Colella,
+  needs Gmsh)
+- later: implicit time stepping for low Mach / steady convergence, turbulence, real gas
 
