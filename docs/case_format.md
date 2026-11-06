@@ -92,8 +92,9 @@ other patches follow their names (`inlet*`, `outlet*`, `wall*`, `sym*`), otherwi
 ### Compressible (`physics.compressible`)
 
 Density-based solver for an ideal gas (HLLC fluxes, MUSCL reconstruction, explicit SSP-RK3;
-steady mode uses local time stepping). Not combinable with turbulence, energy, solids or
-multiphase yet.
+steady mode uses local time stepping, explicit or implicit). With `physics.turbulence`
+`"kOmegaSST"` the k-ω SST model is solved (density-weighted, wall-resolved: first cell
+y+ ≲ 1). Not combinable with energy, solids or multiphase.
 
 | Key | Type | Default | Description |
 |---|---|---|---|
@@ -102,7 +103,13 @@ multiphase yet.
 | `mu` | number | `0` | Dynamic viscosity [Pa s]; 0 = inviscid (Euler). |
 | `prandtl` | number | `0.72` | Heat conduction k = mu c_p / Pr. |
 | `cfl` | number | `0.5` | Courant number of the explicit time step. |
-| `second_order` | bool | `true` | MUSCL reconstruction (Barth–Jespersen limiter). |
+| `second_order` | bool | `true` | MUSCL reconstruction. |
+| `limiter` | string | `"barthJespersen"` | `"barthJespersen"` (strict; transient shocks) or `"venkatakrishnan"` (smooth; steady runs converge to machine accuracy). |
+| `venkat_k` | number | `0.1` | Venkatakrishnan threshold relative to the global range of each variable. |
+| `implicit` | bool | `false` | Steady runs: implicit pseudo-time iterations (LU-SGS) instead of explicit RK3; `cfl` typically 50–1000. |
+| `krylov_dim` | integer | `0` | Implicit: > 0 solves each step with Jacobian-free FGMRES (this Krylov dimension, LU-SGS preconditioned) – needed on stretched wall grids (viscous / turbulent). |
+| `krylov_tolerance` | number | `0.1` | Relative linear tolerance of the FGMRES solve. |
+| `prandtl_t` | number | `0.9` | Turbulent Prandtl number (heat flux c_p μ_t / Pr_t). |
 
 Boundaries: `velocity_inlet` = fixed state (`velocity`, `pressure`, `temperature`);
 `pressure_outlet` = static `pressure` if subsonic (`pressure` <= 0: extrapolate);
@@ -110,13 +117,18 @@ Boundaries: `velocity_inlet` = fixed state (`velocity`, `pressure`, `temperature
 Initial: `initial.velocity`, `initial.pressure`, `initial.temperature` and
 `initial.regions: [{"min", "max", "velocity", "pressure", "temperature"}]`.
 Transient runs use dt = min(`solver.dt`, CFL limit); steady runs stop when the density
-residual (relative to the first iteration) drops below `solver.tolerance`.
-Output fields: U, p, rho, T, Mach.
+residual (relative to the largest of the first five iterations) and the k / ω residuals drop
+below `solver.tolerance`. Turbulent inlets: `turbulence_intensity` and `viscosity_ratio`
+(μ_t / μ); use at least I ≈ 0.01, μ_t/μ ≈ 1 – with almost no free-stream turbulence SST can
+stay laminar.
+Output fields: U, p, rho, T, Mach (+ k, omega, nut).
 
 ### Multiphase (`physics.multiphase`)
 
 Two immiscible incompressible fluids (volume of fluid, transient only; not combinable with
-turbulence, energy or solids yet). `alpha` = volume fraction of phase 1.
+energy or solids yet). `alpha` = volume fraction of phase 1. `physics.turbulence`
+`"kOmegaSST"` solves the mixture k-ω SST model (volumetric flux, mixture viscosity; as
+interFoam). Walls take a static contact angle (`boundaries.<wall>.contact_angle`).
 
 | Key | Type | Default | Description |
 |---|---|---|---|
@@ -154,6 +166,7 @@ Object keyed by patch name (`xmin` ... `zmax`). Each entry is an object with:
 | `pressure` | number | `0` | Outlet kinematic pressure (p / rho). |
 | `turbulence_intensity` | number | `0.05` | Inlet turbulence: k = 1.5 (I \|U\|)^2. |
 | `viscosity_ratio` | number | `10` | Inlet turbulence: nu_t / nu. |
+| `contact_angle` | number | `90` | Multiphase walls: static contact angle [deg] between wall and interface, measured through phase 1. |
 | `profile` | string | `"uniform"` | Velocity inlet: `"parabolic"` = `velocity` * prod 4 s (1 - s) over the patch extent (peak = `velocity`). |
 | `thermal` | object | adiabatic (inlets: `t_ref`) | Energy equation: `{"type": "fixed" \| "heat_flux" \| "adiabatic", "value": T or q}`; q is kinematic (q/(ρ c_p), K·m/s, positive into the fluid). An entry with only `thermal` keeps the flow condition of the patch type. |
 | `profile_axes` | string | `"y"` | Axes of the parabolic profile, e.g. `"y"` (2D channel) or `"yz"` (rectangular duct). |

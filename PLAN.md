@@ -39,7 +39,8 @@ Goal: realistic 3D CFD desktop application, running locally on Windows.
 8. ✅ **Heat transfer** – energy equation, Boussinesq buoyancy, thermal BCs, Nusselt output, de Vahl Davis validation → details: [docs/phase8.md](docs/phase8.md)
 9. ✅ **Transient benchmark, parallel AMG, conjugate heat transfer** – BDF2, Schäfer–Turek 2D-2, distributed AMG, solid zones → details: [docs/phase9.md](docs/phase9.md)
 10. ✅ **Geometry solids, multiphase, compressible** – solid bodies in Gmsh meshing, VOF two-phase flow (dam break), density-based compressible solver (Sod, oblique shock), Windows test checklist → details: [docs/phase10.md](docs/phase10.md)
-11. **Later** – GPU, multiphase/compressible turbulence, implicit compressible, contact angles
+11. 🔄 **Implicit/turbulent compressible, multiphase turbulence, contact angles, GPU** – LU-SGS + Jacobian-free Newton–Krylov, Venkatakrishnan limiter, compressible k-ω SST (turbulent flat plate), mixture SST for VOF, static contact angle (droplet spreading); GPU (CUDA + OpenMP offload) pending → details: [docs/phase11.md](docs/phase11.md)
+12. **Later** – variable properties, radiation, 3D prism layers, parallel mesh reading
 
 ## Notes
 - Development environment is Linux; code stays portable. Windows build/test via CI; GUI tested on user's PC.
