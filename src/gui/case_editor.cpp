@@ -23,6 +23,7 @@
 #include <QTableWidgetItem>
 #include <QVBoxLayout>
 #include <algorithm>
+#include <cfd/gpu/krylov.hpp>
 #include <cstddef>
 #include <filesystem>
 #include <utility>
@@ -454,6 +455,16 @@ QWidget* CaseEditor::build_solver_tab() {
     form->addRow(QStringLiteral("Time scheme (transient)"), time_scheme_);
     watch(time_scheme_, false);
 
+    device_ = new QComboBox(page);
+    device_->addItem(QStringLiteral("CPU (AMG pressure solver)"));
+    device_->addItem(
+        QStringLiteral("GPU (%1)").arg(QString::fromStdString(gpu::device_description())));
+    device_->setToolTip(QStringLiteral(
+        "Linear solvers: GPU = Jacobi-preconditioned CG / BiCGStab on the accelerator of the "
+        "build (host threads without one); MPI runs always use the CPU solvers."));
+    form->addRow(QStringLiteral("Linear solvers"), device_);
+    watch(device_, false);
+
     non_orth_correctors_ = make_int(page, 0, 10, 0);
     piso_correctors_ = make_int(page, 1, 10, 2);
     form->addRow(QStringLiteral("Non-orthogonal correctors"), non_orth_correctors_);
@@ -544,6 +555,7 @@ void CaseEditor::set_config(const cases::CaseConfig& cfg) {
     alpha_p_->setValue(flow.alpha_p);
     convection_->setCurrentIndex(index_of(kConvections, flow.convection));
     time_scheme_->setCurrentIndex(flow.time_scheme == fv::TimeScheme::Backward ? 1 : 0);
+    device_->setCurrentIndex(flow.p_solver.type == fv::LinearSolverType::GpuCg ? 1 : 0);
     non_orth_correctors_->setValue(flow.n_non_orth_correctors);
     piso_correctors_->setValue(flow.n_piso_correctors);
 
@@ -634,6 +646,10 @@ cases::CaseConfig CaseEditor::config() const {
     flow.convection = kConvections[current_index(convection_)];
     flow.time_scheme =
         time_scheme_->currentIndex() == 1 ? fv::TimeScheme::Backward : fv::TimeScheme::Euler;
+    const bool gpu_solvers = device_->currentIndex() == 1;
+    flow.p_solver.type = gpu_solvers ? fv::LinearSolverType::GpuCg : fv::LinearSolverType::AmgCg;
+    flow.u_solver.type =
+        gpu_solvers ? fv::LinearSolverType::GpuBiCgStab : fv::LinearSolverType::BiCgStab;
     flow.n_non_orth_correctors = non_orth_correctors_->value();
     flow.n_piso_correctors = piso_correctors_->value();
 

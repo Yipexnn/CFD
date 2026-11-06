@@ -63,15 +63,32 @@ Shock: p2/p1 2.4674 vs theory 2.4675, angle 36.98° vs 36.94°.
   The contact line moves only through numerical slip (no-slip walls), so finer grids need
   longer to reach equilibrium.
 
-## GPU
-Pending: CUDA backend and OpenMP target offload for the linear solvers (optional build
-options, CPU fallback; tested manually on an NVIDIA GPU).
+## GPU linear solvers
+- Library `src/gpu` (`cfd::gpu::solve`): CSR matrix, Jacobi-preconditioned CG and BiCGStab;
+  all vectors stay on the device during a solve (matrix and right-hand side copied once)
+- Backends (`CFD_GPU_BACKEND`):
+  - `cuda`: own kernels (CSR SpMV, fused vector updates, block-reduced dot products with double
+    `atomicAdd`, compute capability ≥ 6.0); used when a CUDA device is present
+  - `openmp`: OpenMP `target teams distribute parallel for` kernels inside one `target data`
+    region (GCC nvptx / Clang offload flags via `CFD_OMP_OFFLOAD_FLAGS`)
+  - without a device (or `none`): the same kernels with host OpenMP threads
+- Use: `solver.device: "gpu"` → pressure `GpuCg`, momentum `GpuBiCgStab` (FlowSolver, VOF);
+  decomposed (MPI) systems fall back to the distributed CPU solvers; `cfd --info` prints the
+  backend and device; GUI: "Linear solvers" CPU / GPU
+- Trade-off: Jacobi-PCG needs many more iterations than AMG-PCG for the pressure (O(N^½) vs
+  ~constant), so the GPU pays off for large meshes (≳ 10⁵ cells); on the CPU keep AMG
+- CI (`gpu-backends` job): CUDA 12.6 container build (tests use the host fallback — no GPU on
+  the runners) and GCC 13 with real nvptx offload code; local: same lid-driven cavity result
+  with GPU and CPU solvers (1e-5)
+- Manual test on the user's NVIDIA GPU: `docs/windows_test.md` §5
 
 ## Definition of Done
 - [x] implicit compressible (LU-SGS, Newton–Krylov), Venkatakrishnan limiter
 - [x] compressible SST, turbulent flat plate validation, case files, checkpoint, GUI fields, MPI
 - [x] multiphase turbulence (mixture SST), case files, checkpoint, MPI
 - [x] static contact angle, droplet validation
-- [ ] GPU (CUDA + OpenMP offload)
+- [x] GPU linear solvers (CUDA + OpenMP offload, host fallback), CI build of both backends
+- [ ] GPU tested on real hardware (manual, Windows + NVIDIA)
+- [ ] later: GPU AMG preconditioner, GPU assembly
 - [ ] GUI: compressible / contact-angle settings in the case editor (values are kept from the
       case file)

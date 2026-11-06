@@ -15,7 +15,10 @@ using core::Scalar;
 
 // ConjugateGradient: incomplete-Cholesky CG; AmgCg: smoothed-aggregation AMG
 // preconditioned CG (symmetric matrices, e.g. pressure); BiCgStab: Jacobi-preconditioned.
-enum class LinearSolverType { ConjugateGradient, BiCgStab, AmgCg };
+// GpuCg / GpuBiCgStab: Jacobi-preconditioned Krylov solvers on the accelerator selected at
+// build time (cfd::gpu; host threads without one). Decomposed (MPI) matrices fall back to
+// AmgCg / BiCgStab.
+enum class LinearSolverType { ConjugateGradient, BiCgStab, AmgCg, GpuCg, GpuBiCgStab };
 
 struct LinearSolverSettings {
     LinearSolverType type = LinearSolverType::BiCgStab;

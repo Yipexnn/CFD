@@ -298,6 +298,7 @@ std::string case_to_json(const CaseConfig& config) {
     solver["alpha_u"] = flow.alpha_u;
     solver["alpha_p"] = flow.alpha_p;
     solver["convection"] = convection_name(flow.convection);
+    solver["device"] = flow.p_solver.type == fv::LinearSolverType::GpuCg ? "gpu" : "cpu";
     solver["non_orthogonal_correctors"] = flow.n_non_orth_correctors;
     solver["piso_correctors"] = flow.n_piso_correctors;
     solver["max_courant"] = s.max_courant;

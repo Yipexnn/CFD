@@ -133,6 +133,15 @@
         "CFD_BUILD_GUI": "ON",
         "CFD_ENABLE_MPI": "ON"
       }
+    },
+    {
+      "name": "windows-msvc-gui-cuda-release",
+      "displayName": "Windows MSVC Release + GUI + CUDA solvers",
+      "inherits": "windows-msvc-gui-release",
+      "cacheVariables": {
+        "CFD_GPU_BACKEND": "cuda",
+        "CMAKE_CUDA_ARCHITECTURES": "native"
+      }
     }
   ],
   "buildPresets": [
@@ -167,6 +176,10 @@
     {
       "name": "linux-system-gui",
       "configurePreset": "linux-system-gui"
+    },
+    {
+      "name": "windows-msvc-gui-cuda-release",
+      "configurePreset": "windows-msvc-gui-cuda-release"
     }
   ],
   "testPresets": [
@@ -215,6 +228,11 @@
     {
       "name": "linux-system-gui",
       "configurePreset": "linux-system-gui",
+      "inherits": "test-base"
+    },
+    {
+      "name": "windows-msvc-gui-cuda-release",
+      "configurePreset": "windows-msvc-gui-cuda-release",
       "inherits": "test-base"
     }
   ]

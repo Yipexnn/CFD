@@ -153,3 +153,42 @@ jobs:
         with:
           name: gui-screenshots
           path: gui-*.png
+
+  # Accelerated solver backends. The runners have no GPU: the CUDA build is compiled and its
+  # tests run the host fallback; the OpenMP backend is compiled with real nvptx offload code.
+  gpu-backends:
+    name: gpu-${{ matrix.backend }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - backend: cuda
+            container: nvidia/cuda:12.6.3-devel-ubuntu24.04
+            extra: -DCFD_GPU_BACKEND=cuda "-DCMAKE_CUDA_ARCHITECTURES=75;86"
+            packages: ""
+          - backend: openmp
+            container: ubuntu:24.04
+            extra: >-
+              -DCFD_GPU_BACKEND=openmp
+              "-DCFD_OMP_OFFLOAD_FLAGS=-foffload=nvptx-none -fcf-protection=none -fno-stack-protector"
+            packages: gcc-13-offload-nvptx
+    container: ${{ matrix.container }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            cmake ninja-build g++ libeigen3-dev nlohmann-json3-dev libgtest-dev ${{ matrix.packages }}
+      - name: Configure
+        run: >
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCFD_WARNINGS_AS_ERRORS=ON
+          -DCFD_BUILD_VALIDATION=OFF ${{ matrix.extra }}
+      - name: Build
+        run: cmake --build build --target cfd cfd_tests
+      - name: Test
+        run: |
+          ./build/src/app/cfd --info
+          ./build/tests/cfd_tests --gtest_filter='Gpu.*:LduMatrix.*:Amg.*'

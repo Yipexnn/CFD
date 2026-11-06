@@ -533,7 +533,7 @@ CaseConfig parse_case(const std::string& json_text, const std::filesystem::path&
         check_keys(s, path,
                    {"mode", "max_iterations", "tolerance", "dt", "end_time", "alpha_u", "alpha_p",
                     "convection", "non_orthogonal_correctors", "piso_correctors", "time_scheme",
-                    "max_courant"});
+                    "max_courant", "device"});
         c.solver.max_courant = get_number(s, "max_courant", path, c.solver.max_courant);
         const std::string mode = get_string(s, "mode", path, "steady");
         if (mode == "steady") {
@@ -547,6 +547,13 @@ CaseConfig parse_case(const std::string& json_text, const std::filesystem::path&
         c.solver.tolerance = get_number(s, "tolerance", path, c.solver.tolerance);
         c.solver.dt = get_number(s, "dt", path, c.solver.dt);
         c.solver.end_time = get_number(s, "end_time", path, c.solver.end_time);
+        const std::string device = get_string(s, "device", path, "cpu");
+        if (device == "gpu") {
+            flow.p_solver.type = fv::LinearSolverType::GpuCg;
+            flow.u_solver.type = fv::LinearSolverType::GpuBiCgStab;
+        } else if (device != "cpu") {
+            fail(path + ".device", "unknown device '" + device + "' (cpu, gpu)");
+        }
         flow.alpha_u = get_number(s, "alpha_u", path, flow.alpha_u);
         flow.alpha_p = get_number(s, "alpha_p", path, flow.alpha_p);
         const std::string conv = get_string(s, "convection", path, "linear_upwind");
@@ -691,6 +698,10 @@ CaseConfig parse_case(const std::string& json_text, const std::filesystem::path&
             fail("physics.multiphase", "not combinable with energy or solids (yet)");
         }
         c.multiphase->turbulence = c.turbulence == TurbulenceKind::KOmegaSst;
+        c.multiphase->p_solver.type = c.solver.flow.p_solver.type == fv::LinearSolverType::GpuCg
+                                          ? fv::LinearSolverType::GpuCg
+                                          : c.multiphase->p_solver.type;
+        c.multiphase->u_solver.type = c.solver.flow.u_solver.type;
         c.multiphase->sst.k_init = c.initial.k;
         c.multiphase->sst.omega_init = c.initial.omega;
         if (c.solver.mode != SolverMode::Transient) {
