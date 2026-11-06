@@ -23,6 +23,9 @@ struct BoundaryCondition {
     Scalar turbulence_intensity = 0.05;
     Scalar viscosity_ratio = 10.0;
     Scalar temperature = 0.0; // compressible: inlet static temperature [K]
+    // Multiphase walls: static contact angle [deg] between wall and interface, measured
+    // through phase 1 (alpha = 1).
+    Scalar contact_angle = 90.0;
 };
 
 // LimitedLinearUpwind: linear upwind with a Barth-Jespersen gradient limiter (bounded,

@@ -283,7 +283,7 @@ MeshConfig parse_mesh(const json& j, std::vector<SolidConfig>& solids) {
 fv::BoundaryCondition parse_boundary(const json& j, const std::string& path) {
     check_keys(j, path,
                {"type", "velocity", "pressure", "turbulence_intensity", "viscosity_ratio",
-                "profile", "profile_axes", "thermal", "alpha", "temperature"});
+                "profile", "profile_axes", "thermal", "alpha", "temperature", "contact_angle"});
     fv::BoundaryCondition bc;
     const std::string type = get_string(j, "type", path, "");
     if (type == "velocity_inlet") {
@@ -308,6 +308,10 @@ fv::BoundaryCondition parse_boundary(const json& j, const std::string& path) {
     bc.turbulence_intensity = get_number(j, "turbulence_intensity", path, bc.turbulence_intensity);
     bc.viscosity_ratio = get_number(j, "viscosity_ratio", path, bc.viscosity_ratio);
     bc.temperature = get_number(j, "temperature", path, bc.temperature);
+    bc.contact_angle = get_number(j, "contact_angle", path, bc.contact_angle);
+    if (!(bc.contact_angle > 0.0 && bc.contact_angle < 180.0)) {
+        fail(path + ".contact_angle", "must be between 0 and 180 degrees");
+    }
     return bc;
 }
 

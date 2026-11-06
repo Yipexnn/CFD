@@ -161,6 +161,9 @@ ordered_json boundaries_json(const std::map<std::string, fv::BoundaryCondition>&
         b["pressure"] = bc.pressure;
         b["turbulence_intensity"] = bc.turbulence_intensity;
         b["viscosity_ratio"] = bc.viscosity_ratio;
+        if (bc.contact_angle != 90.0) {
+            b["contact_angle"] = bc.contact_angle;
+        }
         if (bc.temperature > 0.0) {
             b["temperature"] = bc.temperature;
         }

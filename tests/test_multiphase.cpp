@@ -123,6 +123,63 @@ TEST(Multiphase, DamBreakConservesMassAndStaysBounded) {
     EXPECT_LT(solver.courant(5e-4), 1.0);
 }
 
+// A semicircular droplet on a wall relaxes towards a circular cap with the prescribed static
+// contact angle (wetting and non-wetting).
+TEST(Multiphase, DropletSpreadsToContactAngle) {
+    for (const Scalar theta_deg : {60.0, 120.0}) {
+        cfd::mesh::BoxSpec spec;
+        spec.nx = 48;
+        spec.ny = 20;
+        spec.nz = 1;
+        const Scalar dx = 6e-3 / spec.nx;
+        spec.min = Vec3(-3e-3, 0.0, 0.0);
+        spec.max = Vec3(3e-3, 2.5e-3, dx);
+        const auto mesh = cfd::mesh::make_box_mesh(spec);
+        MultiphaseSettings s;
+        s.nu1 = 1e-4;
+        s.sigma = 0.07;
+        BoundaryCondition wall{FlowBoundary::Wall, Vec3::Zero(), 0.0};
+        wall.contact_angle = theta_deg;
+        const BoundaryCondition empty{FlowBoundary::Empty, Vec3::Zero(), 0.0};
+        const BoundaryCondition slip{FlowBoundary::Symmetry, Vec3::Zero(), 0.0};
+        MultiphaseSolver solver(mesh,
+                                {{"ymin", wall},
+                                 {"xmin", slip},
+                                 {"xmax", slip},
+                                 {"ymax", {FlowBoundary::PressureOutlet, Vec3::Zero(), 0.0}},
+                                 {"zmin", empty},
+                                 {"zmax", empty}},
+                                s);
+        const Scalar r0 = 1e-3;
+        std::vector<Scalar> alpha(static_cast<std::size_t>(mesh.n_cells()));
+        for (std::size_t c = 0; c < alpha.size(); ++c) {
+            alpha[c] = mesh.cell_centres()[c].norm() < r0 ? 1.0 : 0.0;
+        }
+        solver.set_alpha(alpha);
+        for (int n = 0; n < 1200; ++n) {
+            (void)solver.step(2.4e-5);
+        }
+        Scalar area = 0.0;
+        Scalar h = 0.0;
+        for (std::size_t c = 0; c < alpha.size(); ++c) {
+            const Scalar a = solver.alpha()[c] * dx * 1.25e-4;
+            area += a;
+            const Scalar x = mesh.cell_centres()[c].x();
+            h += x > 0.0 && x < dx ? a / dx : 0.0;
+        }
+        auto cap_height = [&](Scalar th) {
+            return std::sqrt(area / (th - std::sin(th) * std::cos(th))) * (1.0 - std::cos(th));
+        };
+        Scalar lo = 0.05;
+        Scalar hi = 3.0;
+        for (int k = 0; k < 100; ++k) {
+            const Scalar mid = 0.5 * (lo + hi);
+            (cap_height(mid) < h ? lo : hi) = mid;
+        }
+        EXPECT_NEAR(0.5 * (lo + hi) * 180.0 / 3.141592653589793, theta_deg, 7.0);
+    }
+}
+
 } // namespace
 
 #include <cfd/case/case_config.hpp>

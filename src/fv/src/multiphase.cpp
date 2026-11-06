@@ -3,6 +3,7 @@
 #include <cfd/fv/multiphase.hpp>
 #include <cmath>
 #include <memory>
+#include <numbers>
 #include <stdexcept>
 #include <utility>
 
@@ -229,7 +230,59 @@ std::vector<Scalar> MultiphaseSolver::curvature_face() const {
     const auto nif = static_cast<std::size_t>(m.n_internal_faces());
     const auto& w = geo_.weights();
     const auto& sf = m.face_area_vectors();
-    const std::vector<Vec3> grad = alpha_gradient();
+    std::vector<Vec3> grad = alpha_gradient();
+    // Walls: interface normal turned to the contact angle (Brackbill et al.; as OpenFOAM's
+    // constantAlphaContactAngle): n_w . n = cos(theta) with the outward wall normal n_w,
+    // keeping the tangential direction of the computed normal. The wall value of alpha is made
+    // consistent (normal gradient |grad alpha| cos(theta)) and enters the wall-cell gradient;
+    // the corrected normal closes the curvature divergence. Without this the boundary normal
+    // flux is zero (90 degrees).
+    std::vector<Vec3> wall_normal(sf.size() - nif, Vec3::Zero());
+    std::vector<char> wetted(sf.size() - nif, 0);
+    for (std::size_t f = nif; f < sf.size(); ++f) {
+        const BoundaryCondition& c = bc(f - nif);
+        if (c.kind != FlowBoundary::Wall) {
+            continue;
+        }
+        const auto p = static_cast<std::size_t>(m.owner()[f]);
+        const Scalar gn = grad[p].norm();
+        if (gn * std::cbrt(m.cell_volumes()[p]) < 1e-6) {
+            continue; // no interface in the wall cell
+        }
+        const Vec3 nw = geo_.unit_normals()[f];
+        Vec3 nh = grad[p] / gn;
+        const Scalar theta = c.contact_angle * std::numbers::pi / 180.0;
+        const Scalar a12 = std::clamp(nh.dot(nw), -1.0, 1.0);
+        const Scalar det = 1.0 - a12 * a12;
+        if (det < 1e-12) {
+            nh = nw; // normal along the wall normal: no tangential direction to keep
+        } else {
+            const Scalar b1 = std::cos(theta);
+            const Scalar b2 = std::cos(std::acos(a12) - theta);
+            nh = (b1 - a12 * b2) / det * nw + (b2 - a12 * b1) / det * nh;
+            nh /= nh.norm() + 1e-300;
+        }
+        wall_normal[f - nif] = nh;
+        wetted[f - nif] = 1;
+    }
+    {
+        std::vector<Vec3> correction(grad.size(), Vec3::Zero());
+        for (std::size_t f = nif; f < sf.size(); ++f) {
+            if (wetted[f - nif] == 0) {
+                continue;
+            }
+            const auto p = static_cast<std::size_t>(m.owner()[f]);
+            const Scalar d =
+                (m.face_centres()[f] - m.cell_centres()[p]).dot(geo_.unit_normals()[f]);
+            const Scalar dalpha =
+                d * grad[p].norm() * wall_normal[f - nif].dot(geo_.unit_normals()[f]);
+            correction[p] += sf[f] * dalpha / m.cell_volumes()[p];
+        }
+        for (std::size_t c = 0; c < grad.size(); ++c) {
+            grad[c] += correction[c];
+        }
+        geo_.exchange(grad);
+    }
     std::vector<Scalar> kappa(alpha_.size(), 0.0);
     for (std::size_t f = 0; f < nif; ++f) {
         const auto p = static_cast<std::size_t>(m.owner()[f]);
@@ -239,6 +292,11 @@ std::vector<Scalar> MultiphaseSolver::curvature_face() const {
         const Scalar flux = (g / (g.norm() + delta)).dot(sf[f]);
         kappa[p] -= flux;
         kappa[n] += flux;
+    }
+    for (std::size_t f = nif; f < sf.size(); ++f) {
+        if (wetted[f - nif] != 0) {
+            kappa[static_cast<std::size_t>(m.owner()[f])] -= wall_normal[f - nif].dot(sf[f]);
+        }
     }
     for (std::size_t c = 0; c < kappa.size(); ++c) {
         kappa[c] /= m.cell_volumes()[c];
