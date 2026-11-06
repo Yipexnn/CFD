@@ -16,6 +16,15 @@ struct SstSettings {
     LinearSolverSettings solver{LinearSolverType::BiCgStab, 1e-10, 0.1, 1000};
 };
 
+// Flow state the model needs (any incompressible / mixture flow solver).
+struct SstFlowState {
+    const std::vector<Vec3>& u;
+    const std::vector<Scalar>& phi;          // volumetric face flux
+    std::vector<Eigen::Matrix3d> grad_u;     // grad_u(i, j) = du_i / dx_j per cell
+    std::vector<Vec3> boundary_velocity;     // per boundary face
+    const std::vector<Scalar>* nu = nullptr; // laminar nu per cell (nullptr: constant)
+};
+
 // k-omega SST (Menter et al. 2003, as in OpenFOAM's kOmegaSST) with automatic wall
 // treatment: omega in wall cells blends the viscous and log-layer solutions, k has zero
 // gradient at walls, and the wall-face nu_t / production follow the log law when
@@ -23,8 +32,13 @@ struct SstSettings {
 class KOmegaSst final : public TurbulenceModel {
 public:
     KOmegaSst(const FlowSolver& flow, SstSettings settings = {});
+    // Generic: boundary conditions per boundary face, reference laminar viscosity (inlet
+    // omega and initial values).
+    KOmegaSst(const FvGeometry& geo, const std::vector<BoundaryCondition>& boundary, Scalar nu,
+              SstSettings settings = {});
 
     std::pair<Scalar, Scalar> correct(const FlowSolver& flow, Scalar dt) override;
+    std::pair<Scalar, Scalar> correct(const SstFlowState& flow, Scalar dt);
 
     [[nodiscard]] const std::vector<Scalar>& nut() const override { return nut_; }
     [[nodiscard]] const std::vector<Scalar>& boundary_nut() const override { return nut_b_; }

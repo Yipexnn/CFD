@@ -1,3 +1,4 @@
+#include <cfd/fv/k_omega_sst.hpp>
 #include <cfd/fv/multiphase.hpp>
 #include <cfd/mesh/box_mesher.hpp>
 #include <cmath>
@@ -180,6 +181,66 @@ TEST(Multiphase, DropletSpreadsToContactAngle) {
     }
 }
 
+// Mixture k-omega SST: a VOF channel filled with one phase reproduces the single-phase
+// SIMPLE + SST solution (developing turbulent half channel with wall functions).
+TEST(Multiphase, TurbulentSinglePhaseChannelMatchesFlowSolver) {
+    cfd::mesh::BoxSpec spec;
+    spec.nx = 40;
+    spec.ny = 16;
+    spec.nz = 1;
+    spec.max = Vec3(10.0, 1.0, 0.1);
+    const auto mesh = cfd::mesh::make_box_mesh(spec);
+    const BoundaryCondition empty{FlowBoundary::Empty, Vec3::Zero(), 0.0};
+    const std::map<std::string, BoundaryCondition> bcs{
+        {"xmin", {FlowBoundary::VelocityInlet, Vec3(1, 0, 0), 0.0}},
+        {"xmax", {FlowBoundary::PressureOutlet, Vec3::Zero(), 0.0}},
+        {"ymin", {FlowBoundary::Wall, Vec3::Zero(), 0.0}},
+        {"ymax", {FlowBoundary::Symmetry, Vec3::Zero(), 0.0}},
+        {"zmin", empty},
+        {"zmax", empty}};
+    const Scalar nu = 1e-5;
+
+    FlowSettings fs;
+    fs.nu = nu;
+    fs.convection = ConvectionScheme::Upwind; // as the VOF momentum equation
+    FlowSolver flow(mesh, bcs, fs);
+    KOmegaSst sst(flow);
+    flow.set_turbulence_model(&sst);
+    flow.set_uniform_velocity(Vec3(1, 0, 0));
+    int it = 0;
+    for (; it < 5000 && flow.simple_iteration().max() > 1e-8; ++it) {
+    }
+    EXPECT_LT(it, 5000);
+
+    MultiphaseSettings ms;
+    ms.rho1 = 1.0;
+    ms.nu1 = nu;
+    ms.rho2 = 1.0;
+    ms.nu2 = nu;
+    ms.turbulence = true;
+    MultiphaseSolver vof(mesh, bcs, ms);
+    vof.set_alpha(std::vector<Scalar>(static_cast<std::size_t>(mesh.n_cells()), 1.0));
+    vof.set_inlet_alpha("xmin", 1.0);
+    vof.set_velocity(std::vector<Vec3>(static_cast<std::size_t>(mesh.n_cells()), Vec3(1, 0, 0)));
+    ASSERT_NE(vof.sst(), nullptr);
+    Residuals r;
+    for (int n = 0; n < 400; ++n) {
+        r = vof.step(0.2);
+    }
+    EXPECT_GT(r.k, 0.0);
+    Scalar du = 0.0;
+    Scalar dnut = 0.0;
+    Scalar nut_max = 0.0;
+    for (std::size_t c = 0; c < flow.velocity().size(); ++c) {
+        du = std::max(du, (vof.velocity()[c] - flow.velocity()[c]).norm());
+        dnut = std::max(dnut, std::abs(vof.sst()->nut()[c] - sst.nut()[c]));
+        nut_max = std::max(nut_max, sst.nut()[c]);
+    }
+    EXPECT_GT(nut_max, 10.0 * nu); // turbulent
+    EXPECT_LT(du, 0.02);
+    EXPECT_LT(dnut, 0.05 * nut_max);
+}
+
 } // namespace
 
 #include <cfd/case/case_config.hpp>
@@ -235,6 +296,29 @@ TEST(Multiphase, CaseFileRunAndRestart) {
     auto bad = std::string(kDamCase);
     bad.replace(bad.find("\"transient\""), 11, "\"steady\"   ");
     EXPECT_THROW((void)cfd::cases::parse_case(bad), std::runtime_error);
+}
+
+// Multiphase case with "turbulence": "kOmegaSST": mixture model active, k in the results
+// and restored from the checkpoint.
+TEST(Multiphase, TurbulentCaseFileRestart) {
+    const auto dir = std::filesystem::temp_directory_path() / "cfd_multiphase_sst_case";
+    std::filesystem::remove_all(dir);
+    std::string json = kDamCase;
+    const auto pos = json.find("\"physics\": {");
+    ASSERT_NE(pos, std::string::npos);
+    json.insert(pos + 12, "\"turbulence\": \"kOmegaSST\", ");
+    cfd::cases::CaseConfig c = cfd::cases::parse_case(json, dir);
+    ASSERT_TRUE(c.multiphase.has_value());
+    EXPECT_TRUE(c.multiphase->turbulence);
+    cfd::cases::CaseRunner runner(c);
+    ASSERT_NE(runner.sst(), nullptr);
+    const auto result = runner.run();
+    EXPECT_GT(result.final_residuals.k, 0.0);
+    c.restart = "results/checkpoint.bin";
+    cfd::cases::CaseRunner second(c);
+    for (std::size_t i = 0; i < runner.sst()->k().size(); ++i) {
+        EXPECT_DOUBLE_EQ(second.sst()->k()[i], runner.sst()->k()[i]);
+    }
 }
 
 } // namespace

@@ -1,7 +1,9 @@
 #pragma once
 
 #include <cfd/fv/flow_solver.hpp>
+#include <cfd/fv/k_omega_sst.hpp>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -18,6 +20,9 @@ struct MultiphaseSettings {
     Scalar compression = 1.0;        // interface compression coefficient c_alpha
     Scalar max_alpha_courant = 0.25; // alpha sub-cycling target
     int n_piso_correctors = 3;
+    // Mixture k-omega SST (kinematic, volumetric flux, mixture viscosity; as interFoam).
+    bool turbulence = false;
+    SstSettings sst{};
     LinearSolverSettings u_solver{LinearSolverType::BiCgStab, 1e-10, 0.01, 1000};
     LinearSolverSettings p_solver{LinearSolverType::AmgCg, 1e-10, 0.001, 500};
 };
@@ -32,8 +37,9 @@ public:
     MultiphaseSolver(const Mesh& mesh, std::map<std::string, BoundaryCondition> conditions,
                      MultiphaseSettings settings, const parallel::Halo* halo = nullptr);
 
-    // One time step (alpha sub-cycles, then PISO). Residuals: u (initial momentum residual),
-    // p (first pressure solve), continuity; t holds the alpha bound error (max |alpha - clip|).
+    // One time step (alpha sub-cycles, PISO, turbulence). Residuals: u (initial momentum
+    // residual), p (first pressure solve), continuity, k / omega; t holds the alpha bound error
+    // (max |alpha - clip|).
     Residuals step(Scalar dt);
 
     void set_alpha(std::vector<Scalar> alpha);
@@ -53,6 +59,9 @@ public:
     // Volume of phase 1 (global) and the maximum Courant number of the last step.
     [[nodiscard]] Scalar phase1_volume() const;
     [[nodiscard]] Scalar courant(Scalar dt) const;
+    // Turbulence model (nullptr unless settings.turbulence).
+    [[nodiscard]] const KOmegaSst* sst() const { return sst_.get(); }
+    [[nodiscard]] KOmegaSst* sst() { return sst_.get(); }
 
 private:
     [[nodiscard]] const BoundaryCondition& bc(std::size_t boundary_face) const;
@@ -62,6 +71,8 @@ private:
     void advance_alpha(Scalar dt);
     void solve_alpha(Scalar dt); // one explicit sub-step, updates rho_phi_ contribution
     [[nodiscard]] std::vector<Vec3> reconstruct(const std::vector<Scalar>& face_value) const;
+    [[nodiscard]] std::vector<Eigen::Matrix3d> velocity_gradient() const;
+    [[nodiscard]] std::vector<Scalar> mixture_nu() const;
 
     FvGeometry geo_;
     MultiphaseSettings settings_;
@@ -77,6 +88,7 @@ private:
     std::vector<Scalar> rho_phi_; // mass face flux
     std::vector<Scalar> gh_;      // g . x per cell
     std::vector<Scalar> ghf_;     // g . x per face
+    std::unique_ptr<KOmegaSst> sst_;
 };
 
 } // namespace cfd::fv

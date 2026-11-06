@@ -5,6 +5,7 @@
 #include <memory>
 #include <numbers>
 #include <stdexcept>
+#include <tuple>
 #include <utility>
 
 namespace cfd::fv {
@@ -75,6 +76,47 @@ MultiphaseSolver::MultiphaseSolver(const Mesh& mesh,
         ghf_[f] = settings_.gravity.dot(mesh.face_centres()[f]);
     }
     set_velocity(u_);
+    if (settings_.turbulence) {
+        std::vector<BoundaryCondition> bcs(nb);
+        for (std::size_t b = 0; b < nb; ++b) {
+            bcs[b] = bc(b);
+        }
+        sst_ = std::make_unique<KOmegaSst>(geo_, bcs, settings_.nu1, settings_.sst);
+    }
+}
+
+std::vector<Scalar> MultiphaseSolver::mixture_nu() const {
+    std::vector<Scalar> nu(alpha_.size());
+    for (std::size_t c = 0; c < nu.size(); ++c) {
+        const Scalar a = std::clamp(alpha_[c], 0.0, 1.0);
+        nu[c] = (a * settings_.rho1 * settings_.nu1 + (1.0 - a) * settings_.rho2 * settings_.nu2) /
+                (a * settings_.rho1 + (1.0 - a) * settings_.rho2);
+    }
+    return nu;
+}
+
+std::vector<Eigen::Matrix3d> MultiphaseSolver::velocity_gradient() const {
+    const Mesh& m = geo_.mesh();
+    const auto nif = static_cast<std::size_t>(m.n_internal_faces());
+    const auto& w = geo_.weights();
+    const auto& sf = m.face_area_vectors();
+    std::vector<Eigen::Matrix3d> grad(u_.size(), Eigen::Matrix3d::Zero());
+    for (std::size_t f = 0; f < sf.size(); ++f) {
+        const auto p = static_cast<std::size_t>(m.owner()[f]);
+        if (f < nif) {
+            const auto n = static_cast<std::size_t>(m.neighbour()[f]);
+            const Eigen::Matrix3d flux = (w[f] * u_[p] + (1.0 - w[f]) * u_[n]) * sf[f].transpose();
+            grad[p] += flux;
+            grad[n] -= flux;
+        } else {
+            grad[p] += boundary_velocity(f) * sf[f].transpose();
+        }
+    }
+    for (std::size_t c = 0; c < grad.size(); ++c) {
+        grad[c] /= m.cell_volumes()[c];
+    }
+    geo_.exchange(grad);
+    return grad;
 }
 
 const BoundaryCondition& MultiphaseSolver::bc(std::size_t boundary_face) const {
@@ -469,6 +511,9 @@ Residuals MultiphaseSolver::step(Scalar dt) {
     for (std::size_t c = 0; c < nc; ++c) {
         const Scalar a = std::clamp(alpha_[c], 0.0, 1.0);
         mu[c] = a * settings_.rho1 * settings_.nu1 + (1.0 - a) * settings_.rho2 * settings_.nu2;
+        if (sst_) {
+            mu[c] += rho[c] * sst_->nut()[c];
+        }
     }
 
     // Momentum matrix (upwind convection with the mass flux, implicit Euler).
@@ -489,7 +534,9 @@ Residuals MultiphaseSolver::step(Scalar dt) {
     for (std::size_t f = nif; f < nf; ++f) {
         const auto p = static_cast<std::size_t>(own[f]);
         const Scalar flux = rho_phi_[f];
-        const Scalar diff = mu[p] * dc[f];
+        const Scalar mu_b =
+            sst_ ? mu[p] + rho[p] * (sst_->boundary_nut()[f - nif] - sst_->nut()[p]) : mu[p];
+        const Scalar diff = mu_b * dc[f];
         const BoundaryCondition& c = bc(f - nif);
         switch (c.kind) {
         case FlowBoundary::VelocityInlet:
@@ -674,6 +721,16 @@ Residuals MultiphaseSolver::step(Scalar dt) {
     geo_.comm().sum(sums.data(), sums.size());
     res.continuity = sums[1] > 0.0 ? sums[0] / sums[1] : 0.0;
     res.t = geo_.comm().max(bound);
+    if (sst_) {
+        const std::vector<Scalar> nu = mixture_nu();
+        const auto nb = static_cast<std::size_t>(m.n_boundary_faces());
+        std::vector<Vec3> ub(nb);
+        for (std::size_t b = 0; b < nb; ++b) {
+            ub[b] = boundary_velocity(nif + b);
+        }
+        std::tie(res.k, res.omega) =
+            sst_->correct(SstFlowState{u_, phi_, velocity_gradient(), std::move(ub), &nu}, dt);
+    }
     return res;
 }
 

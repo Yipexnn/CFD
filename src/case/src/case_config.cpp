@@ -687,9 +687,12 @@ CaseConfig parse_case(const std::string& json_text, const std::filesystem::path&
         }
     }
     if (c.multiphase) {
-        if (c.turbulence != TurbulenceKind::Laminar || c.energy || !c.solids.empty()) {
-            fail("physics.multiphase", "not combinable with turbulence, energy or solids (yet)");
+        if (c.energy || !c.solids.empty()) {
+            fail("physics.multiphase", "not combinable with energy or solids (yet)");
         }
+        c.multiphase->turbulence = c.turbulence == TurbulenceKind::KOmegaSst;
+        c.multiphase->sst.k_init = c.initial.k;
+        c.multiphase->sst.omega_init = c.initial.omega;
         if (c.solver.mode != SolverMode::Transient) {
             fail("physics.multiphase", "needs solver.mode \"transient\"");
         }
