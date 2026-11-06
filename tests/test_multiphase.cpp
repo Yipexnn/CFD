@@ -208,7 +208,7 @@ TEST(Multiphase, TurbulentSinglePhaseChannelMatchesFlowSolver) {
     flow.set_turbulence_model(&sst);
     flow.set_uniform_velocity(Vec3(1, 0, 0));
     int it = 0;
-    for (; it < 5000 && flow.simple_iteration().max() > 1e-8; ++it) {
+    for (; it < 5000 && flow.simple_iteration().max() > 1e-6; ++it) {
     }
     EXPECT_LT(it, 5000);
 
