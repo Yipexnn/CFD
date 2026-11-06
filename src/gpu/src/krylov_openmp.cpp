@@ -15,12 +15,13 @@ namespace cfd::gpu::detail {
 
 // Host threads.
 namespace host {
+// Threads only for large vectors (thread start-up dominates small systems).
 #if defined(_OPENMP) && defined(_MSC_VER) && !defined(__clang__)
-#define CFD_LOOP __pragma(omp parallel for)
-#define CFD_LOOP_SUM(var) __pragma(omp parallel for reduction(+ : var))
+#define CFD_LOOP __pragma(omp parallel for if (n > 20000))
+#define CFD_LOOP_SUM(var) __pragma(omp parallel for reduction(+ : var) if (n > 20000))
 #elif defined(_OPENMP)
-#define CFD_LOOP _Pragma("omp parallel for")
-#define CFD_LOOP_SUM(var) _Pragma(CFD_STR(omp parallel for reduction(+ : var)))
+#define CFD_LOOP _Pragma("omp parallel for if (n > 20000)")
+#define CFD_LOOP_SUM(var) _Pragma(CFD_STR(omp parallel for reduction(+ : var) if (n > 20000)))
 #else
 #define CFD_LOOP
 #define CFD_LOOP_SUM(var)
@@ -77,7 +78,7 @@ bool openmp_device_available() {
 }
 
 SolveStats solve_openmp(const CsrView& m, const double* b, double* x, Method method,
-                        const SolveControl& control) {
+                        const SolveControl& control, bool allow_device) {
     const int n = m.n;
     const int nnz = m.nnz;
     std::vector<double> dinv_v(static_cast<std::size_t>(n), 1.0);
@@ -107,7 +108,7 @@ SolveStats solve_openmp(const CsrView& m, const double* b, double* x, Method met
                                w + 6 * n, w + 7 * n, control);
     };
 #if defined(CFD_GPU_OMP_TARGET) && defined(_OPENMP)
-    if (openmp_device_available()) {
+    if (allow_device && openmp_device_available()) {
 #pragma omp target data map(to : rp[0 : n + 1], ci[0 : nnz], va[0 : nnz], b[0 : n], dinv[0 : n])   \
     map(tofrom : x[0 : n]) map(alloc : w[0 : nw])
         { st = run(OffloadSpace{}); }
@@ -116,10 +117,25 @@ SolveStats solve_openmp(const CsrView& m, const double* b, double* x, Method met
     }
 #endif
     (void)nnz;
+    (void)allow_device;
     (void)nw;
     st = run(HostSpace{});
     st.on_device = false;
     return st;
 }
 
+SolveStats solve_openmp(const CsrView& m, const double* b, double* x, Method method,
+                        const SolveControl& control) {
+    return solve_openmp(m, b, x, method, control, true);
+}
+
 } // namespace cfd::gpu::detail
+
+namespace cfd::gpu {
+
+SolveStats solve_host(const CsrView& a, const double* b, double* x, Method method,
+                      const SolveControl& control) {
+    return detail::solve_openmp(a, b, x, method, control, false);
+}
+
+} // namespace cfd::gpu

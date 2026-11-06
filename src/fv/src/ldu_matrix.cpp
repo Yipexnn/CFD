@@ -218,12 +218,15 @@ LinearSolveResult LduMatrix::solve(std::vector<Scalar>& x, const LinearSolverSet
         xv = solver.solveWithGuess(b, EigenVector(xv));
         result.iterations = static_cast<int>(solver.iterations());
     } else {
-        Eigen::BiCGSTAB<SparseMatrix, Eigen::DiagonalPreconditioner<Scalar>> solver;
-        solver.setTolerance(eigen_tol);
-        solver.setMaxIterations(settings.max_iterations);
-        solver.compute(a);
-        xv = solver.solveWithGuess(b, EigenVector(xv));
-        result.iterations = static_cast<int>(solver.iterations());
+        // Own Jacobi-BiCGStab (host threads): identical behaviour with every Eigen version
+        // (Eigen 5 changed the BiCGSTAB restart logic).
+        a.makeCompressed();
+        const gpu::CsrView view{static_cast<int>(n), static_cast<int>(a.nonZeros()),
+                                a.outerIndexPtr(), a.innerIndexPtr(), a.valuePtr()};
+        const gpu::SolveStats st =
+            gpu::solve_host(view, source.data(), x.data(), gpu::Method::BiCgStab,
+                            {std::max(target, 1e-300), settings.max_iterations});
+        result.iterations = st.iterations;
     }
 
     result.final_residual = normalised_residual(x);

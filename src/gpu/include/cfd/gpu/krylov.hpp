@@ -35,6 +35,10 @@ struct SolveStats {
 SolveStats solve(const CsrView& a, const double* b, double* x, Method method,
                  const SolveControl& control);
 
+// Same algorithms, always on host threads (independent of the backend).
+SolveStats solve_host(const CsrView& a, const double* b, double* x, Method method,
+                      const SolveControl& control);
+
 // Backend compiled in: "cuda", "openmp-offload" or "host".
 [[nodiscard]] std::string backend_name();
 // True if the backend found an accelerator device at run time.
@@ -46,6 +50,8 @@ namespace detail {
 // Host / OpenMP-offload implementation (always available).
 SolveStats solve_openmp(const CsrView& a, const double* b, double* x, Method method,
                         const SolveControl& control);
+SolveStats solve_openmp(const CsrView& a, const double* b, double* x, Method method,
+                        const SolveControl& control, bool allow_device);
 bool openmp_device_available();
 #ifdef CFD_GPU_CUDA
 SolveStats solve_cuda(const CsrView& a, const double* b, double* x, Method method,
