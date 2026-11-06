@@ -1,9 +1,9 @@
 #include <cfd/case/case_config.hpp>
 #include <cfd/case/case_runner.hpp>
 #include <cfd/core/build_info.hpp>
-#include <cfd/gpu/krylov.hpp>
 #include <cfd/core/version.hpp>
 #include <cfd/fv/flow_solver.hpp>
+#include <cfd/gpu/krylov.hpp>
 #include <cfd/mesh/box_mesher.hpp>
 #include <cfd/mesh/gmsh_reader.hpp>
 #include <cfd/mesh/mesh.hpp>

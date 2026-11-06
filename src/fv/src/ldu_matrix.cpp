@@ -5,8 +5,8 @@
 #include <array>
 #include <cfd/fv/amg.hpp>
 #include <cfd/fv/ldu_matrix.hpp>
-#include <cfd/gpu/krylov.hpp>
 #include <cfd/fv/parallel_amg.hpp>
+#include <cfd/gpu/krylov.hpp>
 #include <cmath>
 #include <numeric>
 #include <stdexcept>
@@ -169,11 +169,10 @@ LinearSolveResult LduMatrix::solve(std::vector<Scalar>& x, const LinearSolverSet
         a.makeCompressed();
         const gpu::CsrView view{static_cast<int>(n), static_cast<int>(a.nonZeros()),
                                 a.outerIndexPtr(), a.innerIndexPtr(), a.valuePtr()};
-        const gpu::SolveStats st =
-            gpu::solve(view, source.data(), x.data(),
-                       settings.type == LinearSolverType::GpuCg ? gpu::Method::Cg
-                                                                : gpu::Method::BiCgStab,
-                       {std::max(target, 1e-300), settings.max_iterations});
+        const gpu::SolveStats st = gpu::solve(
+            view, source.data(), x.data(),
+            settings.type == LinearSolverType::GpuCg ? gpu::Method::Cg : gpu::Method::BiCgStab,
+            {std::max(target, 1e-300), settings.max_iterations});
         result.iterations = st.iterations;
     } else if (settings.type == LinearSolverType::AmgCg) {
         AmgPreconditioner local;
