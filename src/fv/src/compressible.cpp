@@ -382,8 +382,9 @@ std::vector<Conserved> CompressibleSolver::residual(const std::vector<Conserved>
             if (!wall) { // adiabatic walls
                 const Scalar tp = temperature(vp);
                 const Scalar tn = temperature(vn);
-                const Scalar k_heat = cp * (settings_.mu / settings_.prandtl +
-                                            (mu_eff - settings_.mu) / settings_.prandtl_t);
+                const Scalar mu_lam = face_mu(f);
+                const Scalar k_heat =
+                    cp * (mu_lam / settings_.prandtl + (mu_eff - mu_lam) / settings_.prandtl_t);
                 heat = k_heat * (tn - tp) / d.norm() * area; // along d (approx. normal)
             }
             Conserved fv = Conserved::Zero();
@@ -429,7 +430,7 @@ std::vector<Scalar> CompressibleSolver::local_dt(const std::vector<Conserved>& q
     const Scalar factor = std::max(4.0 / 3.0, settings_.gamma / settings_.prandtl);
     for (std::size_t c = 0; c < nc; ++c) {
         const Scalar v = m.cell_volumes()[c];
-        const Scalar mu = settings_.mu + (mut_.empty() ? 0.0 : mut_[c]);
+        const Scalar mu = cell_mu(c) + (mut_.empty() ? 0.0 : mut_[c]);
         const Scalar lv = mu > 0.0 ? factor * mu / s[c].rho * visc[c] / v : 0.0;
         dt[c] = settings_.cfl * v / (lambda[c] + 4.0 * lv);
     }

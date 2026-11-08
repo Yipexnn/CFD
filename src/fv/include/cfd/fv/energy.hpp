@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cfd/fv/flow_solver.hpp>
+#include <cfd/fv/properties.hpp>
 #include <cfd/fv/scalar_transport.hpp>
 #include <cfd/parallel/decomposition.hpp>
 #include <map>
@@ -18,7 +19,11 @@ struct ThermalBoundary {
 };
 
 struct EnergySettings {
-    Scalar alpha = 1e-3 / 0.71;  // thermal diffusivity [m^2/s] (nu / Pr)
+    Scalar alpha = 1e-3 / 0.71; // thermal diffusivity [m^2/s] (nu / Pr)
+    // Variable properties (non-constant laws override alpha / the flow's nu): fluid thermal
+    // diffusivity alpha(T), and nu(T) which the case runner applies to the flow solver.
+    PropertyLaw alpha_law{};
+    PropertyLaw nu_law{};
     Scalar prandtl_t = 0.85;     // turbulent Prandtl number
     Scalar beta = 0.0;           // thermal expansion coefficient [1/K]
     Scalar t_ref = 0.0;          // reference temperature [K]
@@ -76,6 +81,10 @@ public:
 
     // Temperature on the energy mesh (the full mesh for conjugate cases).
     [[nodiscard]] const std::vector<Scalar>& temperature() const { return t_; }
+    // Temperature on the flow (fluid) cells.
+    [[nodiscard]] std::vector<Scalar> fluid_temperature() const;
+    // nu(T) on the fluid cells (settings().nu_law); empty if the law is constant.
+    [[nodiscard]] std::vector<Scalar> fluid_viscosity() const;
     void set_temperature(std::vector<Scalar> t);
     void set_uniform_temperature(Scalar t);
     [[nodiscard]] const EnergySettings& settings() const { return settings_; }

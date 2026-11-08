@@ -196,6 +196,30 @@ bool is_body_solid(const CaseConfig& config, const std::string& name) {
                        [&](const geometry::Body& b) { return b.solid && b.patch == name; });
 }
 
+ordered_json property_law_json(const fv::PropertyLaw& law) {
+    ordered_json j = ordered_json::object();
+    switch (law.kind) {
+    case fv::PropertyLaw::Kind::Constant:
+        j["law"] = "constant";
+        break;
+    case fv::PropertyLaw::Kind::Polynomial:
+        j["law"] = "polynomial";
+        j["coefficients"] = law.coefficients;
+        break;
+    case fv::PropertyLaw::Kind::Sutherland:
+        j["law"] = "sutherland";
+        break;
+    case fv::PropertyLaw::Kind::PowerLaw:
+        j["law"] = "power";
+        break;
+    }
+    j["reference"] = law.reference;
+    j["t_ref"] = law.t_ref;
+    j["s"] = law.s;
+    j["exponent"] = law.exponent;
+    return j;
+}
+
 } // namespace
 
 std::string case_to_json(const CaseConfig& config) {
@@ -218,6 +242,16 @@ std::string case_to_json(const CaseConfig& config) {
         energy["t_ref"] = e.t_ref;
         energy["gravity"] = vec3_json(e.gravity);
         energy["rho_cp"] = e.rho_cp;
+        if (!e.nu_law.is_constant() || !e.alpha_law.is_constant()) {
+            ordered_json props = ordered_json::object();
+            if (!e.nu_law.is_constant()) {
+                props["nu"] = property_law_json(e.nu_law);
+            }
+            if (!e.alpha_law.is_constant()) {
+                props["alpha"] = property_law_json(e.alpha_law);
+            }
+            energy["properties"] = props;
+        }
         physics["energy"] = energy;
     }
     if (config.compressible) {
@@ -236,6 +270,9 @@ std::string case_to_json(const CaseConfig& config) {
                                    {"krylov_dim", cs.krylov_dim},
                                    {"krylov_tolerance", cs.krylov_tolerance},
                                    {"prandtl_t", cs.prandtl_t}};
+        if (!cs.mu_law.is_constant()) {
+            physics["compressible"]["viscosity"] = property_law_json(cs.mu_law);
+        }
     }
     if (config.multiphase) {
         const fv::MultiphaseSettings& m = *config.multiphase;

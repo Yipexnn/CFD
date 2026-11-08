@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cfd/fv/flow_solver.hpp>
+#include <cfd/fv/properties.hpp>
 #include <cfd/fv/scalar_transport.hpp>
 #include <map>
 #include <string>
@@ -13,9 +14,12 @@ namespace cfd::fv {
 enum class Limiter { BarthJespersen, Venkatakrishnan };
 
 struct CompressibleSettings {
-    Scalar gamma = 1.4;    // ratio of specific heats
-    Scalar r_gas = 287.0;  // specific gas constant [J/(kg K)]
-    Scalar mu = 0.0;       // dynamic viscosity [Pa s] (0: inviscid Euler equations)
+    Scalar gamma = 1.4;   // ratio of specific heats
+    Scalar r_gas = 287.0; // specific gas constant [J/(kg K)]
+    Scalar mu = 0.0;      // dynamic viscosity [Pa s] (0: inviscid Euler equations)
+    // Variable viscosity mu(T) (e.g. Sutherland; mu above stays the reference/constant value
+    // that switches viscous terms on). Heat conduction follows k = c_p mu(T) / Pr.
+    PropertyLaw mu_law{};
     Scalar prandtl = 0.72; // heat conduction k = mu c_p / Pr
     Scalar cfl = 0.5;
     bool second_order = true; // MUSCL reconstruction
@@ -105,6 +109,9 @@ private:
     Scalar lusgs_iteration();
     // Effective viscosity mu + mu_t on a face (laminar only on walls).
     [[nodiscard]] Scalar face_mut(std::size_t face) const;
+    // Laminar viscosity of a cell / face (mu_law of the cell temperatures).
+    [[nodiscard]] Scalar cell_mu(std::size_t cell) const;
+    [[nodiscard]] Scalar face_mu(std::size_t face) const;
     void init_turbulence();
     void correct_turbulence(Scalar dt);
 

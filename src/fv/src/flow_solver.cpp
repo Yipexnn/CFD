@@ -299,7 +299,8 @@ PatchForce FlowSolver::patch_force(const std::string& patch) const {
                                : p_[o] + grad_p[o].dot(cf[f] - cc[o]);
         force.pressure += p_f * sf[f];
         if (c.kind == FlowBoundary::Wall || c.kind == FlowBoundary::VelocityInlet) {
-            const Scalar nu_f = settings_.nu + (nut_b != nullptr ? (*nut_b)[f - nif] : 0.0);
+            const Scalar nu_lam = cell_nu_.empty() ? settings_.nu : cell_nu_[o];
+            const Scalar nu_f = nu_lam + (nut_b != nullptr ? (*nut_b)[f - nif] : 0.0);
             force.viscous += nu_f * dc[f] * (u_[o] - fixed_velocity_[f - nif]);
         }
     }
@@ -403,12 +404,18 @@ void FlowSolver::assemble_momentum(MomentumSystem& sys, Scalar dt, bool relax) c
     const std::vector<Scalar>* nut = turbulence_ != nullptr ? &turbulence_->nut() : nullptr;
     const std::vector<Scalar>* nut_b =
         turbulence_ != nullptr ? &turbulence_->boundary_nut() : nullptr;
+    const bool variable_nu = !cell_nu_.empty();
+    // Laminar viscosity in a cell (constant or the field from set_cell_viscosity).
+    auto nu_c = [&](std::size_t c) { return variable_nu ? cell_nu_[c] : nu; };
+    const bool transpose_term = nut != nullptr || variable_nu;
 
     for (std::size_t f = 0; f < nif; ++f) {
         const auto p = static_cast<std::size_t>(own[f]);
         const auto n = static_cast<std::size_t>(nei[f]);
         const Scalar flux = phi_[f];
-        const Scalar nu_f = nut != nullptr ? nu + w[f] * (*nut)[p] + (1.0 - w[f]) * (*nut)[n] : nu;
+        const Scalar nu_lam = w[f] * nu_c(p) + (1.0 - w[f]) * nu_c(n);
+        const Scalar nu_f =
+            nut != nullptr ? nu_lam + w[f] * (*nut)[p] + (1.0 - w[f]) * (*nut)[n] : nu_lam;
         const Scalar diff = nu_f * dc[f];
 
         a.upper[f] = std::min(flux, 0.0) - diff;
@@ -425,7 +432,7 @@ void FlowSolver::assemble_momentum(MomentumSystem& sys, Scalar dt, bool relax) c
         }
         const Mat3 grad_f = w[f] * grad[p] + (1.0 - w[f]) * grad[n];
         explicit_flux += nu_f * (grad_f.transpose() * k[f]);
-        if (nut != nullptr) {
+        if (transpose_term) {
             // div(nu_eff (grad U)^T): vanishes for constant viscosity.
             explicit_flux += nu_f * (grad_f * sf[f]);
         }
@@ -437,10 +444,10 @@ void FlowSolver::assemble_momentum(MomentumSystem& sys, Scalar dt, bool relax) c
     for (std::size_t f = nif; f < nf; ++f) {
         const auto p = static_cast<std::size_t>(own[f]);
         const Scalar flux = phi_[f];
-        const Scalar nu_f = nut_b != nullptr ? nu + (*nut_b)[f - nif] : nu;
+        const Scalar nu_f = nut_b != nullptr ? nu_c(p) + (*nut_b)[f - nif] : nu_c(p);
         const Scalar diff = nu_f * dc[f];
         const BoundaryCondition& c = bc(static_cast<Label>(f - nif));
-        if (nut != nullptr && c.kind != FlowBoundary::Empty) {
+        if (transpose_term && c.kind != FlowBoundary::Empty) {
             sys.source[p] += nu_f * (grad[p] * sf[f]);
         }
         switch (c.kind) {
@@ -725,6 +732,14 @@ Residuals FlowSolver::piso_step(Scalar dt) {
     dt_old_ = dt;
     history_.push_back(res);
     return res;
+}
+
+void FlowSolver::set_cell_viscosity(std::vector<Scalar> nu) {
+    if (!nu.empty() && nu.size() != u_.size()) {
+        throw std::invalid_argument("FlowSolver::set_cell_viscosity: size mismatch");
+    }
+    cell_nu_ = std::move(nu);
+    geo_.exchange(cell_nu_);
 }
 
 } // namespace cfd::fv

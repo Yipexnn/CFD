@@ -395,6 +395,9 @@ void CaseRunner::setup() {
     if (config_.restart) {
         read_checkpoint(config_.resolve(*config_.restart));
     }
+    if (energy_ && !energy_->settings().nu_law.is_constant()) {
+        flow_->set_cell_viscosity(energy_->fluid_viscosity());
+    }
 }
 
 CaseRunner::~CaseRunner() = default;
@@ -950,6 +953,9 @@ RunResult CaseRunner::run(const ProgressCallback& progress) {
         }
         if (energy_) {
             r.t = energy_->correct(*flow_, steady ? 0.0 : s.dt);
+            if (!energy_->settings().nu_law.is_constant()) {
+                flow_->set_cell_viscosity(energy_->fluid_viscosity());
+            }
         }
         ++step_;
         result.final_residuals = r;

@@ -142,15 +142,20 @@ std::vector<Scalar> EnergyEquation::face_diffusivity(const FlowSolver& flow) con
             }
         }
     }
+    const bool variable = !settings_.alpha_law.is_constant();
+    auto alpha_c = [&](std::size_t c) {
+        return variable ? settings_.alpha_law(t_[c]) : settings_.alpha;
+    };
     auto cell_k = [&](std::size_t c) {
-        return solid_[c] != 0 ? solid_k_[c] : settings_.alpha + nut[c] / pr_t;
+        return solid_[c] != 0 ? solid_k_[c] : alpha_c(c) + nut[c] / pr_t;
     };
     std::vector<Scalar> gamma(nf, settings_.alpha);
     for (std::size_t f = 0; f < nif; ++f) {
         const auto p = static_cast<std::size_t>(m.owner()[f]);
         const auto n = static_cast<std::size_t>(m.neighbour()[f]);
         if (solid_[p] == 0 && solid_[n] == 0) {
-            gamma[f] = settings_.alpha + (w[f] * nut[p] + (1.0 - w[f]) * nut[n]) / pr_t;
+            gamma[f] = w[f] * alpha_c(p) + (1.0 - w[f]) * alpha_c(n) +
+                       (w[f] * nut[p] + (1.0 - w[f]) * nut[n]) / pr_t;
         } else { // harmonic interpolation across material jumps
             const Scalar kp = cell_k(p);
             const Scalar kn = cell_k(n);
@@ -159,7 +164,7 @@ std::vector<Scalar> EnergyEquation::face_diffusivity(const FlowSolver& flow) con
     }
     for (std::size_t f = nif; f < nf; ++f) {
         const auto p = static_cast<std::size_t>(m.owner()[f]);
-        gamma[f] = solid_[p] != 0 ? solid_k_[p] : settings_.alpha + nut_b[f - nif] / pr_t;
+        gamma[f] = solid_[p] != 0 ? solid_k_[p] : alpha_c(p) + nut_b[f - nif] / pr_t;
     }
     return gamma;
 }
@@ -218,6 +223,29 @@ std::vector<Vec3> EnergyEquation::buoyancy() const {
         }
     }
     return a;
+}
+
+std::vector<Scalar> EnergyEquation::fluid_temperature() const {
+    if (conjugate_ == nullptr) {
+        return t_;
+    }
+    std::vector<Scalar> t;
+    t.reserve(conjugate_->fluid->parent_cell.size());
+    for (const Label c : conjugate_->fluid->parent_cell) {
+        t.push_back(t_[static_cast<std::size_t>(c)]);
+    }
+    return t;
+}
+
+std::vector<Scalar> EnergyEquation::fluid_viscosity() const {
+    if (settings_.nu_law.is_constant()) {
+        return {};
+    }
+    std::vector<Scalar> nu = fluid_temperature();
+    for (Scalar& v : nu) {
+        v = settings_.nu_law(v);
+    }
+    return nu;
 }
 
 std::vector<Scalar> EnergyEquation::boundary_temperature() const {
