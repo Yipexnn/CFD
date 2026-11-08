@@ -330,7 +330,10 @@ fv::BoundaryCondition parse_boundary(const json& j, const std::string& path) {
                 "profile", "profile_axes", "thermal", "alpha", "temperature", "contact_angle"});
     fv::BoundaryCondition bc;
     const std::string type = get_string(j, "type", path, "");
-    if (type == "velocity_inlet") {
+    if (type == "far_field") { // compressible: characteristic free-stream boundary
+        bc.kind = fv::FlowBoundary::VelocityInlet;
+        bc.far_field = true;
+    } else if (type == "velocity_inlet") {
         bc.kind = fv::FlowBoundary::VelocityInlet;
         if (!j.contains("velocity")) {
             fail(path + ".velocity", "required for velocity_inlet");
@@ -344,8 +347,9 @@ fv::BoundaryCondition parse_boundary(const json& j, const std::string& path) {
     } else if (type == "empty") {
         bc.kind = fv::FlowBoundary::Empty;
     } else {
-        fail(path + ".type", "unknown boundary type '" + type +
-                                 "' (velocity_inlet, wall, pressure_outlet, symmetry, empty)");
+        fail(path + ".type",
+             "unknown boundary type '" + type +
+                 "' (velocity_inlet, far_field, wall, pressure_outlet, symmetry, empty)");
     }
     bc.velocity = get_vec3(j, "velocity", path, Vec3::Zero());
     bc.pressure = get_number(j, "pressure", path, 0.0);
@@ -786,6 +790,13 @@ CaseConfig parse_case(const std::string& json_text, const std::filesystem::path&
         fail("physics.energy", "thermal settings need the energy equation (physics.energy)");
     }
 
+    if (!c.compressible) {
+        for (const auto& [name, bc] : c.boundaries) {
+            if (bc.far_field) {
+                fail("boundaries." + name, "far_field needs physics.compressible");
+            }
+        }
+    }
     if (c.compressible) {
         if (c.energy || !c.solids.empty() || c.multiphase) {
             fail("physics.compressible", "not combinable with energy, solids or multiphase");
