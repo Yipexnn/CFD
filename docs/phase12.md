@@ -38,6 +38,11 @@
 | mesh | cells | Cd | reference |
 |---|---|---|---|
 | size_near 0.1 | 22 696 | 1.182 | 1.09 (Schiller–Naumann), 1.087 (Johnson & Patel) |
+| size_near 0.06 | 37 181 | 1.187 | |
+
+  Cd is ~9 % high and does not change with the near-body size, so the error is elsewhere
+  (wake / far-field resolution with `size` 1.0, pressure residual plateau ~1e-5 of the
+  limited scheme); a refinement study of the wake is still open.
 
 ## Definition of Done
 - [x] variable properties (incompressible + energy, compressible), tests
