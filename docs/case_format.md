@@ -98,8 +98,9 @@ other patches follow their names (`inlet*`, `outlet*`, `wall*`, `sym*`), otherwi
 power: ref (T/t_ref)^exponent. Compressible: `physics.compressible.viscosity` (same syntax,
 e.g. `{"law": "sutherland", "reference": 1.716e-5}`; conduction k = c_p μ(T)/Pr).
 
-`physics.energy.radiation` (P1 model, grey medium; temperatures in K, `heat.rho_cp` must be the
-physical ρc_p [J/(m³K)]; not with solid regions):
+`physics.energy.radiation` (P1 model, grey medium; temperatures in K, `physics.energy.rho_cp`
+must be the physical fluid ρc_p [J/(m³K)]; with solid regions the fluid/solid interfaces are
+opaque walls):
 
 | Key | Default | Description |
 |---|---|---|
@@ -229,7 +230,7 @@ Patches without an entry get a default from their patch type:
 | `non_orthogonal_correctors` | int | `0` | Must be >= 0. |
 | `piso_correctors` | int | `2` | Must be >= 1. |
 | `max_courant` | number | `0` | Transient multiphase: adapt the time step (at most `dt`) to this Courant number; `0` = fixed `dt`. |
-| `device` | string | `"cpu"` | `"gpu"`: pressure and momentum linear systems with Jacobi-preconditioned CG / BiCGStab on the accelerator of the build (CUDA, OpenMP offload; host threads without a device). MPI runs use the CPU solvers. |
+| `device` | string | `"cpu"` | `"gpu"`: pressure and momentum linear systems with AMG-preconditioned CG (pressure) / Jacobi BiCGStab on the accelerator of the build (CUDA, OpenMP offload; host threads without a device). MPI runs use the CPU solvers. |
 | `time_scheme` | string | `"euler"` | Transient: `"euler"` (1st order) or `"backward"` (BDF2, 2nd order). |
 
 `dt`, `end_time`, `alpha_*` and the corrector counts are validated in both modes.

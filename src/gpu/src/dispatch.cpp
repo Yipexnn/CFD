@@ -12,6 +12,21 @@ SolveStats solve(const CsrView& a, const double* b, double* x, Method method,
     return detail::solve_openmp(a, b, x, method, control);
 }
 
+SolveStats solve_amg_cg(const AmgView& amg, const double* b, double* x,
+                        const SolveControl& control) {
+#ifdef CFD_GPU_CUDA
+    if (detail::cuda_device_available()) {
+        return detail::solve_amg_cuda(amg, b, x, control);
+    }
+#endif
+    return detail::solve_amg_openmp(amg, b, x, control, true);
+}
+
+SolveStats solve_amg_cg_host(const AmgView& amg, const double* b, double* x,
+                             const SolveControl& control) {
+    return detail::solve_amg_openmp(amg, b, x, control, false);
+}
+
 std::string backend_name() {
 #if defined(CFD_GPU_CUDA)
     return "cuda";

@@ -32,6 +32,15 @@ struct LocalMesh {
 [[nodiscard]] LocalMesh decompose(const mesh::Mesh& global, const std::vector<int>& parts, int part,
                                   const Comm& comm = Comm::world());
 
+// Serialised local mesh (for sending to another process) and its inverse; the halo uses comm.
+[[nodiscard]] std::vector<char> pack_local_mesh(const LocalMesh& lm);
+[[nodiscard]] LocalMesh unpack_local_mesh(const std::vector<char>& bytes, const Comm& comm);
+
+// Parallel mesh distribution: only the root process holds (reads / generates) the global
+// mesh; it partitions it (RCB), builds every local mesh and sends it to its process. Other
+// processes pass nullptr and receive only their part. Collective.
+[[nodiscard]] LocalMesh distribute(const mesh::Mesh* global, const Comm& comm = Comm::world());
+
 // Cells of one zone of a (possibly decomposed) mesh as a mesh of their own, e.g. the fluid
 // region of a conjugate heat transfer case. Faces towards cells of another zone form one
 // patch per zone, named after it (type wall), appended after the parent patches. Cell and

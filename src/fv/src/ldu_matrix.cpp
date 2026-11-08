@@ -164,8 +164,50 @@ LinearSolveResult LduMatrix::solve(std::vector<Scalar>& x, const LinearSolverSet
         r0_norm;
     const Scalar eigen_tol = b_norm > k_small ? std::clamp(target / b_norm, 1e-15, 1.0) : 1e-15;
 
-    if (settings.type == LinearSolverType::GpuCg ||
-        settings.type == LinearSolverType::GpuBiCgStab) {
+    if (settings.type == LinearSolverType::GpuCg) {
+        // AMG hierarchy on the host (cached), V-cycle and CG on the accelerator.
+        a.makeCompressed();
+        AmgPreconditioner local;
+        AmgPreconditioner* amg = &local;
+        if (amg_cache != nullptr) {
+            if (!amg_cache->amg || amg_cache->age >= amg_cache->max_age) {
+                amg_cache->amg = std::make_unique<AmgPreconditioner>();
+                amg_cache->amg->setup(a);
+                amg_cache->age = 0;
+            }
+            ++amg_cache->age;
+            amg = amg_cache->amg.get();
+        } else {
+            local.setup(a);
+        }
+        auto view = [](const CsrMatrix& m) {
+            return gpu::CsrView{static_cast<int>(m.rows()), static_cast<int>(m.nonZeros()),
+                                m.outerIndexPtr(), m.innerIndexPtr(), m.valuePtr()};
+        };
+        gpu::AmgView h;
+        std::vector<CsrMatrix> compressed;
+        compressed.reserve(3 * static_cast<std::size_t>(amg->levels()));
+        auto keep = [&](const CsrMatrix& m) -> const CsrMatrix& {
+            compressed.push_back(m);
+            compressed.back().makeCompressed();
+            return compressed.back();
+        };
+        for (int l = 0; l < amg->levels(); ++l) {
+            gpu::AmgLevelView lv;
+            lv.a = l == 0 ? view(a) : view(keep(amg->level_matrix(l)));
+            if (l + 1 < amg->levels()) {
+                lv.p = view(keep(amg->level_prolongation(l)));
+                lv.r = view(keep(amg->level_restriction(l)));
+            }
+            h.levels.push_back(lv);
+        }
+        const Eigen::Matrix<Scalar, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> inv =
+            amg->coarse_inverse();
+        h.coarse_inverse = inv.data();
+        const gpu::SolveStats st = gpu::solve_amg_cg(
+            h, source.data(), x.data(), {std::max(target, 1e-300), settings.max_iterations});
+        result.iterations = st.iterations;
+    } else if (settings.type == LinearSolverType::GpuBiCgStab) {
         a.makeCompressed();
         const gpu::CsrView view{static_cast<int>(n), static_cast<int>(a.nonZeros()),
                                 a.outerIndexPtr(), a.innerIndexPtr(), a.valuePtr()};

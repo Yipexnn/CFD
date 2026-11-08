@@ -41,7 +41,8 @@ Goal: realistic 3D CFD desktop application, running locally on Windows.
 10. ✅ **Geometry solids, multiphase, compressible** – solid bodies in Gmsh meshing, VOF two-phase flow (dam break), density-based compressible solver (Sod, oblique shock), Windows test checklist → details: [docs/phase10.md](docs/phase10.md)
 11. ✅ **Implicit/turbulent compressible, multiphase turbulence, contact angles, GPU** (GPU hardware test pending) – LU-SGS + Jacobian-free Newton–Krylov, Venkatakrishnan limiter, compressible k-ω SST (turbulent flat plate), mixture SST for VOF, static contact angle (droplet spreading), GPU Krylov solvers (CUDA, OpenMP offload) → details: [docs/phase11.md](docs/phase11.md)
 12. ✅ **Variable properties, radiation, 3D prism layers** – PropertyLaw (ν(T), α(T), Sutherland μ(T)), P1 radiation (radiative equilibrium validation), 3D prism boundary layers (sphere Re 100) → details: [docs/phase12.md](docs/phase12.md)
-13. **Later** – parallel mesh distribution, GPU AMG / assembly, sphere wake refinement study, radiation with solid regions, GUI fields for compressible / contact-angle / property / radiation settings
+13. ✅ **GUI settings, sphere study, radiation + solids, parallel mesh distribution, GPU AMG** → details: [docs/phase13.md](docs/phase13.md)
+14. **Later** – GPU assembly, sphere larger-domain run, fully parallel mesh file reading, compressible far-field BCs
 
 ## Notes
 - Development environment is Linux; code stays portable. Windows build/test via CI; GUI tested on user's PC.

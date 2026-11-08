@@ -224,6 +224,21 @@ void AmgPreconditioner::apply(const DenseVector& r, DenseVector& z) const {
     cycle(0, r, z);
 }
 
+Eigen::MatrixXd AmgPreconditioner::coarse_inverse() const {
+    const CsrMatrix& a = levels_.back().a;
+    const auto n = a.rows();
+    if (coarse_solver_) {
+        Eigen::MatrixXd inv(n, n);
+        for (Eigen::Index j = 0; j < n; ++j) {
+            DenseVector e = DenseVector::Zero(n);
+            e[j] = 1.0;
+            inv.col(j) = coarse_solver_->solve(e);
+        }
+        return inv;
+    }
+    return Eigen::MatrixXd(a).completeOrthogonalDecomposition().pseudoInverse();
+}
+
 Scalar AmgPreconditioner::operator_complexity() const {
     if (levels_.empty()) {
         return 0.0;

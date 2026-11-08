@@ -113,6 +113,20 @@ private:
     QDoubleSpinBox* prandtl_t_ = nullptr;
     QLineEdit* beta_ = nullptr;
     QLineEdit* t_ref_ = nullptr;
+    QLineEdit* nu_law_ = nullptr;
+    QLineEdit* alpha_law_ = nullptr;
+    QCheckBox* radiation_ = nullptr;
+    QLineEdit* absorption_ = nullptr;
+    QDoubleSpinBox* emissivity_ = nullptr;
+    QCheckBox* compressible_ = nullptr;
+    QDoubleSpinBox* gamma_ = nullptr;
+    QLineEdit* r_gas_ = nullptr;
+    QLineEdit* mu_ = nullptr;
+    QLineEdit* cfl_ = nullptr;
+    QCheckBox* sutherland_ = nullptr;
+    QCheckBox* implicit_ = nullptr;
+    QSpinBox* krylov_ = nullptr;
+    QComboBox* limiter_ = nullptr;
     std::array<QDoubleSpinBox*, 3> gravity_{};
 
     // Boundaries tab.

@@ -127,3 +127,54 @@ TEST(Radiation, CaseFile) {
     bad.replace(bad.find("\"absorption\": 1"), 15, "\"absorption\": 0");
     EXPECT_THROW((void)cfd::cases::parse_case(bad, dir), std::runtime_error);
 }
+
+// Conjugate: a conducting plate (k = 50 W/(m K), x in [0, 1], T(0) = 1000 K) radiates across
+// an almost transparent gas gap (x in [1, 2]) to a black wall at 500 K. The interface
+// temperature satisfies k (1000 - Ti) = sigma (Ti^4 - 500^4) (black surfaces, tau -> 0).
+TEST(Radiation, ConjugatePlateRadiatesAcrossGap) {
+    const auto dir = std::filesystem::temp_directory_path() / "cfd_radiation_conjugate";
+    std::filesystem::remove_all(dir);
+    const std::string json = R"({
+        "name": "gap",
+        "mesh": {"type": "box", "cells": [80, 1, 1], "max": [2, 0.1, 0.1],
+                 "patch_types": {"ymin": "symmetry", "ymax": "symmetry", "zmin": "patch",
+                                 "zmax": "patch"}},
+        "physics": {"nu": 1e-5, "energy": {"alpha": 1e-12, "t_ref": 750, "rho_cp": 1000,
+                    "radiation": {"absorption": 1e-3}}},
+        "solids": [{"name": "plate", "min": [-1, -1, -1], "max": [1, 1, 1],
+                    "conductivity": 50, "rho_cp": 1000}],
+        "boundaries": {"zmin": {"type": "empty"}, "zmax": {"type": "empty"},
+                       "xmin": {"thermal": {"type": "fixed", "value": 1000}},
+                       "xmax": {"type": "wall", "thermal": {"type": "fixed", "value": 500}}},
+        "initial": {"temperature": 750},
+        "solver": {"max_iterations": 400, "tolerance": 1e-14},
+        "heat": {"patches": ["xmin", "xmax"], "rho_cp": 1000}
+    })";
+    const auto c = cfd::cases::parse_case(json, dir);
+    cfd::cases::CaseRunner runner(c);
+    ASSERT_NE(runner.radiation(), nullptr);
+    (void)runner.run();
+    // Analytic interface temperature.
+    const Scalar sigma = P1Radiation::k_sigma;
+    Scalar lo = 500.0;
+    Scalar hi = 1000.0;
+    for (int k = 0; k < 100; ++k) {
+        const Scalar ti = 0.5 * (lo + hi);
+        (50.0 * (1000.0 - ti) > sigma * (std::pow(ti, 4) - std::pow(500.0, 4)) ? lo : hi) = ti;
+    }
+    const Scalar ti = 0.5 * (lo + hi);
+    const Scalar q = 50.0 * (1000.0 - ti); // W/m^2
+    // Solid temperature next to the interface (cell centre at x = 1 - dx/2).
+    const auto& t = runner.energy()->temperature();
+    const auto& mesh = runner.full_mesh();
+    Scalar t_near = 0.0;
+    for (std::size_t i = 0; i < t.size(); ++i) {
+        if (std::abs(mesh.cell_centres()[i].x() - (1.0 - 0.0125)) < 1e-6) {
+            t_near = t[i];
+        }
+    }
+    EXPECT_NEAR(t_near, ti + q / 50.0 * 0.0125, 0.01 * (1000.0 - ti));
+    // Heat balance: conduction in at xmin = radiation out at xmax (W).
+    EXPECT_NEAR(runner.heat_flow("xmin") / 0.01, q, 0.02 * q);
+    EXPECT_NEAR(-runner.heat_flow("xmax") / 0.01, q, 0.02 * q);
+}

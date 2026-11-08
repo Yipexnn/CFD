@@ -167,4 +167,136 @@ SolveStats bicgstab(const Arrays& a, const double* b, double* x, const double* d
     st.residual = res;
     return st;
 }
+
+// ---- AMG-preconditioned CG ----
+struct AmgLevel {
+    Arrays a;
+    Arrays p; // n_l rows (prolongation from level l + 1)
+    Arrays r; // n_{l+1} rows
+    const double* dinv;
+    double* x;
+    double* b;
+    double* t;
+};
+
+void amg_jacobi(const AmgLevel& lv, int sweeps, double w) {
+    const int n = lv.a.n;
+    double* x = lv.x;
+    const double* b = lv.b;
+    double* t = lv.t;
+    const double* d = lv.dinv;
+    for (int s = 0; s < sweeps; ++s) {
+        spmv(lv.a, x, t);
+        CFD_LOOP
+        for (int i = 0; i < n; ++i) {
+            x[i] += w * d[i] * (b[i] - t[i]);
+        }
+    }
+}
+
+// x = M b (dense, row-major n x n)
+void dense_mv(int n, const double* m, const double* b, double* x) {
+    CFD_LOOP
+    for (int i = 0; i < n; ++i) {
+        double s = 0.0;
+        for (int j = 0; j < n; ++j) {
+            s += m[static_cast<long long>(i) * n + j] * b[j];
+        }
+        x[i] = s;
+    }
+}
+
+void vcycle(const AmgLevel* levels, int n_levels, int l, const double* coarse_inverse,
+            int sweeps, double w) {
+    const AmgLevel& lv = levels[l];
+    const int n = lv.a.n;
+    if (l == n_levels - 1) {
+        dense_mv(n, coarse_inverse, lv.b, lv.x);
+        return;
+    }
+    double* x = lv.x;
+    double* t = lv.t;
+    const double* b = lv.b;
+    CFD_LOOP
+    for (int i = 0; i < n; ++i) {
+        x[i] = 0.0;
+    }
+    amg_jacobi(lv, sweeps, w);
+    spmv(lv.a, x, t);
+    CFD_LOOP
+    for (int i = 0; i < n; ++i) {
+        t[i] = b[i] - t[i];
+    }
+    spmv(lv.r, t, levels[l + 1].b);
+    vcycle(levels, n_levels, l + 1, coarse_inverse, sweeps, w);
+    spmv(lv.p, levels[l + 1].x, t);
+    CFD_LOOP
+    for (int i = 0; i < n; ++i) {
+        x[i] += t[i];
+    }
+    amg_jacobi(lv, sweeps, w);
+}
+
+SolveStats amg_cg(const AmgLevel* levels, int n_levels, const double* coarse_inverse, int sweeps,
+                  double w, const double* b, double* x, double* r, double* p, double* q,
+                  const SolveControl& control) {
+    const Arrays& a = levels[0].a;
+    const int n = a.n;
+    SolveStats st;
+    spmv(a, x, q);
+    CFD_LOOP
+    for (int i = 0; i < n; ++i) {
+        r[i] = b[i] - q[i];
+    }
+    double res = std::sqrt(dot(n, r, r));
+    if (res <= control.abs_tolerance) {
+        st.residual = res;
+        st.converged = true;
+        return st;
+    }
+    double* zb = levels[0].b;
+    double* z = levels[0].x;
+    auto precondition = [&]() {
+        CFD_LOOP
+        for (int i = 0; i < n; ++i) {
+            zb[i] = r[i];
+        }
+        vcycle(levels, n_levels, 0, coarse_inverse, sweeps, w);
+    };
+    precondition();
+    CFD_LOOP
+    for (int i = 0; i < n; ++i) {
+        p[i] = z[i];
+    }
+    double rz = dot(n, r, z);
+    for (st.iterations = 1; st.iterations <= control.max_iterations; ++st.iterations) {
+        spmv(a, p, q);
+        const double pq = dot(n, p, q);
+        if (pq == 0.0) {
+            break;
+        }
+        const double alpha = rz / pq;
+        CFD_LOOP
+        for (int i = 0; i < n; ++i) {
+            x[i] += alpha * p[i];
+            r[i] -= alpha * q[i];
+        }
+        res = std::sqrt(dot(n, r, r));
+        if (res <= control.abs_tolerance) {
+            st.converged = true;
+            break;
+        }
+        precondition();
+        const double rz_new = dot(n, r, z);
+        const double beta = rz_new / rz;
+        rz = rz_new;
+        CFD_LOOP
+        for (int i = 0; i < n; ++i) {
+            p[i] = z[i] + beta * p[i];
+        }
+    }
+    st.iterations = std::min(st.iterations, control.max_iterations);
+    st.residual = res;
+    return st;
+}
 // NOLINTEND

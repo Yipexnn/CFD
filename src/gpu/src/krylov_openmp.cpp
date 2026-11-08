@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cfd/gpu/krylov.hpp>
 #include <cmath>
+#include <stdexcept>
 #include <vector>
 #ifdef _OPENMP
 #include <omp.h>
@@ -42,6 +43,12 @@ struct HostSpace {
                                double* ph, double* sh, const SolveControl& c) {
         return host::bicgstab(a, b, x, d, r, r0, p, v, s, t, ph, sh, c);
     }
+    using AmgLevel = host::AmgLevel;
+    static SolveStats amg_cg(const AmgLevel* l, int nl, const double* ci, int sw, double w,
+                             const double* b, double* x, double* r, double* p, double* q,
+                             const SolveControl& c) {
+        return host::amg_cg(l, nl, ci, sw, w, b, x, r, p, q, c);
+    }
 };
 
 #if defined(CFD_GPU_OMP_TARGET) && defined(_OPENMP)
@@ -65,6 +72,12 @@ struct OffloadSpace {
                                double* r, double* r0, double* p, double* v, double* s, double* t,
                                double* ph, double* sh, const SolveControl& c) {
         return offload::bicgstab(a, b, x, d, r, r0, p, v, s, t, ph, sh, c);
+    }
+    using AmgLevel = offload::AmgLevel;
+    static SolveStats amg_cg(const AmgLevel* l, int nl, const double* ci, int sw, double w,
+                             const double* b, double* x, double* r, double* p, double* q,
+                             const SolveControl& c) {
+        return offload::amg_cg(l, nl, ci, sw, w, b, x, r, p, q, c);
     }
 };
 #endif
@@ -127,6 +140,118 @@ SolveStats solve_openmp(const CsrView& m, const double* b, double* x, Method met
 SolveStats solve_openmp(const CsrView& m, const double* b, double* x, Method method,
                         const SolveControl& control) {
     return solve_openmp(m, b, x, method, control, true);
+}
+
+namespace {
+
+std::vector<double> inverse_diagonal(const CsrView& m) {
+    std::vector<double> d(static_cast<std::size_t>(m.n), 1.0);
+    for (int i = 0; i < m.n; ++i) {
+        for (int k = m.row_ptr[i]; k < m.row_ptr[i + 1]; ++k) {
+            if (m.col[k] == i && m.val[k] != 0.0) {
+                d[static_cast<std::size_t>(i)] = 1.0 / m.val[k];
+            }
+        }
+    }
+    return d;
+}
+
+template <typename Space>
+SolveStats run_amg(const AmgView& amg, const double* b, double* x, const SolveControl& control,
+                   std::vector<std::vector<double>>& dinv, std::vector<std::vector<double>>& work,
+                   std::vector<double>& cg_work) {
+    using Level = typename Space::AmgLevel;
+    using A = typename Space::Arrays;
+    const int nl = static_cast<int>(amg.levels.size());
+    std::vector<Level> levels(static_cast<std::size_t>(nl));
+    for (int l = 0; l < nl; ++l) {
+        const auto ls = static_cast<std::size_t>(l);
+        const AmgLevelView& v = amg.levels[ls];
+        const auto n = static_cast<std::size_t>(v.a.n);
+        levels[ls].a = A{v.a.n, v.a.row_ptr, v.a.col, v.a.val};
+        levels[ls].p = A{v.p.n, v.p.row_ptr, v.p.col, v.p.val};
+        levels[ls].r = A{v.r.n, v.r.row_ptr, v.r.col, v.r.val};
+        levels[ls].dinv = dinv[ls].data();
+        levels[ls].x = work[ls].data();
+        levels[ls].b = work[ls].data() + n;
+        levels[ls].t = work[ls].data() + 2 * n;
+    }
+    const auto n0 = static_cast<std::size_t>(amg.levels[0].a.n);
+    double* w = cg_work.data();
+    return Space::amg_cg(levels.data(), nl, amg.coarse_inverse, amg.smooth_sweeps,
+                         amg.jacobi_weight, b, x, w, w + n0, w + 2 * n0, control);
+}
+
+} // namespace
+
+SolveStats solve_amg_openmp(const AmgView& amg, const double* b, double* x,
+                            const SolveControl& control, bool allow_device) {
+    if (amg.levels.empty()) {
+        throw std::invalid_argument("solve_amg_cg: empty hierarchy");
+    }
+    const std::size_t nl = amg.levels.size();
+    std::vector<std::vector<double>> dinv(nl);
+    std::vector<std::vector<double>> work(nl);
+    for (std::size_t l = 0; l < nl; ++l) {
+        dinv[l] = inverse_diagonal(amg.levels[l].a);
+        work[l].assign(3 * static_cast<std::size_t>(amg.levels[l].a.n), 0.0);
+    }
+    const int n = amg.levels[0].a.n;
+    std::vector<double> cg_work(3 * static_cast<std::size_t>(n), 0.0);
+    SolveStats st;
+#if defined(CFD_GPU_OMP_TARGET) && defined(_OPENMP)
+    if (allow_device && openmp_device_available()) {
+        // Map every level (operators, transfer operators, work vectors) once per solve.
+        auto map_csr = [](const CsrView& m, bool to_device) {
+            if (m.n == 0 || m.row_ptr == nullptr) {
+                return;
+            }
+            [[maybe_unused]] const int* rp = m.row_ptr;
+            [[maybe_unused]] const int* ci = m.col;
+            [[maybe_unused]] const double* va = m.val;
+            [[maybe_unused]] const int rows = m.n + 1;
+            [[maybe_unused]] const int nnz = m.nnz;
+            if (to_device) {
+#pragma omp target enter data map(to : rp[0 : rows], ci[0 : nnz], va[0 : nnz])
+            } else {
+#pragma omp target exit data map(release : rp[0 : rows], ci[0 : nnz], va[0 : nnz])
+            }
+        };
+        for (std::size_t l = 0; l < nl; ++l) {
+            map_csr(amg.levels[l].a, true);
+            map_csr(amg.levels[l].p, true);
+            map_csr(amg.levels[l].r, true);
+            [[maybe_unused]] double* d = dinv[l].data();
+            [[maybe_unused]] double* wk = work[l].data();
+            [[maybe_unused]] const int nd = static_cast<int>(dinv[l].size());
+            [[maybe_unused]] const int nw = static_cast<int>(work[l].size());
+#pragma omp target enter data map(to : d[0 : nd], wk[0 : nw])
+        }
+        [[maybe_unused]] const double* ci = amg.coarse_inverse;
+        [[maybe_unused]] const int nc = amg.levels.back().a.n;
+        [[maybe_unused]] const long long ncc = static_cast<long long>(nc) * nc;
+        [[maybe_unused]] double* cw = cg_work.data();
+        [[maybe_unused]] const int ncw = static_cast<int>(cg_work.size());
+#pragma omp target data map(to : b[0 : n], ci[0 : ncc]) map(tofrom : x[0 : n]) map(to : cw[0 : ncw])
+        { st = run_amg<OffloadSpace>(amg, b, x, control, dinv, work, cg_work); }
+        for (std::size_t l = 0; l < nl; ++l) {
+            map_csr(amg.levels[l].a, false);
+            map_csr(amg.levels[l].p, false);
+            map_csr(amg.levels[l].r, false);
+            [[maybe_unused]] double* d = dinv[l].data();
+            [[maybe_unused]] double* wk = work[l].data();
+            [[maybe_unused]] const int nd = static_cast<int>(dinv[l].size());
+            [[maybe_unused]] const int nw = static_cast<int>(work[l].size());
+#pragma omp target exit data map(release : d[0 : nd], wk[0 : nw])
+        }
+        st.on_device = true;
+        return st;
+    }
+#endif
+    (void)allow_device;
+    st = run_amg<HostSpace>(amg, b, x, control, dinv, work, cg_work);
+    st.on_device = false;
+    return st;
 }
 
 } // namespace cfd::gpu::detail

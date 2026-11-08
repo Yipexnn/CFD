@@ -39,6 +39,16 @@ if(CFD_BUILD_GUI)
     cfd_target_defaults(cfd_gui_tests)
     vtk_module_autoinit(TARGETS cfd_gui_tests MODULES ${VTK_LIBRARIES})
     gtest_discover_tests(cfd_gui_tests DISCOVERY_MODE PRE_TEST)
+
+    find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets)
+    find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets)
+    add_executable(cfd_case_editor_tests test_case_editor.cpp ${CMAKE_SOURCE_DIR}/src/gui/case_editor.cpp)
+    set_target_properties(cfd_case_editor_tests PROPERTIES AUTOMOC ON)
+    target_include_directories(cfd_case_editor_tests PRIVATE ${CMAKE_SOURCE_DIR}/src/gui)
+    target_link_libraries(cfd_case_editor_tests PRIVATE cfd::case cfd::gui_core
+                          Qt${QT_VERSION_MAJOR}::Widgets GTest::gtest)
+    cfd_target_defaults(cfd_case_editor_tests)
+    gtest_discover_tests(cfd_case_editor_tests DISCOVERY_MODE PRE_TEST)
 endif()
 
 # Parallel tests: run with mpiexec on 2 and 4 processes.
