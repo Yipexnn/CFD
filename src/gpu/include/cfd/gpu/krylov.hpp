@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
 namespace cfd::gpu {
 
@@ -39,6 +40,28 @@ SolveStats solve(const CsrView& a, const double* b, double* x, Method method,
 SolveStats solve_host(const CsrView& a, const double* b, double* x, Method method,
                       const SolveControl& control);
 
+// Algebraic multigrid hierarchy for an AMG-preconditioned CG (built on the host, e.g. by
+// fv::AmgPreconditioner): per level the operator a, and except on the coarsest level the
+// restriction r (n_{l+1} x n_l) and prolongation p (n_l x n_{l+1}); coarse_inverse is the dense
+// row-major inverse of the coarsest operator. V-cycle: damped Jacobi smoothing (symmetric).
+struct AmgLevelView {
+    CsrView a;
+    CsrView p;
+    CsrView r;
+};
+struct AmgView {
+    std::vector<AmgLevelView> levels;
+    const double* coarse_inverse = nullptr;
+    int smooth_sweeps = 2;
+    double jacobi_weight = 0.7;
+};
+
+// CG preconditioned by one AMG V-cycle per iteration; A = levels[0].a. Device as for solve().
+SolveStats solve_amg_cg(const AmgView& amg, const double* b, double* x,
+                        const SolveControl& control);
+SolveStats solve_amg_cg_host(const AmgView& amg, const double* b, double* x,
+                             const SolveControl& control);
+
 // Backend compiled in: "cuda", "openmp-offload" or "host".
 [[nodiscard]] std::string backend_name();
 // True if the backend found an accelerator device at run time.
@@ -53,7 +76,11 @@ SolveStats solve_openmp(const CsrView& a, const double* b, double* x, Method met
 SolveStats solve_openmp(const CsrView& a, const double* b, double* x, Method method,
                         const SolveControl& control, bool allow_device);
 bool openmp_device_available();
+SolveStats solve_amg_openmp(const AmgView& amg, const double* b, double* x,
+                            const SolveControl& control, bool allow_device);
 #ifdef CFD_GPU_CUDA
+SolveStats solve_amg_cuda(const AmgView& amg, const double* b, double* x,
+                          const SolveControl& control);
 SolveStats solve_cuda(const CsrView& a, const double* b, double* x, Method method,
                       const SolveControl& control);
 bool cuda_device_available();

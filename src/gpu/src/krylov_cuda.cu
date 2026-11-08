@@ -262,4 +262,222 @@ SolveStats solve_cuda(const CsrView& m, const double* b_host, double* x_host, Me
     return st;
 }
 
+namespace {
+
+__global__ void jacobi_kernel(int n, double w, const double* d, const double* b, const double* t,
+                              double* x) {
+    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) {
+        x[i] += w * d[i] * (b[i] - t[i]);
+    }
+}
+
+__global__ void dense_mv_kernel(int n, const double* m, const double* b, double* x) {
+    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) {
+        double s = 0.0;
+        for (int j = 0; j < n; ++j) {
+            s += m[static_cast<long long>(i) * n + j] * b[j];
+        }
+        x[i] = s;
+    }
+}
+
+struct DeviceCsr {
+    int n = 0;
+    int* rp = nullptr;
+    int* ci = nullptr;
+    double* va = nullptr;
+};
+
+struct DeviceLevel {
+    DeviceCsr a, p, r;
+    double* dinv = nullptr;
+    double* x = nullptr;
+    double* b = nullptr;
+    double* t = nullptr;
+};
+
+class AmgDevice {
+public:
+    explicit AmgDevice(const AmgView& v) : view_(v) {
+        for (const AmgLevelView& l : v.levels) {
+            DeviceLevel d;
+            d.a = upload(l.a);
+            d.p = upload(l.p);
+            d.r = upload(l.r);
+            std::vector<double> dinv(static_cast<std::size_t>(l.a.n), 1.0);
+            for (int i = 0; i < l.a.n; ++i) {
+                for (int k = l.a.row_ptr[i]; k < l.a.row_ptr[i + 1]; ++k) {
+                    if (l.a.col[k] == i && l.a.val[k] != 0.0) {
+                        dinv[static_cast<std::size_t>(i)] = 1.0 / l.a.val[k];
+                    }
+                }
+            }
+            d.dinv = alloc<double>(l.a.n);
+            check(cudaMemcpy(d.dinv, dinv.data(), sizeof(double) * dinv.size(),
+                             cudaMemcpyHostToDevice),
+                  "copy");
+            d.x = alloc<double>(l.a.n);
+            d.b = alloc<double>(l.a.n);
+            d.t = alloc<double>(l.a.n);
+            levels_.push_back(d);
+        }
+        const int nc = v.levels.back().a.n;
+        coarse_ = alloc<double>(nc * nc);
+        check(cudaMemcpy(coarse_, v.coarse_inverse,
+                         sizeof(double) * static_cast<std::size_t>(nc) * nc,
+                         cudaMemcpyHostToDevice),
+              "copy");
+    }
+    AmgDevice(const AmgDevice&) = delete;
+    AmgDevice& operator=(const AmgDevice&) = delete;
+    ~AmgDevice() {
+        for (void* p : owned_) {
+            cudaFree(p);
+        }
+    }
+
+    static int grid(int n) { return (n + k_block - 1) / k_block; }
+
+    void spmv(const DeviceCsr& m, const double* x, double* y) const {
+        if (m.n > 0) {
+            spmv_kernel<<<grid(m.n), k_block>>>(m.n, m.rp, m.ci, m.va, x, y);
+        }
+    }
+
+    void jacobi(const DeviceLevel& l) const {
+        for (int s = 0; s < view_.smooth_sweeps; ++s) {
+            spmv(l.a, l.x, l.t);
+            jacobi_kernel<<<grid(l.a.n), k_block>>>(l.a.n, view_.jacobi_weight, l.dinv, l.b, l.t,
+                                                    l.x);
+        }
+    }
+
+    void vcycle(std::size_t lv) const {
+        const DeviceLevel& l = levels_[lv];
+        const int n = l.a.n;
+        if (lv + 1 == levels_.size()) {
+            dense_mv_kernel<<<grid(n), k_block>>>(n, coarse_, l.b, l.x);
+            return;
+        }
+        check(cudaMemset(l.x, 0, sizeof(double) * static_cast<std::size_t>(n)), "memset");
+        jacobi(l);
+        spmv(l.a, l.x, l.t);
+        axpbypcz_kernel<<<grid(n), k_block>>>(n, 1.0, l.b, -1.0, l.t, 0.0, nullptr); // t = b - t
+        spmv(l.r, l.t, levels_[lv + 1].b);
+        vcycle(lv + 1);
+        spmv(l.p, levels_[lv + 1].x, l.t);
+        axpbypcz_kernel<<<grid(n), k_block>>>(n, 1.0, l.t, 1.0, l.x, 0.0, nullptr); // x += t
+        jacobi(l);
+    }
+
+    [[nodiscard]] const DeviceLevel& finest() const { return levels_.front(); }
+
+private:
+    template <typename T> T* alloc(long long count) {
+        T* p = nullptr;
+        check(cudaMalloc(&p, sizeof(T) * static_cast<std::size_t>(std::max(count, 1LL))),
+              "malloc");
+        check(cudaMemset(p, 0, sizeof(T) * static_cast<std::size_t>(std::max(count, 1LL))),
+              "memset");
+        owned_.push_back(p);
+        return p;
+    }
+    DeviceCsr upload(const CsrView& m) {
+        DeviceCsr d;
+        if (m.n == 0 || m.row_ptr == nullptr) {
+            return d;
+        }
+        d.n = m.n;
+        d.rp = alloc<int>(m.n + 1);
+        d.ci = alloc<int>(m.nnz);
+        d.va = alloc<double>(m.nnz);
+        check(cudaMemcpy(d.rp, m.row_ptr, sizeof(int) * static_cast<std::size_t>(m.n + 1),
+                         cudaMemcpyHostToDevice),
+              "copy");
+        check(cudaMemcpy(d.ci, m.col, sizeof(int) * static_cast<std::size_t>(m.nnz),
+                         cudaMemcpyHostToDevice),
+              "copy");
+        check(cudaMemcpy(d.va, m.val, sizeof(double) * static_cast<std::size_t>(m.nnz),
+                         cudaMemcpyHostToDevice),
+              "copy");
+        return d;
+    }
+
+    const AmgView& view_;
+    std::vector<DeviceLevel> levels_;
+    double* coarse_ = nullptr;
+    std::vector<void*> owned_;
+};
+
+} // namespace
+
+SolveStats solve_amg_cuda(const AmgView& amg, const double* b_host, double* x_host,
+                          const SolveControl& control) {
+    const AmgDevice h(amg);
+    const DeviceLevel& f = h.finest();
+    const int n = f.a.n;
+    Device d; // vectors and dot products of the outer CG
+    d.n = n;
+    d.grid = (n + k_block - 1) / k_block;
+    d.dot_grid = std::min(d.grid, 1024);
+    check(cudaMalloc(&d.dot_out, sizeof(double)), "malloc");
+    double* b = d.vec();
+    double* x = d.vec();
+    double* r = d.vec();
+    double* p = d.vec();
+    double* q = d.vec();
+    check(cudaMemcpy(b, b_host, sizeof(double) * static_cast<std::size_t>(n),
+                     cudaMemcpyHostToDevice),
+          "copy");
+    check(cudaMemcpy(x, x_host, sizeof(double) * static_cast<std::size_t>(n),
+                     cudaMemcpyHostToDevice),
+          "copy");
+    SolveStats st;
+    st.on_device = true;
+    h.spmv(f.a, x, r);
+    d.update(1.0, b, -1.0, r); // r = b - A x
+    double res = std::sqrt(d.dot(r, r));
+    auto precondition = [&]() { // z (= f.x) = V-cycle(r)
+        check(cudaMemcpy(f.b, r, sizeof(double) * static_cast<std::size_t>(n),
+                         cudaMemcpyDeviceToDevice),
+              "copy");
+        h.vcycle(0);
+    };
+    if (res > control.abs_tolerance) {
+        precondition();
+        d.update(1.0, f.x, 0.0, p);
+        double rz = d.dot(r, f.x);
+        for (st.iterations = 1; st.iterations <= control.max_iterations; ++st.iterations) {
+            h.spmv(f.a, p, q);
+            const double pq = d.dot(p, q);
+            if (pq == 0.0) {
+                break;
+            }
+            const double alpha = rz / pq;
+            d.update(alpha, p, 1.0, x);
+            d.update(-alpha, q, 1.0, r);
+            res = std::sqrt(d.dot(r, r));
+            if (res <= control.abs_tolerance) {
+                st.converged = true;
+                break;
+            }
+            precondition();
+            const double rz_new = d.dot(r, f.x);
+            d.update(1.0, f.x, rz_new / rz, p);
+            rz = rz_new;
+        }
+        st.iterations = std::min(st.iterations, control.max_iterations);
+    } else {
+        st.converged = true;
+    }
+    st.residual = res;
+    check(cudaGetLastError(), "kernel");
+    check(cudaMemcpy(x_host, x, sizeof(double) * static_cast<std::size_t>(n),
+                     cudaMemcpyDeviceToHost),
+          "copy");
+    return st;
+}
+
 } // namespace cfd::gpu::detail

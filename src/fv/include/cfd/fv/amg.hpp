@@ -1,5 +1,6 @@
 #pragma once
 
+#include <Eigen/Dense>
 #include <Eigen/SparseCholesky>
 #include <Eigen/SparseCore>
 #include <cfd/core/types.hpp>
@@ -36,6 +37,19 @@ public:
     [[nodiscard]] Eigen::Index level_size(int level) const {
         return levels_[static_cast<std::size_t>(level)].a.rows();
     }
+    // Hierarchy access (e.g. to run the V-cycle on an accelerator): operator, prolongation
+    // (to this level from the next coarser one) and restriction of a level, and the dense
+    // inverse of the coarsest operator.
+    [[nodiscard]] const CsrMatrix& level_matrix(int level) const {
+        return levels_[static_cast<std::size_t>(level)].a;
+    }
+    [[nodiscard]] const CsrMatrix& level_prolongation(int level) const {
+        return levels_[static_cast<std::size_t>(level)].p;
+    }
+    [[nodiscard]] const CsrMatrix& level_restriction(int level) const {
+        return levels_[static_cast<std::size_t>(level)].r;
+    }
+    [[nodiscard]] Eigen::MatrixXd coarse_inverse() const;
     // Sum of non-zeros of all levels / non-zeros of the finest level.
     [[nodiscard]] Scalar operator_complexity() const;
 

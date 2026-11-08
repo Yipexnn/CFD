@@ -150,3 +150,62 @@ TEST(Gpu, CaseFileDevice) {
                                 "solver": {"device": "tpu"}})";
     EXPECT_THROW((void)cfd::cases::parse_case(bad), std::runtime_error);
 }
+
+#include <cfd/fv/amg.hpp>
+
+// AMG-preconditioned CG with the V-cycle on the accelerator path: converges to the same
+// solution with a small, mesh-independent iteration count (Jacobi-PCG needs many more).
+TEST(Gpu, AmgCgSolvesPoissonFast) {
+    for (const int m : {40, 80}) {
+        const Csr a(m, 0.0);
+        std::vector<double> b(static_cast<std::size_t>(a.n), 1.0);
+        cfd::fv::CsrMatrix e(a.n, a.n);
+        std::vector<Eigen::Triplet<double, int>> trip;
+        for (int i = 0; i < a.n; ++i) {
+            for (int k = a.rp[static_cast<std::size_t>(i)];
+                 k < a.rp[static_cast<std::size_t>(i) + 1]; ++k) {
+                trip.emplace_back(i, a.ci[static_cast<std::size_t>(k)],
+                                  a.va[static_cast<std::size_t>(k)]);
+            }
+        }
+        e.setFromTriplets(trip.begin(), trip.end());
+        e.makeCompressed();
+        cfd::fv::AmgPreconditioner amg;
+        amg.setup(e);
+        ASSERT_GT(amg.levels(), 1);
+        std::vector<cfd::fv::CsrMatrix> keep;
+        keep.reserve(3 * static_cast<std::size_t>(amg.levels()));
+        auto view = [](const cfd::fv::CsrMatrix& c) {
+            return cfd::gpu::CsrView{static_cast<int>(c.rows()), static_cast<int>(c.nonZeros()),
+                                     c.outerIndexPtr(), c.innerIndexPtr(), c.valuePtr()};
+        };
+        cfd::gpu::AmgView h;
+        for (int l = 0; l < amg.levels(); ++l) {
+            cfd::gpu::AmgLevelView lv;
+            keep.push_back(amg.level_matrix(l));
+            keep.back().makeCompressed();
+            lv.a = view(keep.back());
+            if (l + 1 < amg.levels()) {
+                keep.push_back(amg.level_prolongation(l));
+                keep.back().makeCompressed();
+                lv.p = view(keep.back());
+                keep.push_back(amg.level_restriction(l));
+                keep.back().makeCompressed();
+                lv.r = view(keep.back());
+            }
+            h.levels.push_back(lv);
+        }
+        const Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> inv =
+            amg.coarse_inverse();
+        h.coarse_inverse = inv.data();
+        std::vector<double> x(b.size(), 0.0);
+        const auto st = cfd::gpu::solve_amg_cg(h, b.data(), x.data(), {1e-10, 500});
+        EXPECT_TRUE(st.converged);
+        EXPECT_LT(a.residual(b, x), 1e-9);
+        std::vector<double> xj(b.size(), 0.0);
+        const auto sj =
+            cfd::gpu::solve(a.view(), b.data(), xj.data(), cfd::gpu::Method::Cg, {1e-10, 5000});
+        EXPECT_LT(3 * st.iterations, sj.iterations) << "m = " << m;
+        EXPECT_LT(st.iterations, 40) << "m = " << m;
+    }
+}
