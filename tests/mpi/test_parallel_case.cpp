@@ -1,5 +1,7 @@
 #include <cfd/case/case_runner.hpp>
+#include <cfd/mesh/box_mesher.hpp>
 #include <cfd/parallel/comm.hpp>
+#include <cfd/parallel/decomposition.hpp>
 #include <filesystem>
 #include <gtest/gtest.h>
 #include <string>
@@ -50,7 +52,8 @@ TEST(ParallelCase, CheckpointRestartContinuesRun) {
     const cfd::core::Vec3 f_restart = second.force("ymax");
     EXPECT_NEAR((f_full - f_restart).norm(), 0.0, 1e-5 * f_full.norm());
 
-    EXPECT_EQ(full.global_mesh().n_cells(), 400);
+    EXPECT_EQ(full.global_cell_count(), 400);
+    EXPECT_EQ(full.has_global_mesh(), comm.is_root()); // only the root holds the global mesh
     ASSERT_NE(full.local_mesh(), nullptr);
     EXPECT_LT(full.mesh().n_cells(), 400);
     if (comm.is_root()) {
@@ -60,3 +63,34 @@ TEST(ParallelCase, CheckpointRestartContinuesRun) {
 }
 
 } // namespace
+
+// Parallel mesh distribution: the local meshes received from the root equal the ones each
+// process would decompose itself; pack / unpack round-trips.
+TEST(ParallelCase, DistributeMatchesDecompose) {
+    const auto& comm = cfd::parallel::Comm::world();
+    cfd::mesh::BoxSpec spec;
+    spec.nx = 12;
+    spec.ny = 9;
+    spec.nz = 4;
+    const auto global = cfd::mesh::make_box_mesh(spec);
+    const auto received = cfd::parallel::distribute(comm.is_root() ? &global : nullptr, comm);
+    const auto parts = cfd::parallel::partition_rcb(global, comm.size());
+    const auto expected = cfd::parallel::decompose(global, parts, comm.rank(), comm);
+    EXPECT_EQ(received.mesh.n_cells(), expected.mesh.n_cells());
+    EXPECT_EQ(received.mesh.n_faces(), expected.mesh.n_faces());
+    EXPECT_EQ(received.global_cell, expected.global_cell);
+    EXPECT_EQ(received.global_face, expected.global_face);
+    EXPECT_EQ(received.halo.n_owned, expected.halo.n_owned);
+    ASSERT_EQ(received.halo.neighbours.size(), expected.halo.neighbours.size());
+    for (std::size_t i = 0; i < expected.halo.neighbours.size(); ++i) {
+        EXPECT_EQ(received.halo.neighbours[i].send, expected.halo.neighbours[i].send);
+        EXPECT_EQ(received.halo.neighbours[i].recv, expected.halo.neighbours[i].recv);
+    }
+    for (std::size_t c = 0; c < expected.mesh.cell_centres().size(); ++c) {
+        EXPECT_TRUE(received.mesh.cell_centres()[c].isApprox(expected.mesh.cell_centres()[c]));
+    }
+    const auto back =
+        cfd::parallel::unpack_local_mesh(cfd::parallel::pack_local_mesh(expected), comm);
+    EXPECT_EQ(back.mesh.patches().size(), expected.mesh.patches().size());
+    EXPECT_EQ(back.face_flipped, expected.face_flipped);
+}

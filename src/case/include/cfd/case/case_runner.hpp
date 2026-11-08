@@ -87,7 +87,10 @@ public:
     [[nodiscard]] std::vector<Scalar> to_full_cells(const Scalar* flow_values,
                                                     std::size_t ncomp) const;
     // The undecomposed case mesh (same as mesh() in serial runs).
+    // Global (undecomposed) mesh: on the root process only in parallel runs.
     [[nodiscard]] const mesh::Mesh& global_mesh() const { return *global_mesh_; }
+    [[nodiscard]] bool has_global_mesh() const { return global_mesh_ != nullptr; }
+    [[nodiscard]] Label global_cell_count() const { return global_cells_; }
     // Decomposition of an MPI run (nullptr in serial runs).
     [[nodiscard]] const parallel::LocalMesh* local_mesh() const { return local_.get(); }
     // Single-phase flow solver (not available for multiphase cases).
@@ -119,6 +122,9 @@ private:
 
     CaseConfig config_;
     std::unique_ptr<mesh::Mesh> global_mesh_;
+    Label global_cells_ = 0;
+    Label global_faces_ = 0;
+    Label global_internal_faces_ = 0;
     std::unique_ptr<parallel::LocalMesh> local_;
     std::unique_ptr<parallel::SubMesh> fluid_;      // conjugate: fluid zone of full_mesh()
     std::unique_ptr<fv::FvGeometry> full_geometry_; // conjugate: energy geometry

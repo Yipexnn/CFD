@@ -174,7 +174,7 @@ int run_case(int argc, char* argv[]) {
     const bool transient = cfg.solver.mode == cfd::cases::SolverMode::Transient;
     const bool laminar = cfg.turbulence == cfd::cases::TurbulenceKind::Laminar;
 
-    out << "Case: " << cfg.name << "  (" << runner.global_mesh().n_cells() << " cells, "
+    out << "Case: " << cfg.name << "  (" << runner.global_cell_count() << " cells, "
         << (transient ? "transient" : "steady") << ", " << (laminar ? "laminar" : "kOmegaSST");
     if (comm.parallel()) {
         out << ", " << comm.size() << " processes";
