@@ -14,6 +14,7 @@
 #include <QLineEdit>
 #include <QLocale>
 #include <QPushButton>
+#include <QScrollArea>
 #include <QSpinBox>
 #include <QStackedWidget>
 #include <QString>
@@ -109,6 +110,49 @@ QLineEdit* make_number_edit(QWidget* parent, double lo, double hi, double value)
     edit->setValidator(validator);
     edit->setText(QString::number(value, 'g', 17));
     return edit;
+}
+
+// Property law <-> text: "" = constant, "c0, c1, ..." = polynomial, other laws are shown as
+// "keep: <law>" and left unchanged unless the text is edited.
+QString law_text(const fv::PropertyLaw& law) {
+    switch (law.kind) {
+    case fv::PropertyLaw::Kind::Constant:
+        return {};
+    case fv::PropertyLaw::Kind::Polynomial: {
+        QStringList parts;
+        for (const double c : law.coefficients) {
+            parts << QString::number(c, 'g', 12);
+        }
+        return parts.join(QStringLiteral(", "));
+    }
+    case fv::PropertyLaw::Kind::Sutherland:
+        return QStringLiteral("keep: sutherland");
+    case fv::PropertyLaw::Kind::PowerLaw:
+        return QStringLiteral("keep: power law");
+    }
+    return {};
+}
+
+fv::PropertyLaw parse_law(const QLineEdit* edit, const fv::PropertyLaw& stored, double reference) {
+    const QString text = edit->text().trimmed();
+    if (text.startsWith(QStringLiteral("keep"))) {
+        return stored;
+    }
+    fv::PropertyLaw law;
+    law.reference = reference;
+    if (text.isEmpty()) {
+        return law;
+    }
+    for (const QString& part : text.split(QLatin1Char(','), Qt::SkipEmptyParts)) {
+        bool ok = false;
+        const double v = part.trimmed().toDouble(&ok);
+        if (!ok) {
+            return stored; // invalid input: keep the previous law
+        }
+        law.coefficients.push_back(v);
+    }
+    law.kind = fv::PropertyLaw::Kind::Polynomial;
+    return law;
 }
 
 QDoubleSpinBox* make_double(QWidget* parent, double lo, double hi, int decimals, double value) {
@@ -370,17 +414,71 @@ QWidget* CaseEditor::build_physics_tab() {
     for (QDoubleSpinBox* spin : gravity_) {
         watch(spin, false);
     }
-    return page;
+    nu_law_ = new QLineEdit(page);
+    nu_law_->setPlaceholderText(QStringLiteral("constant (or polynomial c0, c1, ... in T)"));
+    alpha_law_ = new QLineEdit(page);
+    alpha_law_->setPlaceholderText(QStringLiteral("constant (or polynomial c0, c1, ... in T)"));
+    form->addRow(QStringLiteral("nu(T) coefficients"), nu_law_);
+    form->addRow(QStringLiteral("alpha(T) coefficients"), alpha_law_);
+    watch(nu_law_, false);
+    watch(alpha_law_, false);
+    radiation_ =
+        new QCheckBox(QStringLiteral("P1 radiation (T in K, heat rho c_p physical)"), page);
+    absorption_ = make_number_edit(page, 1e-12, 1e12, 1.0);
+    emissivity_ = make_double(page, 0.01, 1.0, 3, 1.0);
+    form->addRow(radiation_);
+    form->addRow(QStringLiteral("Absorption coefficient [1/m]"), absorption_);
+    form->addRow(QStringLiteral("Wall emissivity"), emissivity_);
+    watch(radiation_, false);
+    watch(absorption_, false);
+    watch(emissivity_, false);
+
+    compressible_ = new QCheckBox(QStringLiteral("Compressible (density-based, ideal gas)"), page);
+    form->addRow(compressible_);
+    gamma_ = make_double(page, 1.01, 5.0, 4, 1.4);
+    r_gas_ = make_number_edit(page, 1e-9, 1e9, 287.0);
+    mu_ = make_number_edit(page, 0.0, 1e6, 0.0);
+    cfl_ = make_number_edit(page, 1e-6, 1e9, 0.5);
+    sutherland_ = new QCheckBox(
+        QStringLiteral("Sutherland viscosity mu(T) (reference = mu at 273.15 K)"), page);
+    implicit_ = new QCheckBox(QStringLiteral("Implicit (steady)"), page);
+    krylov_ = new QSpinBox(page);
+    krylov_->setRange(0, 200);
+    limiter_ = new QComboBox(page);
+    limiter_->addItem(QStringLiteral("Barth-Jespersen"));
+    limiter_->addItem(QStringLiteral("Venkatakrishnan"));
+    form->addRow(QStringLiteral("gamma"), gamma_);
+    form->addRow(QStringLiteral("Gas constant R [J/(kg K)]"), r_gas_);
+    form->addRow(QStringLiteral("Dynamic viscosity mu [Pa s]"), mu_);
+    form->addRow(sutherland_);
+    form->addRow(QStringLiteral("CFL"), cfl_);
+    form->addRow(implicit_);
+    form->addRow(QStringLiteral("Krylov dimension (0: LU-SGS)"), krylov_);
+    form->addRow(QStringLiteral("Limiter"), limiter_);
+    watch(compressible_, false);
+    watch(gamma_, false);
+    watch(r_gas_, false);
+    watch(mu_, false);
+    watch(cfl_, false);
+    watch(sutherland_, false);
+    watch(implicit_, false);
+    watch(krylov_, false);
+    watch(limiter_, false);
+    auto* scroll = new QScrollArea(this);
+    scroll->setWidgetResizable(true);
+    scroll->setWidget(page);
+    return scroll;
 }
 
 QWidget* CaseEditor::build_boundaries_tab() {
     auto* page = new QWidget(this);
     auto* layout = new QVBoxLayout(page);
-    boundary_table_ = new QTableWidget(0, 10, page);
+    boundary_table_ = new QTableWidget(0, 12, page);
     boundary_table_->setHorizontalHeaderLabels(QStringList{
         QStringLiteral("Patch"), QStringLiteral("Type"), QStringLiteral("Ux"), QStringLiteral("Uy"),
         QStringLiteral("Uz"), QStringLiteral("p"), QStringLiteral("Turb. intensity"),
-        QStringLiteral("Visc. ratio"), QStringLiteral("Thermal"), QStringLiteral("T / heat flux")});
+        QStringLiteral("Visc. ratio"), QStringLiteral("Thermal"), QStringLiteral("T / heat flux"),
+        QStringLiteral("Inlet T [K] (compr.)"), QStringLiteral("Contact angle [deg]")});
     boundary_table_->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
     boundary_table_->setSelectionMode(QAbstractItemView::NoSelection);
     layout->addWidget(boundary_table_);
@@ -534,6 +632,25 @@ void CaseEditor::set_config(const cases::CaseConfig& cfg) {
         beta_->setText(QString::number(e.beta, 'g', 12));
         t_ref_->setText(QString::number(e.t_ref, 'g', 12));
         set_vec(gravity_, e.gravity);
+        nu_law_->setText(law_text(e.nu_law));
+        alpha_law_->setText(law_text(e.alpha_law));
+        radiation_->setChecked(config_.radiation.has_value());
+        const fv::RadiationSettings r = config_.radiation.value_or(fv::RadiationSettings{});
+        absorption_->setText(QString::number(r.absorption, 'g', 12));
+        emissivity_->setValue(r.emissivity);
+    }
+    {
+        const fv::CompressibleSettings c =
+            config_.compressible.value_or(fv::CompressibleSettings{});
+        compressible_->setChecked(config_.compressible.has_value());
+        gamma_->setValue(c.gamma);
+        r_gas_->setText(QString::number(c.r_gas, 'g', 12));
+        mu_->setText(QString::number(c.mu, 'g', 12));
+        cfl_->setText(QString::number(c.cfl, 'g', 12));
+        sutherland_->setChecked(c.mu_law.kind == fv::PropertyLaw::Kind::Sutherland);
+        implicit_->setChecked(c.implicit);
+        krylov_->setValue(c.krylov_dim);
+        limiter_->setCurrentIndex(c.limiter == fv::Limiter::Venkatakrishnan ? 1 : 0);
     }
 
     // Boundaries.
@@ -620,12 +737,48 @@ cases::CaseConfig CaseEditor::config() const {
         e.beta = parse_or(beta_, e.beta);
         e.t_ref = parse_or(t_ref_, e.t_ref);
         e.gravity = get_vec(gravity_);
+        e.nu_law = parse_law(nu_law_, e.nu_law, flow.nu);
+        e.alpha_law = parse_law(alpha_law_, e.alpha_law, e.alpha);
         cfg.energy = e;
+        if (radiation_->isChecked()) {
+            fv::RadiationSettings r = config_.radiation.value_or(fv::RadiationSettings{});
+            r.absorption = parse_or(absorption_, r.absorption);
+            r.emissivity = emissivity_->value();
+            cfg.radiation = r;
+        } else {
+            cfg.radiation.reset();
+        }
     } else {
+        cfg.radiation.reset();
         cfg.energy.reset();
         cfg.thermal.clear();
         cfg.heat.patches.clear();
         cfg.initial.temperature.reset();
+    }
+
+    if (compressible_->isChecked()) {
+        fv::CompressibleSettings c = config_.compressible.value_or(fv::CompressibleSettings{});
+        c.gamma = gamma_->value();
+        c.r_gas = parse_or(r_gas_, c.r_gas);
+        c.mu = parse_or(mu_, c.mu);
+        c.cfl = parse_or(cfl_, c.cfl);
+        if (sutherland_->isChecked()) {
+            if (c.mu_law.kind != fv::PropertyLaw::Kind::Sutherland) {
+                c.mu_law = fv::PropertyLaw{};
+                c.mu_law.kind = fv::PropertyLaw::Kind::Sutherland;
+            }
+            c.mu_law.reference = c.mu;
+        } else if (c.mu_law.kind == fv::PropertyLaw::Kind::Sutherland) {
+            c.mu_law = fv::PropertyLaw{};
+        }
+        c.implicit = implicit_->isChecked();
+        c.krylov_dim = krylov_->value();
+        c.limiter = limiter_->currentIndex() == 1 ? fv::Limiter::Venkatakrishnan
+                                                  : fv::Limiter::BarthJespersen;
+        c.turbulence = cfg.turbulence == cases::TurbulenceKind::KOmegaSst;
+        cfg.compressible = c;
+    } else {
+        cfg.compressible.reset();
     }
 
     // Initial.
@@ -749,6 +902,14 @@ void CaseEditor::rebuild_boundary_table() {
                                              th == config_.thermal.end() ? 0.0 : th->second.value);
         watch(tvalue, false);
         boundary_table_->setCellWidget(r, 9, tvalue);
+        QDoubleSpinBox* inlet_t = make_double(boundary_table_, 0.0, 1e6, 4, bc.temperature);
+        inlet_t->setToolTip(QStringLiteral("Compressible velocity inlets: static temperature"));
+        watch(inlet_t, false);
+        boundary_table_->setCellWidget(r, 10, inlet_t);
+        QDoubleSpinBox* angle = make_double(boundary_table_, 0.1, 179.9, 2, bc.contact_angle);
+        angle->setToolTip(QStringLiteral("Multiphase walls: static contact angle through phase 1"));
+        watch(angle, false);
+        boundary_table_->setCellWidget(r, 11, angle);
     }
 }
 
@@ -769,6 +930,8 @@ fv::BoundaryCondition CaseEditor::read_boundary_row(int row) const {
     bc.pressure = table_double(boundary_table_, row, 5, bc.pressure);
     bc.turbulence_intensity = table_double(boundary_table_, row, 6, bc.turbulence_intensity);
     bc.viscosity_ratio = table_double(boundary_table_, row, 7, bc.viscosity_ratio);
+    bc.temperature = table_double(boundary_table_, row, 10, bc.temperature);
+    bc.contact_angle = table_double(boundary_table_, row, 11, bc.contact_angle);
     return bc;
 }
 
