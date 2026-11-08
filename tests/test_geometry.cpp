@@ -80,7 +80,7 @@ TEST(Geometry, InvalidSpecsThrow) {
     EXPECT_THROW((void)cfd::geometry::write_geo(internal), std::invalid_argument);
 
     GeometrySpec bl3d;
-    bl3d.bl_layers = 3; // boundary layers only in 2D
+    bl3d.bl_layers = 3; // 3D boundary layers need bodies
     bl3d.bl_first = 1e-3;
     EXPECT_THROW((void)cfd::geometry::write_geo(bl3d), std::invalid_argument);
 
@@ -110,6 +110,60 @@ TEST(Geometry, GenerateMesh2dCylinder) {
     EXPECT_EQ(q.n_negative_volumes, 0);
     // One cell layer: front and back have one face per cell.
     EXPECT_EQ(mesh.find_patch("front")->n_faces, mesh.n_cells());
+}
+
+// 3D prism boundary layers around a sphere: prisms on the body, tets elsewhere, exact
+// volume, valid cells; the case-file syntax enables them for 3D geometries.
+TEST(Geometry, GenerateMesh3dPrismLayers) {
+    const std::string gmsh = cfd::geometry::find_gmsh();
+    if (gmsh.empty()) {
+        GTEST_SKIP() << "Gmsh not installed";
+    }
+    GeometrySpec s;
+    s.domain_min = Vec3(-1.5, -1, -1);
+    s.domain_max = Vec3(2.5, 1, 1);
+    Body sphere;
+    sphere.kind = Body::Kind::Sphere;
+    sphere.radius = 0.25;
+    sphere.patch = "sphere";
+    s.bodies.push_back(sphere);
+    s.size = 0.3;
+    s.size_near = 0.06;
+    s.refine_distance = 0.5;
+    s.bl_layers = 5;
+    s.bl_first = 0.005;
+    s.bl_ratio = 1.3;
+    s.domain_patch_names = {"inlet", "outlet", "side", "side", "side", "side"};
+    EXPECT_NE(cfd::geometry::write_geo(s).find("Recombine"), std::string::npos);
+    const auto dir = std::filesystem::temp_directory_path() / "cfd_test_geometry_bl3d";
+    const auto mesh = cfd::geometry::generate_mesh(s, dir, gmsh);
+    ASSERT_NE(mesh.find_patch("sphere"), nullptr);
+    EXPECT_EQ(mesh.find_patch("sphere")->type, cfd::mesh::PatchType::Wall);
+    EXPECT_NE(mesh.find_patch("inlet"), nullptr);
+    EXPECT_NE(mesh.find_patch("side"), nullptr);
+    const auto q = cfd::mesh::compute_quality(mesh);
+    const double expected = 4.0 * 2.0 * 2.0 - 4.0 / 3.0 * std::numbers::pi * std::pow(0.25, 3);
+    EXPECT_NEAR(q.total_volume, expected, 2e-3 * expected);
+    EXPECT_EQ(q.n_negative_volumes, 0);
+    // Prism cells (5 faces) form the layers: 5 per sphere surface triangle.
+    int prisms = 0;
+    for (cfd::core::Label c = 0; c < mesh.n_cells(); ++c) {
+        prisms += mesh.cell_face_offsets()[static_cast<std::size_t>(c) + 1] -
+                              mesh.cell_face_offsets()[static_cast<std::size_t>(c)] ==
+                          5
+                      ? 1
+                      : 0;
+    }
+    EXPECT_EQ(prisms, 5 * mesh.find_patch("sphere")->n_faces);
+    // First layer thickness: wall cell centres at about bl_first / 2 from their wall face.
+    const auto* wall = mesh.find_patch("sphere");
+    for (cfd::core::Label i = 0; i < wall->n_faces; ++i) {
+        const auto f = static_cast<std::size_t>(wall->start_face + i);
+        const auto c = static_cast<std::size_t>(mesh.owner()[f]);
+        const Vec3 n = mesh.face_area_vectors()[f].normalized();
+        const double dn = std::abs((mesh.cell_centres()[c] - mesh.face_centres()[f]).dot(n));
+        EXPECT_NEAR(dn, 0.0025, 0.0008);
+    }
 }
 
 } // namespace

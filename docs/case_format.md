@@ -59,7 +59,7 @@ Gmsh meshes accept only `type` and `file`; box meshes accept only the keys above
 | `size` | number | `0.05` | Maximum cell size. |
 | `size_near` | number | `0` | Cell size at body surfaces (<= 0: `size`). |
 | `refine_distance` | number | `0` | Distance over which `size_near` grows to `size`. |
-| `boundary_layer` | object | none | `layers`, `first` (first cell height), `ratio` (growth). Quad layers around bodies, 2D only. |
+| `boundary_layer` | object | none | `layers`, `first` (first cell height), `ratio` (growth). 2D: quad layers around bodies; 3D (external flow, non-solid bodies in a box domain): prism layers extruded along the body surface normals, tetrahedra elsewhere. |
 | `quads` | bool | `true` | 2D: recombine into quads (hex cells after extrusion). |
 | `domain_patches` | object | face names | Patch names of the box faces `xmin` ... `zmax`. Equal names are merged. |
 | `patches` | array | `[]` | `{"name", "min", "max"}`: every boundary surface inside the box gets this patch name. |
@@ -88,6 +88,29 @@ other patches follow their names (`inlet*`, `outlet*`, `wall*`, `sym*`), otherwi
 | `nu` | number | `0.001` | Kinematic viscosity [m^2/s]. Must be > 0. |
 | `body_force` | [num, num, num] | `[0, 0, 0]` | Acceleration [m/s^2], e.g. a driving pressure gradient. |
 | `turbulence` | string | `"laminar"` | `"laminar"` or `"kOmegaSST"`. |
+
+### Variable properties and radiation (`physics.energy`)
+
+`physics.energy.properties`: temperature-dependent `nu` (applied to the flow) and `alpha`
+(fluid thermal diffusivity), each a property law:
+`{"law": "constant" | "polynomial" | "sutherland" | "power", "reference", "coefficients",
+"t_ref", "s", "exponent"}` – polynomial: Σ cᵢ Tⁱ; Sutherland: ref (T/t_ref)^1.5 (t_ref + s)/(T + s);
+power: ref (T/t_ref)^exponent. Compressible: `physics.compressible.viscosity` (same syntax,
+e.g. `{"law": "sutherland", "reference": 1.716e-5}`; conduction k = c_p μ(T)/Pr).
+
+`physics.energy.radiation` (P1 model, grey medium; temperatures in K, `heat.rho_cp` must be the
+physical ρc_p [J/(m³K)]; not with solid regions):
+
+| Key | Default | Description |
+|---|---|---|
+| `model` | `"P1"` | Only P1. |
+| `absorption` | `1` | Absorption coefficient a [1/m] (> 0). |
+| `scattering` | `0` | Scattering coefficient [1/m]. |
+| `anisotropy` | `0` | Linear-anisotropic phase function coefficient (−1…1). |
+| `emissivity` | `1` | Default wall emissivity (walls, inlets, outlets use Marshak conditions at the boundary temperature; symmetry / empty: no radiative flux). |
+| `patch_emissivity` | `{}` | Per patch: `{"wall": 0.8}`. |
+
+Output field `G` (incident radiation); `heat` flows include the radiative part.
 
 ### Compressible (`physics.compressible`)
 

@@ -147,7 +147,9 @@ void read_entities(std::istream& in, RawData& data) {
     for (long long i = 0; i < n_curves + n_surfaces + n_volumes; ++i) {
         const auto tag = read<int>(in, "entity tag");
         for (int k = 0; k < 6; ++k) {
-            read<double>(in, "bounding box");
+            // As text: extruded / discrete entities can have +-1.797693134862316e+308 (rounded
+            // DBL_MAX), which overflows when parsed as double. The box is not used.
+            read<std::string>(in, "bounding box");
         }
         const auto phys = read_physicals();
         skip_bounding();
