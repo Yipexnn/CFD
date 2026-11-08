@@ -786,9 +786,6 @@ CaseConfig parse_case(const std::string& json_text, const std::filesystem::path&
         fail("physics.energy", "thermal settings need the energy equation (physics.energy)");
     }
 
-    if (c.radiation && !c.solids.empty()) {
-        fail("physics.energy.radiation", "not combinable with solid regions (yet)");
-    }
     if (c.compressible) {
         if (c.energy || !c.solids.empty() || c.multiphase) {
             fail("physics.compressible", "not combinable with energy, solids or multiphase");

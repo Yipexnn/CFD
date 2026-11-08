@@ -406,16 +406,82 @@ void CaseRunner::setup() {
 
 void CaseRunner::update_radiation() {
     // Solve G for the current temperature and pass the linearised radiative source (divided by
-    // the fluid rho c_p) to the energy equation for its next solve.
-    const std::vector<Scalar>& t = energy_->temperature();
-    (void)radiation_->correct(t, energy_->boundary_temperature());
-    std::vector<Scalar> su;
-    std::vector<Scalar> sp;
-    radiation_->energy_source(t, su, sp);
-    const Scalar rho_cp = config_.heat.rho_cp;
-    for (std::size_t c = 0; c < su.size(); ++c) {
-        su[c] /= rho_cp;
-        sp[c] /= rho_cp;
+    // the fluid rho c_p of physics.energy) to the energy equation for its next solve.
+    const Scalar rho_cp = energy_->settings().rho_cp;
+    if (!fluid_) {
+        const std::vector<Scalar>& t = energy_->temperature();
+        (void)radiation_->correct(t, energy_->boundary_temperature());
+        std::vector<Scalar> su;
+        std::vector<Scalar> sp;
+        radiation_->energy_source(t, su, sp);
+        for (std::size_t c = 0; c < su.size(); ++c) {
+            su[c] /= rho_cp;
+            sp[c] /= rho_cp;
+        }
+        energy_->set_source(std::move(su), std::move(sp));
+        return;
+    }
+    // Conjugate: radiation in the fluid zone; fluid/solid interfaces are opaque walls at the
+    // interface temperature, and their net radiative flux is a surface heat sink of the solid
+    // cells behind them.
+    const mesh::Mesh& full = full_mesh();
+    const mesh::Mesh& fm = fluid_->mesh;
+    const auto fnif = static_cast<std::size_t>(full.n_internal_faces());
+    const auto snif = static_cast<std::size_t>(fm.n_internal_faces());
+    const std::vector<Scalar>& t_full = energy_->temperature();
+    const std::vector<Scalar> tb_full = energy_->boundary_temperature();
+    const std::vector<Scalar> t_fluid = energy_->fluid_temperature();
+    std::vector<Scalar> tb(static_cast<std::size_t>(fm.n_boundary_faces()));
+    for (std::size_t b = 0; b < tb.size(); ++b) {
+        const auto pf = static_cast<std::size_t>(fluid_->parent_face[snif + b]);
+        if (pf >= fnif) {
+            tb[b] = tb_full[pf - fnif];
+        } else {
+            // Surface temperature of the interface: conductivity-weighted (continuity of the
+            // conductive flux), i.e. the solid temperature next to a weakly conducting gas.
+            const auto o = static_cast<std::size_t>(full.owner()[pf]);
+            const auto n = static_cast<std::size_t>(full.neighbour()[pf]);
+            const Vec3& cf = full.face_centres()[pf];
+            const Vec3 nrm = full.face_area_vectors()[pf].normalized();
+            auto conductance = [&](std::size_t c) {
+                const int zone = conjugate_->zone_of_cell[c];
+                const Scalar k =
+                    zone > 0 ? conjugate_->solids[static_cast<std::size_t>(zone - 1)].conductivity /
+                                   energy_->settings().rho_cp
+                             : energy_->settings().alpha;
+                return k / std::max(std::abs((cf - full.cell_centres()[c]).dot(nrm)), 1e-300);
+            };
+            const Scalar go = conductance(o);
+            const Scalar gn = conductance(n);
+            tb[b] = (go * t_full[o] + gn * t_full[n]) / (go + gn);
+        }
+    }
+    (void)radiation_->correct(t_fluid, tb);
+    std::vector<Scalar> su_fluid;
+    std::vector<Scalar> sp_fluid;
+    radiation_->energy_source(t_fluid, su_fluid, sp_fluid);
+    std::vector<Scalar> su(t_full.size(), 0.0);
+    std::vector<Scalar> sp(t_full.size(), 0.0);
+    for (std::size_t c = 0; c < su_fluid.size(); ++c) {
+        const auto p = static_cast<std::size_t>(fluid_->parent_cell[c]);
+        su[p] = su_fluid[c] / rho_cp;
+        sp[p] = sp_fluid[c] / rho_cp;
+    }
+    const std::vector<Scalar> q = radiation_->wall_heat_flux(); // into the gas [W/m^2]
+    std::vector<char> is_fluid(t_full.size(), 0);
+    for (const Label c : fluid_->parent_cell) {
+        is_fluid[static_cast<std::size_t>(c)] = 1;
+    }
+    for (std::size_t b = 0; b < q.size(); ++b) {
+        const auto pf = static_cast<std::size_t>(fluid_->parent_face[snif + b]);
+        if (pf >= fnif || q[b] == 0.0) {
+            continue;
+        }
+        const auto o = static_cast<std::size_t>(full.owner()[pf]);
+        const auto n = static_cast<std::size_t>(full.neighbour()[pf]);
+        const std::size_t solid = is_fluid[o] != 0 ? n : o;
+        const Scalar area = fm.face_area_vectors()[snif + b].norm();
+        su[solid] -= q[b] * area / full.cell_volumes()[solid] / rho_cp;
     }
     energy_->set_source(std::move(su), std::move(sp));
 }
