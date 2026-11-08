@@ -6,23 +6,7 @@
 #include <cstdlib>
 #include <gtest/gtest.h>
 
-namespace {
-
-QApplication& app() {
-#ifndef _WIN32
-    setenv("QT_QPA_PLATFORM", "offscreen", 0); // Windows: static Qt ships the native plugin only
-#endif
-    static int argc = 1;
-    static char name[] = "cfd_case_editor_tests";
-    static char* argv[] = {name, nullptr};
-    static QApplication application(argc, argv);
-    return application;
-}
-
-} // namespace
-
 TEST(CaseEditor, RoundTripOfNewSettings) {
-    (void)app();
     using namespace cfd;
     cases::CaseConfig c;
     c.name = "editor";
@@ -71,4 +55,14 @@ TEST(CaseEditor, RoundTripOfNewSettings) {
     EXPECT_DOUBLE_EQ(b.radiation->patch_emissivity.at("xmin"), 0.3); // no widget: kept
     EXPECT_DOUBLE_EQ(b.boundaries.at("xmin").contact_angle, 60.0);
     EXPECT_DOUBLE_EQ(b.boundaries.at("xmin").temperature, 350.0);
+}
+
+// Own main: the QApplication must outlive the tests and be destroyed before Qt's statics.
+int main(int argc, char** argv) {
+#ifndef _WIN32
+    setenv("QT_QPA_PLATFORM", "offscreen", 0); // Windows: static Qt ships the native plugin only
+#endif
+    QApplication app(argc, argv);
+    ::testing::InitGoogleTest(&argc, argv);
+    return RUN_ALL_TESTS();
 }

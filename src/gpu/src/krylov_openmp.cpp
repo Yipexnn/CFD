@@ -206,11 +206,11 @@ SolveStats solve_amg_openmp(const AmgView& amg, const double* b, double* x,
             if (m.n == 0 || m.row_ptr == nullptr) {
                 return;
             }
-            const int* rp = m.row_ptr;
-            const int* ci = m.col;
-            const double* va = m.val;
-            const int rows = m.n + 1;
-            const int nnz = m.nnz;
+            [[maybe_unused]] const int* rp = m.row_ptr;
+            [[maybe_unused]] const int* ci = m.col;
+            [[maybe_unused]] const double* va = m.val;
+            [[maybe_unused]] const int rows = m.n + 1;
+            [[maybe_unused]] const int nnz = m.nnz;
             if (to_device) {
 #pragma omp target enter data map(to : rp[0 : rows], ci[0 : nnz], va[0 : nnz])
             } else {
@@ -221,27 +221,27 @@ SolveStats solve_amg_openmp(const AmgView& amg, const double* b, double* x,
             map_csr(amg.levels[l].a, true);
             map_csr(amg.levels[l].p, true);
             map_csr(amg.levels[l].r, true);
-            double* d = dinv[l].data();
-            double* wk = work[l].data();
-            const int nd = static_cast<int>(dinv[l].size());
-            const int nw = static_cast<int>(work[l].size());
+            [[maybe_unused]] double* d = dinv[l].data();
+            [[maybe_unused]] double* wk = work[l].data();
+            [[maybe_unused]] const int nd = static_cast<int>(dinv[l].size());
+            [[maybe_unused]] const int nw = static_cast<int>(work[l].size());
 #pragma omp target enter data map(to : d[0 : nd], wk[0 : nw])
         }
-        const double* ci = amg.coarse_inverse;
-        const int nc = amg.levels.back().a.n;
-        const long long ncc = static_cast<long long>(nc) * nc;
-        double* cw = cg_work.data();
-        const int ncw = static_cast<int>(cg_work.size());
+        [[maybe_unused]] const double* ci = amg.coarse_inverse;
+        [[maybe_unused]] const int nc = amg.levels.back().a.n;
+        [[maybe_unused]] const long long ncc = static_cast<long long>(nc) * nc;
+        [[maybe_unused]] double* cw = cg_work.data();
+        [[maybe_unused]] const int ncw = static_cast<int>(cg_work.size());
 #pragma omp target data map(to : b[0 : n], ci[0 : ncc]) map(tofrom : x[0 : n]) map(to : cw[0 : ncw])
         { st = run_amg<OffloadSpace>(amg, b, x, control, dinv, work, cg_work); }
         for (std::size_t l = 0; l < nl; ++l) {
             map_csr(amg.levels[l].a, false);
             map_csr(amg.levels[l].p, false);
             map_csr(amg.levels[l].r, false);
-            double* d = dinv[l].data();
-            double* wk = work[l].data();
-            const int nd = static_cast<int>(dinv[l].size());
-            const int nw = static_cast<int>(work[l].size());
+            [[maybe_unused]] double* d = dinv[l].data();
+            [[maybe_unused]] double* wk = work[l].data();
+            [[maybe_unused]] const int nd = static_cast<int>(dinv[l].size());
+            [[maybe_unused]] const int nw = static_cast<int>(work[l].size());
 #pragma omp target exit data map(release : d[0 : nd], wk[0 : nw])
         }
         st.on_device = true;

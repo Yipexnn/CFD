@@ -46,7 +46,7 @@ if(CFD_BUILD_GUI)
     set_target_properties(cfd_case_editor_tests PROPERTIES AUTOMOC ON)
     target_include_directories(cfd_case_editor_tests PRIVATE ${CMAKE_SOURCE_DIR}/src/gui)
     target_link_libraries(cfd_case_editor_tests PRIVATE cfd::case cfd::gui_core
-                          Qt${QT_VERSION_MAJOR}::Widgets GTest::gtest_main)
+                          Qt${QT_VERSION_MAJOR}::Widgets GTest::gtest)
     cfd_target_defaults(cfd_case_editor_tests)
     gtest_discover_tests(cfd_case_editor_tests DISCOVERY_MODE PRE_TEST)
 endif()
