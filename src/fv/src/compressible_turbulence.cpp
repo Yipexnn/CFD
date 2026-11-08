@@ -16,9 +16,32 @@ constexpr Scalar k_small = 1e-15;
 
 } // namespace
 
-Scalar CompressibleSolver::face_mut(std::size_t face) const {
-    if (mut_.empty()) {
+Scalar CompressibleSolver::cell_mu(std::size_t cell) const {
+    if (settings_.mu_law.is_constant()) {
         return settings_.mu;
+    }
+    const GasState st = to_primitive(q_[cell]);
+    return settings_.mu_law(st.p / (st.rho * settings_.r_gas));
+}
+
+Scalar CompressibleSolver::face_mu(std::size_t face) const {
+    const Mesh& m = geo_.mesh();
+    const auto p = static_cast<std::size_t>(m.owner()[face]);
+    if (settings_.mu_law.is_constant()) {
+        return settings_.mu;
+    }
+    if (face < static_cast<std::size_t>(m.n_internal_faces())) {
+        const auto n = static_cast<std::size_t>(m.neighbour()[face]);
+        const Scalar w = geo_.weights()[face];
+        return w * cell_mu(p) + (1.0 - w) * cell_mu(n);
+    }
+    return cell_mu(p);
+}
+
+Scalar CompressibleSolver::face_mut(std::size_t face) const {
+    const Scalar mu = face_mu(face);
+    if (mut_.empty()) {
+        return mu;
     }
     const Mesh& m = geo_.mesh();
     const auto nif = static_cast<std::size_t>(m.n_internal_faces());
@@ -26,12 +49,12 @@ Scalar CompressibleSolver::face_mut(std::size_t face) const {
     if (face < nif) {
         const auto n = static_cast<std::size_t>(m.neighbour()[face]);
         const Scalar w = geo_.weights()[face];
-        return settings_.mu + w * mut_[p] + (1.0 - w) * mut_[n];
+        return mu + w * mut_[p] + (1.0 - w) * mut_[n];
     }
     if (is_wall_face_[face - nif] != 0) {
-        return settings_.mu;
+        return mu;
     }
-    return settings_.mu + mut_[p];
+    return mu + mut_[p];
 }
 
 void CompressibleSolver::init_turbulence() {
@@ -99,8 +122,6 @@ void CompressibleSolver::correct_turbulence(Scalar dt) {
     const auto& w = geo_.weights();
     const auto& sf = m.face_area_vectors();
     const auto& vol = m.cell_volumes();
-    const Scalar mu = settings_.mu;
-
     std::vector<GasState> s(nc);
     for (std::size_t c = 0; c < nc; ++c) {
         s[c] = to_primitive(q_[c]);
@@ -160,7 +181,7 @@ void CompressibleSolver::correct_turbulence(Scalar dt) {
     std::vector<Scalar> g(nc); // production rho nu_t S^2
     for (std::size_t c = 0; c < nc; ++c) {
         rho[c] = s[c].rho;
-        const Scalar nu = mu / rho[c];
+        const Scalar nu = cell_mu(c) / rho[c];
         const Mat3 sym = 0.5 * (grad_u[c] + grad_u[c].transpose());
         s2[c] = 2.0 * sym.squaredNorm();
         const Scalar kc = k_[c];
@@ -191,7 +212,7 @@ void CompressibleSolver::correct_turbulence(Scalar dt) {
         }
         const auto p = static_cast<std::size_t>(own[f]);
         const Scalar y = y_[p];
-        const Scalar nu = mu / rho[p];
+        const Scalar nu = cell_mu(p) / rho[p];
         const Scalar omega_vis = 6.0 * nu / (Sst::k_beta1 * y * y);
         const Scalar omega_log = std::sqrt(k_[p]) / (cmu25 * Sst::k_kappa * y);
         omega_wall[p] += std::sqrt(omega_vis * omega_vis + omega_log * omega_log);
@@ -215,11 +236,11 @@ void CompressibleSolver::correct_turbulence(Scalar dt) {
         for (std::size_t f = 0; f < nif; ++f) {
             const auto p = static_cast<std::size_t>(own[f]);
             const auto n = static_cast<std::size_t>(nei[f]);
-            gamma[f] = mu + w[f] * sigma_mut[p] + (1.0 - w[f]) * sigma_mut[n];
+            gamma[f] = face_mu(f) + w[f] * sigma_mut[p] + (1.0 - w[f]) * sigma_mut[n];
         }
         for (std::size_t f = nif; f < nf; ++f) {
             const auto p = static_cast<std::size_t>(own[f]);
-            gamma[f] = is_wall_face_[f - nif] != 0 ? mu : mu + sigma_mut[p];
+            gamma[f] = face_mu(f) + (is_wall_face_[f - nif] != 0 ? 0.0 : sigma_mut[p]);
         }
         return gamma;
     };

@@ -8,10 +8,13 @@ namespace cfd::fv {
 
 // FixedGradient: value = outward normal gradient d(phi)/dn, i.e. the diffusive flux into
 // the domain per unit area is gamma * value.
+// Mixed (Robin): diffusive flux into the domain = h (value - phi_b) per unit area with
+// coefficient = h / gamma [1/m] (e.g. Marshak radiation boundary condition).
 struct ScalarBoundary {
-    enum class Kind { FixedValue, ZeroGradient, FixedGradient };
+    enum class Kind { FixedValue, ZeroGradient, FixedGradient, Mixed };
     Kind kind = Kind::ZeroGradient;
     Scalar value = 0.0;
+    Scalar coefficient = 0.0; // Mixed: h / gamma
 };
 
 // Steady or transient convection-diffusion equation for a cell scalar phi:

@@ -52,6 +52,9 @@ void SolverWorker::take_snapshot(const cases::CaseRunner& runner) {
     }
     if (const auto* energy = runner.energy()) {
         s.fields.t = energy->temperature();
+        if (const auto* rad = runner.radiation()) {
+            s.fields.g = rad->incident_radiation();
+        }
     }
     {
         const std::lock_guard<std::mutex> lock(mutex_);

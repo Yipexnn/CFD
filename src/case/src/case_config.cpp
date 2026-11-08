@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cfd/case/case_config.hpp>
 #include <fstream>
 #include <nlohmann/json.hpp>
@@ -280,6 +281,49 @@ MeshConfig parse_mesh(const json& j, std::vector<SolidConfig>& solids) {
     return m;
 }
 
+// Temperature-dependent property: {"law": "constant" | "polynomial" | "sutherland" | "power",
+// "reference", "coefficients", "t_ref", "s", "exponent"}.
+fv::PropertyLaw parse_property_law(const json& j, const std::string& path, Scalar reference) {
+    if (!j.is_object()) {
+        fail(path, "expected an object with \"law\"");
+    }
+    check_keys(j, path, {"law", "reference", "coefficients", "t_ref", "s", "exponent"});
+    fv::PropertyLaw law;
+    law.reference = get_number(j, "reference", path, reference);
+    law.t_ref = get_number(j, "t_ref", path, law.t_ref);
+    law.s = get_number(j, "s", path, law.s);
+    law.exponent = get_number(j, "exponent", path, law.exponent);
+    const std::string kind = get_string(j, "law", path, "constant");
+    if (kind == "constant") {
+        law.kind = fv::PropertyLaw::Kind::Constant;
+    } else if (kind == "polynomial") {
+        law.kind = fv::PropertyLaw::Kind::Polynomial;
+        if (!j.contains("coefficients") || !j["coefficients"].is_array() ||
+            j["coefficients"].empty()) {
+            fail(path + ".coefficients", "polynomial needs coefficients [c0, c1, ...]");
+        }
+        for (const auto& v : j["coefficients"]) {
+            if (!v.is_number()) {
+                fail(path + ".coefficients", "expected numbers");
+            }
+            law.coefficients.push_back(v.get<Scalar>());
+        }
+    } else if (kind == "sutherland") {
+        law.kind = fv::PropertyLaw::Kind::Sutherland;
+    } else if (kind == "power") {
+        law.kind = fv::PropertyLaw::Kind::PowerLaw;
+    } else {
+        fail(path + ".law", "unknown law '" + kind + "' (constant, polynomial, sutherland, power)");
+    }
+    if (law.kind != fv::PropertyLaw::Kind::Polynomial && !(law.reference > 0.0)) {
+        fail(path + ".reference", "must be positive");
+    }
+    if (!(law.t_ref > 0.0)) {
+        fail(path + ".t_ref", "must be positive");
+    }
+    return law;
+}
+
 fv::BoundaryCondition parse_boundary(const json& j, const std::string& path) {
     check_keys(j, path,
                {"type", "velocity", "pressure", "turbulence_intensity", "viscosity_ratio",
@@ -348,7 +392,8 @@ CaseConfig parse_case(const std::string& json_text, const std::filesystem::path&
             const std::string cpp = "physics.compressible";
             check_keys(cp, cpp,
                        {"gamma", "r_gas", "mu", "prandtl", "cfl", "second_order", "limiter",
-                        "venkat_k", "implicit", "krylov_dim", "krylov_tolerance", "prandtl_t"});
+                        "venkat_k", "implicit", "krylov_dim", "krylov_tolerance", "prandtl_t",
+                        "viscosity"});
             fv::CompressibleSettings cs;
             cs.gamma = get_number(cp, "gamma", cpp, cs.gamma);
             cs.r_gas = get_number(cp, "r_gas", cpp, cs.r_gas);
@@ -370,6 +415,14 @@ CaseConfig parse_case(const std::string& json_text, const std::filesystem::path&
             cs.krylov_dim = static_cast<int>(get_number(cp, "krylov_dim", cpp, cs.krylov_dim));
             cs.krylov_tolerance = get_number(cp, "krylov_tolerance", cpp, cs.krylov_tolerance);
             cs.prandtl_t = get_number(cp, "prandtl_t", cpp, cs.prandtl_t);
+            if (cp.contains("viscosity")) {
+                cs.mu_law = parse_property_law(cp["viscosity"], cpp + ".viscosity", cs.mu);
+                if (!cs.mu_law.is_constant() && !(cs.mu > 0.0)) {
+                    cs.mu = cs.mu_law.kind == fv::PropertyLaw::Kind::Polynomial
+                                ? cs.mu_law(cs.mu_law.t_ref)
+                                : cs.mu_law.reference;
+                }
+            }
             if (cs.krylov_dim < 0 || !(cs.krylov_tolerance > 0.0) || !(cs.prandtl_t > 0.0) ||
                 !(cs.venkat_k > 0.0)) {
                 fail(cpp, "needs krylov_dim >= 0, krylov_tolerance, prandtl_t, venkat_k > 0");
@@ -415,7 +468,8 @@ CaseConfig parse_case(const std::string& json_text, const std::filesystem::path&
             const json& e = p["energy"];
             const std::string ep = "physics.energy";
             check_keys(e, ep,
-                       {"alpha", "prandtl", "prandtl_t", "beta", "t_ref", "gravity", "rho_cp"});
+                       {"alpha", "prandtl", "prandtl_t", "beta", "t_ref", "gravity", "rho_cp",
+                        "properties", "radiation"});
             fv::EnergySettings es;
             if (e.contains("alpha") && e.contains("prandtl")) {
                 fail(ep, "give either alpha or prandtl");
@@ -429,6 +483,54 @@ CaseConfig parse_case(const std::string& json_text, const std::filesystem::path&
             es.rho_cp = get_number(e, "rho_cp", ep, es.rho_cp);
             if (!(es.alpha > 0.0) || !(es.prandtl_t > 0.0)) {
                 fail(ep, "alpha / prandtl and prandtl_t must be positive");
+            }
+            if (e.contains("properties")) {
+                const json& pr = e["properties"];
+                const std::string pp = ep + ".properties";
+                check_keys(pr, pp, {"nu", "alpha"});
+                if (pr.contains("nu")) {
+                    es.nu_law = parse_property_law(pr["nu"], pp + ".nu", flow.nu);
+                }
+                if (pr.contains("alpha")) {
+                    es.alpha_law = parse_property_law(pr["alpha"], pp + ".alpha", es.alpha);
+                }
+            }
+            if (e.contains("radiation")) {
+                const json& r = e["radiation"];
+                const std::string rp = ep + ".radiation";
+                check_keys(r, rp,
+                           {"model", "absorption", "scattering", "anisotropy", "emissivity",
+                            "patch_emissivity"});
+                if (get_string(r, "model", rp, "P1") != "P1") {
+                    fail(rp + ".model", "only \"P1\" is available");
+                }
+                fv::RadiationSettings rs;
+                rs.absorption = get_number(r, "absorption", rp, rs.absorption);
+                rs.scattering = get_number(r, "scattering", rp, rs.scattering);
+                rs.anisotropy = get_number(r, "anisotropy", rp, rs.anisotropy);
+                rs.emissivity = get_number(r, "emissivity", rp, rs.emissivity);
+                if (r.contains("patch_emissivity")) {
+                    const json& pe = r["patch_emissivity"];
+                    if (!pe.is_object()) {
+                        fail(rp + ".patch_emissivity", "expected {\"patch\": emissivity}");
+                    }
+                    for (const auto& [name, v] : pe.items()) {
+                        if (!v.is_number()) {
+                            fail(rp + ".patch_emissivity." + name, "expected a number");
+                        }
+                        rs.patch_emissivity[name] = v.get<Scalar>();
+                    }
+                }
+                const bool eps_ok =
+                    std::all_of(rs.patch_emissivity.begin(), rs.patch_emissivity.end(),
+                                [](const auto& kv) { return kv.second > 0.0 && kv.second <= 1.0; });
+                if (!(rs.absorption > 0.0) || rs.scattering < 0.0 ||
+                    std::abs(rs.anisotropy) > 1.0 ||
+                    !(rs.emissivity > 0.0 && rs.emissivity <= 1.0) || !eps_ok) {
+                    fail(rp, "needs absorption > 0, scattering >= 0, |anisotropy| <= 1, "
+                             "emissivities in (0, 1]");
+                }
+                c.radiation = rs;
             }
             c.energy = es;
         }
@@ -684,6 +786,9 @@ CaseConfig parse_case(const std::string& json_text, const std::filesystem::path&
         fail("physics.energy", "thermal settings need the energy equation (physics.energy)");
     }
 
+    if (c.radiation && !c.solids.empty()) {
+        fail("physics.energy.radiation", "not combinable with solid regions (yet)");
+    }
     if (c.compressible) {
         if (c.energy || !c.solids.empty() || c.multiphase) {
             fail("physics.compressible", "not combinable with energy, solids or multiphase");

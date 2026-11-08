@@ -139,8 +139,10 @@ std::pair<Scalar, Scalar> KOmegaSst::correct(const FlowSolver& flow, Scalar dt) 
     for (std::size_t b = 0; b < nb; ++b) {
         ub[b] = flow.boundary_velocity(nif + static_cast<Label>(b));
     }
+    const std::vector<Scalar>* nu =
+        flow.cell_viscosity().empty() ? nullptr : &flow.cell_viscosity();
     return correct(SstFlowState{flow.velocity(), flow.face_flux(), flow.velocity_gradient(),
-                                std::move(ub), nullptr},
+                                std::move(ub), nu},
                    dt);
 }
 

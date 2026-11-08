@@ -106,6 +106,10 @@ public:
     [[nodiscard]] const TurbulenceModel* turbulence_model() const { return turbulence_; }
 
     // Boundary condition of a boundary face (indexed by f - n_internal_faces).
+    // Variable laminar viscosity: per-cell nu (e.g. nu(T)); empty restores settings().nu.
+    void set_cell_viscosity(std::vector<Scalar> nu);
+    [[nodiscard]] const std::vector<Scalar>& cell_viscosity() const { return cell_nu_; }
+
     [[nodiscard]] const BoundaryCondition& boundary_condition(Label boundary_face_index) const {
         return bc(boundary_face_index);
     }
@@ -164,6 +168,7 @@ private:
     std::shared_ptr<AmgCache> p_amg_ = std::make_shared<AmgCache>(); // pressure AMG reuse
 
     std::vector<Vec3> u_;
+    std::vector<Scalar> cell_nu_; // optional variable laminar viscosity
     std::vector<Vec3> u_old_;
     std::vector<Vec3> u_old_old_; // BDF2: velocity two steps back (empty: not available)
     Scalar dt_old_ = 0.0;
