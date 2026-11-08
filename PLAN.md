@@ -40,7 +40,8 @@ Goal: realistic 3D CFD desktop application, running locally on Windows.
 9. ✅ **Transient benchmark, parallel AMG, conjugate heat transfer** – BDF2, Schäfer–Turek 2D-2, distributed AMG, solid zones → details: [docs/phase9.md](docs/phase9.md)
 10. ✅ **Geometry solids, multiphase, compressible** – solid bodies in Gmsh meshing, VOF two-phase flow (dam break), density-based compressible solver (Sod, oblique shock), Windows test checklist → details: [docs/phase10.md](docs/phase10.md)
 11. ✅ **Implicit/turbulent compressible, multiphase turbulence, contact angles, GPU** (GPU hardware test pending) – LU-SGS + Jacobian-free Newton–Krylov, Venkatakrishnan limiter, compressible k-ω SST (turbulent flat plate), mixture SST for VOF, static contact angle (droplet spreading), GPU Krylov solvers (CUDA, OpenMP offload) → details: [docs/phase11.md](docs/phase11.md)
-12. 🔄 **Variable properties, radiation, 3D prism layers, parallel mesh, GPU AMG** – PropertyLaw (ν(T), α(T), Sutherland μ(T)), P1 radiation (radiative equilibrium validation), 3D prism boundary layers (sphere Re 100); parallel mesh distribution and GPU AMG / assembly pending → details: [docs/phase12.md](docs/phase12.md)
+12. ✅ **Variable properties, radiation, 3D prism layers** – PropertyLaw (ν(T), α(T), Sutherland μ(T)), P1 radiation (radiative equilibrium validation), 3D prism boundary layers (sphere Re 100) → details: [docs/phase12.md](docs/phase12.md)
+13. **Later** – parallel mesh distribution, GPU AMG / assembly, sphere wake refinement study, radiation with solid regions, GUI fields for compressible / contact-angle / property / radiation settings
 
 ## Notes
 - Development environment is Linux; code stays portable. Windows build/test via CI; GUI tested on user's PC.

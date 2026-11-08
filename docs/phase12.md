@@ -1,4 +1,4 @@
-# Phase 12 – Variable properties, radiation, 3D prism layers, (parallel mesh, GPU AMG)
+# Phase 12 – Variable properties, radiation, 3D prism layers
 
 ## Variable properties
 - `fv::PropertyLaw`: constant, polynomial Σ cᵢTⁱ, Sutherland, power law
@@ -48,5 +48,5 @@
 - [x] variable properties (incompressible + energy, compressible), tests
 - [x] P1 radiation, Marshak walls, case files, validation
 - [x] 3D prism layers for Gmsh geometries, 3D sphere example
-- [ ] parallel mesh distribution (root reads/partitions, ranks receive only their part)
-- [ ] GPU AMG preconditioner and GPU assembly
+- moved to later (PLAN item 13): parallel mesh distribution, GPU AMG preconditioner and
+  assembly
