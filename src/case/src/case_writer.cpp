@@ -242,6 +242,18 @@ std::string case_to_json(const CaseConfig& config) {
         energy["t_ref"] = e.t_ref;
         energy["gravity"] = vec3_json(e.gravity);
         energy["rho_cp"] = e.rho_cp;
+        if (config.radiation) {
+            const fv::RadiationSettings& r = *config.radiation;
+            ordered_json rad = {{"model", "P1"},
+                                {"absorption", r.absorption},
+                                {"scattering", r.scattering},
+                                {"anisotropy", r.anisotropy},
+                                {"emissivity", r.emissivity}};
+            if (!r.patch_emissivity.empty()) {
+                rad["patch_emissivity"] = r.patch_emissivity;
+            }
+            energy["radiation"] = rad;
+        }
         if (!e.nu_law.is_constant() || !e.alpha_law.is_constant()) {
             ordered_json props = ordered_json::object();
             if (!e.nu_law.is_constant()) {

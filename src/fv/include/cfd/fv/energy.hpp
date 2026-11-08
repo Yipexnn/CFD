@@ -81,6 +81,9 @@ public:
 
     // Temperature on the energy mesh (the full mesh for conjugate cases).
     [[nodiscard]] const std::vector<Scalar>& temperature() const { return t_; }
+    // Additional source su + sp T per unit volume in temperature units [K/s] (e.g. radiation
+    // divided by rho c_p); empty vectors remove it.
+    void set_source(std::vector<Scalar> su, std::vector<Scalar> sp);
     // Temperature on the flow (fluid) cells.
     [[nodiscard]] std::vector<Scalar> fluid_temperature() const;
     // nu(T) on the fluid cells (settings().nu_law); empty if the law is constant.
@@ -109,6 +112,8 @@ private:
     std::vector<ScalarBoundary> bc_;       // per boundary face, for solve_scalar
     std::vector<Scalar> t_;
     std::vector<Scalar> t_old_;
+    std::vector<Scalar> source_su_;
+    std::vector<Scalar> source_sp_;
 };
 
 } // namespace cfd::fv

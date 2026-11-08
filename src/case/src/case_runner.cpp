@@ -398,6 +398,26 @@ void CaseRunner::setup() {
     if (energy_ && !energy_->settings().nu_law.is_constant()) {
         flow_->set_cell_viscosity(energy_->fluid_viscosity());
     }
+    if (energy_ && config_.radiation) {
+        radiation_ = std::make_unique<fv::P1Radiation>(*flow_, *config_.radiation);
+        update_radiation();
+    }
+}
+
+void CaseRunner::update_radiation() {
+    // Solve G for the current temperature and pass the linearised radiative source (divided by
+    // the fluid rho c_p) to the energy equation for its next solve.
+    const std::vector<Scalar>& t = energy_->temperature();
+    (void)radiation_->correct(t, energy_->boundary_temperature());
+    std::vector<Scalar> su;
+    std::vector<Scalar> sp;
+    radiation_->energy_source(t, su, sp);
+    const Scalar rho_cp = config_.heat.rho_cp;
+    for (std::size_t c = 0; c < su.size(); ++c) {
+        su[c] /= rho_cp;
+        sp[c] /= rho_cp;
+    }
+    energy_->set_source(std::move(su), std::move(sp));
 }
 
 CaseRunner::~CaseRunner() = default;
@@ -577,6 +597,10 @@ void CaseRunner::write_results(const std::filesystem::path& file) const {
     }
     if (energy_) {
         turbulence.emplace_back("T", gather_cells(lm, energy_->temperature().data(), 1, ng));
+        if (radiation_) {
+            turbulence.emplace_back(
+                "G", gather_cells(lm, radiation_->incident_radiation().data(), 1, ng));
+        }
     }
     if (!world().is_root()) {
         return;
@@ -776,7 +800,8 @@ Scalar CaseRunner::heat_flow(const std::string& patch) const {
     if (!energy_) {
         throw std::runtime_error("heat_flow: the case has no energy equation");
     }
-    return config_.heat.rho_cp * energy_->patch_heat_flow(*flow_, patch);
+    const Scalar conduction = config_.heat.rho_cp * energy_->patch_heat_flow(*flow_, patch);
+    return radiation_ ? conduction + radiation_->patch_heat_flow(patch) : conduction;
 }
 
 Vec3 CaseRunner::force(const std::string& patch) const {
@@ -955,6 +980,9 @@ RunResult CaseRunner::run(const ProgressCallback& progress) {
             r.t = energy_->correct(*flow_, steady ? 0.0 : s.dt);
             if (!energy_->settings().nu_law.is_constant()) {
                 flow_->set_cell_viscosity(energy_->fluid_viscosity());
+            }
+            if (radiation_) {
+                update_radiation();
             }
         }
         ++step_;

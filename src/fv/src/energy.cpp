@@ -196,8 +196,8 @@ Scalar EnergyEquation::correct(const FlowSolver& flow, Scalar dt) {
     update_boundary(flow);
     ScalarEquation eq;
     eq.gamma_face = face_diffusivity(flow);
-    eq.su.assign(t_.size(), 0.0);
-    eq.sp.assign(t_.size(), 0.0);
+    eq.su = source_su_.empty() ? std::vector<Scalar>(t_.size(), 0.0) : source_su_;
+    eq.sp = source_sp_.empty() ? std::vector<Scalar>(t_.size(), 0.0) : source_sp_;
     eq.boundary = bc_;
     eq.relaxation = dt > 0.0 ? 1.0 : settings_.relaxation;
     eq.dt = dt;
@@ -223,6 +223,14 @@ std::vector<Vec3> EnergyEquation::buoyancy() const {
         }
     }
     return a;
+}
+
+void EnergyEquation::set_source(std::vector<Scalar> su, std::vector<Scalar> sp) {
+    if ((!su.empty() && su.size() != t_.size()) || su.size() != sp.size()) {
+        throw std::invalid_argument("EnergyEquation::set_source: size mismatch");
+    }
+    source_su_ = std::move(su);
+    source_sp_ = std::move(sp);
 }
 
 std::vector<Scalar> EnergyEquation::fluid_temperature() const {

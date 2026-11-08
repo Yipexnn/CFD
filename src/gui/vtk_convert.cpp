@@ -157,6 +157,7 @@ void set_fields(vtkUnstructuredGrid& grid, const FieldSet& fields) {
     add_scalar(grid, "alpha", fields.alpha);
     add_scalar(grid, "rho", fields.rho);
     add_scalar(grid, "Mach", fields.mach);
+    add_scalar(grid, "G", fields.g);
     grid.Modified();
 }
 
@@ -188,6 +189,9 @@ std::vector<std::string> scalar_field_names(const FieldSet& fields) {
     }
     if (!fields.rho.empty()) {
         names.emplace_back("rho");
+    }
+    if (!fields.g.empty()) {
+        names.emplace_back("G");
     }
     if (!fields.mach.empty()) {
         names.emplace_back("Mach");

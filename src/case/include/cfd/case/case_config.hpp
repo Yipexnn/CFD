@@ -6,6 +6,7 @@
 #include <cfd/fv/flow_solver.hpp>
 #include <cfd/fv/k_omega_sst.hpp>
 #include <cfd/fv/multiphase.hpp>
+#include <cfd/fv/radiation.hpp>
 #include <cfd/geometry/geometry.hpp>
 #include <cfd/mesh/box_mesher.hpp>
 #include <filesystem>
@@ -108,8 +109,9 @@ struct CaseConfig {
     MeshConfig mesh;
     TurbulenceKind turbulence = TurbulenceKind::Laminar;
     std::map<std::string, fv::BoundaryCondition> boundaries;
-    std::map<std::string, InletProfile> profiles; // patch -> parabolic inlet profile
-    std::optional<fv::EnergySettings> energy;     // energy equation enabled
+    std::map<std::string, InletProfile> profiles;   // patch -> parabolic inlet profile
+    std::optional<fv::EnergySettings> energy;       // energy equation enabled
+    std::optional<fv::RadiationSettings> radiation; // P1 radiation (needs energy)
     std::map<std::string, fv::ThermalBoundary> thermal;
     HeatConfig heat;
     std::optional<fv::MultiphaseSettings> multiphase;     // VOF two-phase flow (transient)

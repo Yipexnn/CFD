@@ -26,6 +26,13 @@ std::vector<Scalar> boundary_values(const FvGeometry& geo, const std::vector<Sca
             values[b] = field[p] + bc[b].value * dn;
             break;
         }
+        case ScalarBoundary::Kind::Mixed: {
+            const Scalar dn = std::abs(
+                (m.face_centres()[nif + b] - m.cell_centres()[p]).dot(geo.unit_normals()[nif + b]));
+            const Scalar rd = bc[b].coefficient * dn;
+            values[b] = (field[p] + rd * bc[b].value) / (1.0 + rd);
+            break;
+        }
         }
     }
     return values;
@@ -116,6 +123,13 @@ LinearSolveResult solve_scalar(const FvGeometry& geo, const std::vector<Scalar>&
             const Scalar diff = eq.gamma_face[f] * dc[f];
             a.diag[p] += diff + std::max(flux, 0.0);
             a.source[p] += (diff - std::min(flux, 0.0)) * b.value;
+        } else if (b.kind == ScalarBoundary::Kind::Mixed) {
+            // gamma (phi_b - phi_P) / d = h (value - phi_b): flux coefficient gamma r / (1 + r d)
+            const Scalar dn = std::abs((cf[f] - cc[p]).dot(geo.unit_normals()[f]));
+            const Scalar rd = b.coefficient * dn;
+            const Scalar coef = eq.gamma_face[f] * dc[f] * rd / (1.0 + rd);
+            a.diag[p] += coef + flux;
+            a.source[p] += coef * b.value;
         } else {
             a.diag[p] += flux;
             if (b.kind == ScalarBoundary::Kind::FixedGradient) {

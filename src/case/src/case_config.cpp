@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cfd/case/case_config.hpp>
 #include <fstream>
 #include <nlohmann/json.hpp>
@@ -468,7 +469,7 @@ CaseConfig parse_case(const std::string& json_text, const std::filesystem::path&
             const std::string ep = "physics.energy";
             check_keys(e, ep,
                        {"alpha", "prandtl", "prandtl_t", "beta", "t_ref", "gravity", "rho_cp",
-                        "properties"});
+                        "properties", "radiation"});
             fv::EnergySettings es;
             if (e.contains("alpha") && e.contains("prandtl")) {
                 fail(ep, "give either alpha or prandtl");
@@ -493,6 +494,43 @@ CaseConfig parse_case(const std::string& json_text, const std::filesystem::path&
                 if (pr.contains("alpha")) {
                     es.alpha_law = parse_property_law(pr["alpha"], pp + ".alpha", es.alpha);
                 }
+            }
+            if (e.contains("radiation")) {
+                const json& r = e["radiation"];
+                const std::string rp = ep + ".radiation";
+                check_keys(r, rp,
+                           {"model", "absorption", "scattering", "anisotropy", "emissivity",
+                            "patch_emissivity"});
+                if (get_string(r, "model", rp, "P1") != "P1") {
+                    fail(rp + ".model", "only \"P1\" is available");
+                }
+                fv::RadiationSettings rs;
+                rs.absorption = get_number(r, "absorption", rp, rs.absorption);
+                rs.scattering = get_number(r, "scattering", rp, rs.scattering);
+                rs.anisotropy = get_number(r, "anisotropy", rp, rs.anisotropy);
+                rs.emissivity = get_number(r, "emissivity", rp, rs.emissivity);
+                if (r.contains("patch_emissivity")) {
+                    const json& pe = r["patch_emissivity"];
+                    if (!pe.is_object()) {
+                        fail(rp + ".patch_emissivity", "expected {\"patch\": emissivity}");
+                    }
+                    for (const auto& [name, v] : pe.items()) {
+                        if (!v.is_number()) {
+                            fail(rp + ".patch_emissivity." + name, "expected a number");
+                        }
+                        rs.patch_emissivity[name] = v.get<Scalar>();
+                    }
+                }
+                const bool eps_ok =
+                    std::all_of(rs.patch_emissivity.begin(), rs.patch_emissivity.end(),
+                                [](const auto& kv) { return kv.second > 0.0 && kv.second <= 1.0; });
+                if (!(rs.absorption > 0.0) || rs.scattering < 0.0 ||
+                    std::abs(rs.anisotropy) > 1.0 ||
+                    !(rs.emissivity > 0.0 && rs.emissivity <= 1.0) || !eps_ok) {
+                    fail(rp, "needs absorption > 0, scattering >= 0, |anisotropy| <= 1, "
+                             "emissivities in (0, 1]");
+                }
+                c.radiation = rs;
             }
             c.energy = es;
         }
@@ -748,6 +786,9 @@ CaseConfig parse_case(const std::string& json_text, const std::filesystem::path&
         fail("physics.energy", "thermal settings need the energy equation (physics.energy)");
     }
 
+    if (c.radiation && !c.solids.empty()) {
+        fail("physics.energy.radiation", "not combinable with solid regions (yet)");
+    }
     if (c.compressible) {
         if (c.energy || !c.solids.empty() || c.multiphase) {
             fail("physics.compressible", "not combinable with energy, solids or multiphase");
