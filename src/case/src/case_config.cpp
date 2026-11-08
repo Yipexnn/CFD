@@ -374,10 +374,11 @@ CaseConfig parse_case(const std::string& json_text, const std::filesystem::path&
     }
     check_keys(root, "case",
                {"name", "mesh", "physics", "boundaries", "initial", "solver", "output", "forces",
-                "heat", "solids", "restart"});
+                "heat", "solids", "restart", "decomposed_mesh"});
 
     CaseConfig c;
     c.base_directory = base_directory;
+    c.decomposed_mesh = get_bool(root, "decomposed_mesh", "case", false);
     c.name = get_string(root, "name", "case", c.name);
 
     if (!root.contains("mesh")) {

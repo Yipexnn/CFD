@@ -226,6 +226,9 @@ std::string case_to_json(const CaseConfig& config) {
     ordered_json root = ordered_json::object();
     root["name"] = config.name;
     root["mesh"] = mesh_json(config.mesh, config.solids);
+    if (config.decomposed_mesh) {
+        root["decomposed_mesh"] = true;
+    }
 
     const fv::FlowSettings& flow = config.solver.flow;
     ordered_json physics = ordered_json::object();

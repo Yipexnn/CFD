@@ -23,4 +23,10 @@ void write_vtu(const std::filesystem::path& file, const Mesh& mesh,
                const std::vector<CellScalarData>& scalars = {},
                const std::vector<CellVectorData>& vectors = {});
 
+// Writes a parallel .pvtu index for the given piece files (paths relative to the .pvtu) with
+// the cell data arrays of write_vtu (scalars, then 3-component vectors).
+void write_pvtu(const std::filesystem::path& file, const std::vector<std::string>& pieces,
+                const std::vector<std::string>& scalar_names,
+                const std::vector<std::string>& vector_names);
+
 } // namespace cfd::mesh

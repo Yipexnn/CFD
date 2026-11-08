@@ -41,6 +41,13 @@ struct CheckpointData {
     std::vector<Scalar> conserved; // compressible: 5 values per cell (empty otherwise)
 };
 // Reads a checkpoint; n_cells / n_faces / n_boundary_faces must match the mesh.
+// Decomposed mesh for n_parts processes: writes <output>/processors<n_parts>/processor<r>.bin
+// (RCB partition of the global mesh) and returns the directory. Runs in one process; parallel
+// runs with "decomposed_mesh": true then read only their own file.
+std::filesystem::path decompose_case(const CaseConfig& config, int n_parts);
+[[nodiscard]] std::filesystem::path decomposed_mesh_directory(const CaseConfig& config,
+                                                              int n_parts);
+
 [[nodiscard]] CheckpointData read_checkpoint_file(const std::filesystem::path& file, Label n_cells,
                                                   Label n_faces, Label n_boundary_faces);
 
@@ -90,6 +97,10 @@ public:
     // Global (undecomposed) mesh: on the root process only in parallel runs.
     [[nodiscard]] const mesh::Mesh& global_mesh() const { return *global_mesh_; }
     [[nodiscard]] bool has_global_mesh() const { return global_mesh_ != nullptr; }
+    // Parallel run on per-process mesh files (no process holds the global mesh).
+    [[nodiscard]] bool decomposed_run() const {
+        return config_.decomposed_mesh && local_ != nullptr;
+    }
     [[nodiscard]] Label global_cell_count() const { return global_cells_; }
     // Decomposition of an MPI run (nullptr in serial runs).
     [[nodiscard]] const parallel::LocalMesh* local_mesh() const { return local_.get(); }
@@ -134,6 +145,7 @@ private:
     [[nodiscard]] fv::KOmegaSst* mutable_sst();
     std::unique_ptr<fv::EnergyEquation> energy_;
     std::unique_ptr<fv::P1Radiation> radiation_;
+    mutable std::unique_ptr<parallel::SubMesh> piece_; // owned cells (decomposed .pvtu output)
     void update_radiation();
     std::unique_ptr<fv::MultiphaseSolver> multiphase_;
     std::unique_ptr<fv::CompressibleSolver> compressible_;
