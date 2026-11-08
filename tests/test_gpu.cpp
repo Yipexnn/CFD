@@ -209,3 +209,48 @@ TEST(Gpu, AmgCgSolvesPoissonFast) {
         EXPECT_LT(st.iterations, 40) << "m = " << m;
     }
 }
+
+#include <cfd/fv/ldu_matrix.hpp>
+
+// Persistent device system: repeated solves with changing LDU coefficients on one pattern
+// (assembly from LDU, cached AMG levels) agree with the one-shot CPU solvers.
+TEST(Gpu, PersistentSystemRepeatedSolves) {
+    cfd::mesh::BoxSpec spec;
+    spec.nx = 16;
+    spec.ny = 16;
+    spec.nz = 1;
+    const auto mesh = cfd::mesh::make_box_mesh(spec);
+    const cfd::fv::CsrPattern pattern = cfd::fv::build_csr_pattern(mesh);
+    cfd::fv::AmgCache cache;
+    for (int round = 0; round < 3; ++round) {
+        // Diffusion-like matrix with a small diagonal shift that changes per round.
+        cfd::fv::LduMatrix a(mesh);
+        a.pattern = &pattern;
+        const auto nc = static_cast<std::size_t>(mesh.n_cells());
+        for (std::size_t f = 0; f < a.upper.size(); ++f) {
+            const auto o = static_cast<std::size_t>(mesh.owner()[f]);
+            const auto nb = static_cast<std::size_t>(mesh.neighbour()[f]);
+            a.upper[f] = -1.0;
+            a.lower[f] = -1.0;
+            a.diag[o] += 1.0;
+            a.diag[nb] += 1.0;
+        }
+        for (std::size_t c = 0; c < nc; ++c) {
+            a.diag[c] += 0.01 * (round + 1);
+            a.source[c] = std::sin(0.3 * static_cast<double>(c));
+        }
+        for (const auto type :
+             {cfd::fv::LinearSolverType::GpuCg, cfd::fv::LinearSolverType::GpuBiCgStab}) {
+            std::vector<double> x(nc, 0.0);
+            std::vector<double> ref(nc, 0.0);
+            (void)a.solve(x, {type, 1e-14, 1e-10, 1000}, &cache);
+            (void)a.solve(ref, {cfd::fv::LinearSolverType::AmgCg, 1e-14, 1e-10, 1000});
+            for (std::size_t c = 0; c < nc; ++c) {
+                EXPECT_NEAR(x[c], ref[c], 1e-7 * (1.0 + std::abs(ref[c])));
+            }
+        }
+    }
+    ASSERT_NE(cache.device, nullptr);
+    EXPECT_EQ(cache.device->on_device(),
+              cfd::gpu::device_available() && cfd::gpu::backend_name() == "cuda");
+}

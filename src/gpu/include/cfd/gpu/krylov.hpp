@@ -1,5 +1,6 @@
 #pragma once
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -62,6 +63,45 @@ SolveStats solve_amg_cg(const AmgView& amg, const double* b, double* x,
 SolveStats solve_amg_cg_host(const AmgView& amg, const double* b, double* x,
                              const SolveControl& control);
 
+// Fixed sparsity pattern of an LDU matrix in CSR form: positions of the diagonal and of the
+// upper / lower face coefficients in the CSR value array.
+struct LduPattern {
+    int n = 0;
+    int n_faces = 0;
+    int nnz = 0;
+    const int* row_ptr = nullptr;
+    const int* col = nullptr;
+    const int* diag_pos = nullptr;
+    const int* upper_pos = nullptr;
+    const int* lower_pos = nullptr;
+};
+
+// Persistent linear solver for repeated solves on one pattern (e.g. one equation of a time
+// loop). With a CUDA device the pattern, work vectors and AMG coarse levels stay on the device
+// and the CSR values are assembled there from the uploaded LDU coefficients; otherwise the
+// values are assembled on the host and solved with the OpenMP / host path.
+class DeviceSolver {
+public:
+    explicit DeviceSolver(const LduPattern& pattern);
+    ~DeviceSolver();
+    DeviceSolver(const DeviceSolver&) = delete;
+    DeviceSolver& operator=(const DeviceSolver&) = delete;
+    DeviceSolver(DeviceSolver&&) = delete;
+    DeviceSolver& operator=(DeviceSolver&&) = delete;
+
+    // AMG hierarchy for use_amg solves: levels[0].a is not used (the assembled matrix is), its
+    // p / r and all coarser levels are copied now. Call again after an AMG rebuild.
+    void set_amg(const AmgView& amg);
+    // Assembles A from diag (n) / upper, lower (n_faces) and solves A x = b (x: initial guess).
+    SolveStats solve(const double* diag, const double* upper, const double* lower, const double* b,
+                     double* x, Method method, bool use_amg, const SolveControl& control);
+    [[nodiscard]] bool on_device() const;
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+};
+
 // Backend compiled in: "cuda", "openmp-offload" or "host".
 [[nodiscard]] std::string backend_name();
 // True if the backend found an accelerator device at run time.
@@ -81,6 +121,12 @@ SolveStats solve_amg_openmp(const AmgView& amg, const double* b, double* x,
 #ifdef CFD_GPU_CUDA
 SolveStats solve_amg_cuda(const AmgView& amg, const double* b, double* x,
                           const SolveControl& control);
+void* cuda_system_create(const LduPattern& pattern);
+void cuda_system_destroy(void* handle);
+void cuda_system_set_amg(void* handle, const AmgView& amg);
+SolveStats cuda_system_solve(void* handle, const double* diag, const double* upper,
+                             const double* lower, const double* b, double* x, Method method,
+                             bool use_amg, const SolveControl& control);
 SolveStats solve_cuda(const CsrView& a, const double* b, double* x, Method method,
                       const SolveControl& control);
 bool cuda_device_available();
