@@ -112,6 +112,9 @@ struct CaseConfig {
     std::map<std::string, InletProfile> profiles;   // patch -> parabolic inlet profile
     std::optional<fv::EnergySettings> energy;       // energy equation enabled
     std::optional<fv::RadiationSettings> radiation; // P1 radiation (needs energy)
+    // Parallel runs read per-process mesh files written by `cfd decompose` (no global mesh in
+    // any process; results as .pvtu pieces).
+    bool decomposed_mesh = false;
     std::map<std::string, fv::ThermalBoundary> thermal;
     HeatConfig heat;
     std::optional<fv::MultiphaseSettings> multiphase;     // VOF two-phase flow (transient)

@@ -41,6 +41,11 @@ struct LinearSolveResult {
 // i.e. upper[f] = a(owner, neighbour) and lower[f] = a(neighbour, owner).
 class AmgPreconditioner;
 class ParallelAmg;
+} // namespace cfd::fv
+namespace cfd::gpu {
+class DeviceSolver;
+} // namespace cfd::gpu
+namespace cfd::fv {
 
 // CSR sparsity pattern of the cell-to-cell matrix of a mesh with the value positions of
 // the LDU coefficients, so assembled matrices can be converted to CSR without sorting.
@@ -63,6 +68,7 @@ struct AmgCache {
 
     std::unique_ptr<AmgPreconditioner> amg;
     std::unique_ptr<ParallelAmg> parallel_amg; // decomposed meshes
+    std::unique_ptr<gpu::DeviceSolver> device; // GpuCg / GpuBiCgStab with a CSR pattern
     int age = 0;                               // solves since the last setup
     int setup_iterations = 0;                  // CG iterations of the first solve after setup
     int max_age = 20;                          // rebuild at the latest after this many solves
@@ -115,6 +121,8 @@ private:
     [[nodiscard]] std::size_t n_owned() const {
         return halo != nullptr ? static_cast<std::size_t>(halo->n_owned) : diag.size();
     }
+    LinearSolveResult solve_persistent(std::vector<Scalar>& x, const LinearSolverSettings& settings,
+                                       AmgCache& cache, LinearSolveResult result) const;
     LinearSolveResult solve_distributed(std::vector<Scalar>& x,
                                         const LinearSolverSettings& settings,
                                         AmgCache* amg_cache) const;

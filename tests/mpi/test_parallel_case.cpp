@@ -94,3 +94,45 @@ TEST(ParallelCase, DistributeMatchesDecompose) {
     EXPECT_EQ(back.mesh.patches().size(), expected.mesh.patches().size());
     EXPECT_EQ(back.face_flipped, expected.face_flipped);
 }
+
+// Decomposed mesh files: `decompose_case` (one process) writes one file per process; a run
+// with "decomposed_mesh" reads only its own part (no global mesh anywhere), gives the same
+// forces as the distributed run and writes .pvtu pieces; restart from its checkpoint works.
+TEST(ParallelCase, DecomposedMeshRun) {
+    const par::Comm& comm = par::Comm::world();
+    const auto dir = std::filesystem::temp_directory_path() /
+                     ("cfd_mpi_decomposed_" + std::to_string(comm.size()));
+    if (comm.is_root()) {
+        std::filesystem::remove_all(dir);
+    }
+    comm.barrier();
+    auto config = cavity(30, dir);
+    CaseRunner distributed(config);
+    (void)distributed.run();
+
+    config.decomposed_mesh = true;
+    config.output.directory = "decomposed";
+    if (comm.is_root()) {
+        (void)cfd::cases::decompose_case(config, comm.size());
+    }
+    comm.barrier();
+    CaseRunner decomposed(config);
+    EXPECT_FALSE(decomposed.has_global_mesh());
+    EXPECT_EQ(decomposed.global_cell_count(), 400);
+    const auto result = decomposed.run();
+    EXPECT_NEAR((decomposed.force("ymax") - distributed.force("ymax")).norm(), 0.0,
+                1e-12 * distributed.force("ymax").norm());
+    EXPECT_EQ(result.result_file.extension(), ".pvtu");
+    if (comm.is_root()) {
+        EXPECT_TRUE(std::filesystem::exists(dir / "decomposed" / "cavity.pvtu"));
+        for (int r = 0; r < comm.size(); ++r) {
+            EXPECT_TRUE(std::filesystem::exists(dir / "decomposed" / "cavity" /
+                                                ("cavity_" + std::to_string(r) + ".vtu")));
+        }
+    }
+    config.restart = "decomposed/checkpoint.bin";
+    config.solver.max_iterations = 35;
+    CaseRunner second(config);
+    EXPECT_EQ(second.step(), 30);
+    (void)second.run();
+}

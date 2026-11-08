@@ -167,8 +167,34 @@ GasState CompressibleSolver::ghost(std::size_t face, const GasState& s) const {
     const BoundaryCondition& c = bc(face - nif);
     const Vec3& n = geo_.unit_normals()[face];
     switch (c.kind) {
-    case FlowBoundary::VelocityInlet:
-        return {c.pressure / (settings_.r_gas * c.temperature), c.velocity, c.pressure};
+    case FlowBoundary::VelocityInlet: {
+        const GasState inf{c.pressure / (settings_.r_gas * c.temperature), c.velocity, c.pressure};
+        if (!c.far_field) {
+            return inf;
+        }
+        // Characteristic far field: outgoing invariant from the interior, incoming one from
+        // the free stream; entropy and tangential velocity from the upwind side.
+        const Scalar g = settings_.gamma;
+        const Scalar un_i = s.u.dot(n);
+        const Scalar un_f = inf.u.dot(n);
+        const Scalar c_i = std::sqrt(g * s.p / s.rho);
+        const Scalar c_f = std::sqrt(g * inf.p / inf.rho);
+        if (un_i >= c_i) {
+            return s; // supersonic outflow
+        }
+        if (un_f <= -c_f) {
+            return inf; // supersonic inflow
+        }
+        const Scalar r_plus = un_i + 2.0 * c_i / (g - 1.0);
+        const Scalar r_minus = un_f - 2.0 * c_f / (g - 1.0);
+        const Scalar un_b = 0.5 * (r_plus + r_minus);
+        const Scalar c_b = 0.25 * (g - 1.0) * (r_plus - r_minus);
+        const GasState& up = un_b < 0.0 ? inf : s;
+        const Scalar entropy = up.p / std::pow(up.rho, g);
+        const Vec3 ut = up.u - up.u.dot(n) * n;
+        const Scalar rho_b = std::pow(c_b * c_b / (g * entropy), 1.0 / (g - 1.0));
+        return {rho_b, Vec3(ut + un_b * n), rho_b * c_b * c_b / g};
+    }
     case FlowBoundary::PressureOutlet: {
         const Scalar un = s.u.dot(n);
         const Scalar a = std::sqrt(settings_.gamma * s.p / s.rho);

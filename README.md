@@ -70,6 +70,9 @@ Gmsh executable:
   then use a GUI preset (MPI enabled) or `windows-msvc-mpi-release`. vcpkg fetches the SDK.
 - Linux: `sudo apt install libopenmpi-dev openmpi-bin` (the `linux-system-gui` preset enables MPI).
 - Run: `mpiexec -n 4 cfd run case.json`, or in the GUI set "Processes" in the toolbar.
+- Large meshes: `cfd decompose case.json 4` writes one mesh file per process; with
+  `"decomposed_mesh": true` in the case each process reads only its part and results are
+  written as `.pvtu` pieces (no process ever holds the whole mesh).
 - Details and benchmarks: [docs/phase7.md](docs/phase7.md).
 
 ## GPU linear solvers (optional)

@@ -156,7 +156,7 @@ ordered_json boundaries_json(const std::map<std::string, fv::BoundaryCondition>&
     ordered_json j = ordered_json::object();
     for (const auto& [name, bc] : boundaries) {
         ordered_json b = ordered_json::object();
-        b["type"] = boundary_type_name(bc.kind);
+        b["type"] = bc.far_field ? "far_field" : boundary_type_name(bc.kind);
         b["velocity"] = vec3_json(bc.velocity);
         b["pressure"] = bc.pressure;
         b["turbulence_intensity"] = bc.turbulence_intensity;
@@ -226,6 +226,9 @@ std::string case_to_json(const CaseConfig& config) {
     ordered_json root = ordered_json::object();
     root["name"] = config.name;
     root["mesh"] = mesh_json(config.mesh, config.solids);
+    if (config.decomposed_mesh) {
+        root["decomposed_mesh"] = true;
+    }
 
     const fv::FlowSettings& flow = config.solver.flow;
     ordered_json physics = ordered_json::object();

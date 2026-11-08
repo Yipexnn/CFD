@@ -136,6 +136,7 @@ y+ ≲ 1). Not combinable with energy, solids or multiphase.
 | `prandtl_t` | number | `0.9` | Turbulent Prandtl number (heat flux c_p μ_t / Pr_t). |
 
 Boundaries: `velocity_inlet` = fixed state (`velocity`, `pressure`, `temperature`);
+`far_field` = characteristic (Riemann-invariant) free stream with the same keys;
 `pressure_outlet` = static `pressure` if subsonic (`pressure` <= 0: extrapolate);
 `wall` = no-slip adiabatic (slip if `mu` = 0); `symmetry` = slip; `empty`.
 Initial: `initial.velocity`, `initial.pressure`, `initial.temperature` and
@@ -185,7 +186,7 @@ Object keyed by patch name (`xmin` ... `zmax`). Each entry is an object with:
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `type` | string | required | `velocity_inlet`, `wall`, `pressure_outlet`, `symmetry` or `empty`. |
+| `type` | string | required | `velocity_inlet`, `far_field` (compressible: characteristic free-stream boundary from `velocity`, `pressure`, `temperature`; non-reflecting, in- or outflow), `wall`, `pressure_outlet`, `symmetry` or `empty`. |
 | `velocity` | [num, num, num] | `[0, 0, 0]` | Inlet velocity (required for `velocity_inlet`) or wall velocity. |
 | `pressure` | number | `0` | Outlet kinematic pressure (p / rho). |
 | `turbulence_intensity` | number | `0.05` | Inlet turbulence: k = 1.5 (I \|U\|)^2. |
@@ -297,6 +298,7 @@ Optional top-level object (energy equation): heat flow into the fluid per patch,
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `restart` | string (top level) | none | Checkpoint file to start from. Fields, step and time are restored; the mesh must match. |
+| `decomposed_mesh` | bool (top level) | `false` | Parallel runs read the per-process mesh files written by `cfd decompose <case> <N>` (`<output>/processors<N>/`); results as `<name>.pvtu` + pieces. |
 
 ## Running
 

@@ -124,6 +124,12 @@ LinearSolveResult LduMatrix::solve(std::vector<Scalar>& x, const LinearSolverSet
         return result;
     }
 
+    if ((settings.type == LinearSolverType::GpuCg ||
+         settings.type == LinearSolverType::GpuBiCgStab) &&
+        pattern != nullptr && amg_cache != nullptr) {
+        return solve_persistent(x, settings, *amg_cache, result);
+    }
+
     // Assemble CSR (fast path with a precomputed pattern).
     SparseMatrix a(static_cast<int>(n), static_cast<int>(n));
     if (pattern != nullptr) {
@@ -271,6 +277,90 @@ LinearSolveResult LduMatrix::solve(std::vector<Scalar>& x, const LinearSolverSet
         result.iterations = st.iterations;
     }
 
+    result.final_residual = normalised_residual(x);
+    return result;
+}
+
+// Accelerator solve with a persistent device system: the CSR pattern (and AMG coarse levels)
+// stay on the device, the matrix is assembled there from the LDU coefficients; the host CSR is
+// only built when the AMG hierarchy is (re)built.
+LinearSolveResult LduMatrix::solve_persistent(std::vector<Scalar>& x,
+                                              const LinearSolverSettings& settings, AmgCache& cache,
+                                              LinearSolveResult result) const {
+    const std::size_t n = diag.size();
+    std::vector<Scalar> r;
+    residual(x, r);
+    Scalar r0 = 0.0;
+    for (const Scalar v : r) {
+        r0 += v * v;
+    }
+    const Scalar target =
+        std::max(settings.rel_tolerance,
+                 settings.tolerance / std::max(result.initial_residual, k_small)) *
+        std::sqrt(r0);
+    const CsrPattern& pt = *pattern;
+    if (!cache.device) {
+        const gpu::LduPattern view{static_cast<int>(n),
+                                   static_cast<int>(upper.size()),
+                                   static_cast<int>(pt.structure.nonZeros()),
+                                   pt.structure.outerIndexPtr(),
+                                   pt.structure.innerIndexPtr(),
+                                   pt.diag_pos.data(),
+                                   pt.upper_pos.data(),
+                                   pt.lower_pos.data()};
+        cache.device = std::make_unique<gpu::DeviceSolver>(view);
+    }
+    const bool cg = settings.type == LinearSolverType::GpuCg;
+    if (cg && (!cache.amg || cache.age >= cache.max_age)) {
+        SparseMatrix a = pt.structure;
+        Scalar* v = a.valuePtr();
+        for (std::size_t c = 0; c < n; ++c) {
+            v[pt.diag_pos[c]] = diag[c];
+        }
+        for (std::size_t f = 0; f < upper.size(); ++f) {
+            v[pt.upper_pos[f]] = upper[f];
+            v[pt.lower_pos[f]] = lower[f];
+        }
+        cache.amg = std::make_unique<AmgPreconditioner>();
+        cache.amg->setup(a);
+        cache.age = 0;
+        if (cache.amg->levels() > 1) {
+            std::vector<CsrMatrix> keep;
+            keep.reserve(3 * static_cast<std::size_t>(cache.amg->levels()));
+            auto view = [&](const CsrMatrix& m) {
+                keep.push_back(m);
+                keep.back().makeCompressed();
+                const CsrMatrix& k = keep.back();
+                return gpu::CsrView{static_cast<int>(k.rows()), static_cast<int>(k.nonZeros()),
+                                    k.outerIndexPtr(), k.innerIndexPtr(), k.valuePtr()};
+            };
+            gpu::AmgView h;
+            for (int l = 0; l < cache.amg->levels(); ++l) {
+                gpu::AmgLevelView lv;
+                if (l > 0) {
+                    lv.a = view(cache.amg->level_matrix(l));
+                }
+                if (l + 1 < cache.amg->levels()) {
+                    lv.p = view(cache.amg->level_prolongation(l));
+                    lv.r = view(cache.amg->level_restriction(l));
+                }
+                h.levels.push_back(lv);
+            }
+            const Eigen::Matrix<Scalar, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> inv =
+                cache.amg->coarse_inverse();
+            h.coarse_inverse = inv.data();
+            cache.device->set_amg(h);
+        }
+    }
+    if (cg) {
+        ++cache.age;
+    }
+    const bool use_amg = cg && cache.amg && cache.amg->levels() > 1;
+    const gpu::SolveStats st =
+        cache.device->solve(diag.data(), upper.data(), lower.data(), source.data(), x.data(),
+                            cg ? gpu::Method::Cg : gpu::Method::BiCgStab, use_amg,
+                            {std::max(target, 1e-300), settings.max_iterations});
+    result.iterations = st.iterations;
     result.final_residual = normalised_residual(x);
     return result;
 }

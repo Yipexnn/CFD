@@ -206,4 +206,33 @@ void write_vtu(const std::filesystem::path& file, const Mesh& mesh,
     }
 }
 
+void write_pvtu(const std::filesystem::path& file, const std::vector<std::string>& pieces,
+                const std::vector<std::string>& scalar_names,
+                const std::vector<std::string>& vector_names) {
+    std::ofstream os(file);
+    if (!os) {
+        throw std::runtime_error("write_pvtu: cannot open " + file.string());
+    }
+    os << "<?xml version=\"1.0\"?>\n"
+       << "<VTKFile type=\"PUnstructuredGrid\" version=\"1.0\" byte_order=\"LittleEndian\" "
+          "header_type=\"UInt64\">\n  <PUnstructuredGrid GhostLevel=\"0\">\n"
+       << "    <PPoints>\n      <PDataArray type=\"Float64\" NumberOfComponents=\"3\"/>\n"
+       << "    </PPoints>\n    <PCellData>\n";
+    for (const std::string& n : scalar_names) {
+        os << "      <PDataArray type=\"Float64\" Name=\"" << xml_escape(n) << "\"/>\n";
+    }
+    for (const std::string& n : vector_names) {
+        os << "      <PDataArray type=\"Float64\" Name=\"" << xml_escape(n)
+           << "\" NumberOfComponents=\"3\"/>\n";
+    }
+    os << "    </PCellData>\n";
+    for (const std::string& p : pieces) {
+        os << "    <Piece Source=\"" << xml_escape(p) << "\"/>\n";
+    }
+    os << "  </PUnstructuredGrid>\n</VTKFile>\n";
+    if (!os) {
+        throw std::runtime_error("write_pvtu: write failed for " + file.string());
+    }
+}
+
 } // namespace cfd::mesh

@@ -162,7 +162,7 @@ CaseRunner::CaseRunner(CaseConfig config) : config_(std::move(config)) {
     const parallel::Comm& comm = parallel::Comm::world();
     if (!comm.parallel()) {
         global_mesh_ = std::make_unique<mesh::Mesh>(build_mesh(config_));
-    } else {
+    } else if (!config_.decomposed_mesh) {
         std::string error;
         if (comm.is_root()) {
             try {
@@ -285,6 +285,84 @@ std::vector<Scalar> CaseRunner::from_full_faces(const std::vector<Scalar>& full_
     return out;
 }
 
+namespace {
+
+constexpr char k_processor_magic[8] = {'C', 'F', 'D', 'P', 'R', 'O', 'C', '1'};
+
+void write_processor_file(const std::filesystem::path& file, const parallel::LocalMesh& lm,
+                          int n_parts, int rank, const std::array<Label, 3>& counts) {
+    std::ofstream out(file, std::ios::binary);
+    if (!out) {
+        throw std::runtime_error("decompose: cannot write " + file.string());
+    }
+    const std::vector<char> bytes = parallel::pack_local_mesh(lm);
+    out.write(k_processor_magic, sizeof(k_processor_magic));
+    const std::int32_t header[2] = {n_parts, rank};
+    out.write(reinterpret_cast<const char*>(header), sizeof(header));
+    out.write(reinterpret_cast<const char*>(counts.data()), sizeof(Label) * counts.size());
+    const auto n = static_cast<std::uint64_t>(bytes.size());
+    out.write(reinterpret_cast<const char*>(&n), sizeof(n));
+    out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    if (!out) {
+        throw std::runtime_error("decompose: write failed for " + file.string());
+    }
+}
+
+} // namespace
+
+static parallel::LocalMesh read_processor_file(const std::filesystem::path& file,
+                                               const parallel::Comm& comm,
+                                               std::array<Label, 3>& counts) {
+    std::ifstream in(file, std::ios::binary);
+    if (!in) {
+        throw std::runtime_error("decomposed mesh: cannot open " + file.string() +
+                                 " (run `cfd decompose <case.json> <processes>` first)");
+    }
+    char magic[sizeof(k_processor_magic)];
+    in.read(magic, sizeof(magic));
+    std::int32_t header[2] = {0, 0};
+    in.read(reinterpret_cast<char*>(header), sizeof(header));
+    in.read(reinterpret_cast<char*>(counts.data()), sizeof(Label) * counts.size());
+    std::uint64_t n = 0;
+    in.read(reinterpret_cast<char*>(&n), sizeof(n));
+    if (!in || std::memcmp(magic, k_processor_magic, sizeof(magic)) != 0) {
+        throw std::runtime_error("decomposed mesh: " + file.string() + " is not a processor file");
+    }
+    if (header[0] != comm.size() || header[1] != comm.rank()) {
+        throw std::runtime_error("decomposed mesh: " + file.string() + " was written for " +
+                                 std::to_string(header[0]) + " processes");
+    }
+    std::vector<char> bytes(static_cast<std::size_t>(n));
+    in.read(bytes.data(), static_cast<std::streamsize>(n));
+    if (!in) {
+        throw std::runtime_error("decomposed mesh: truncated " + file.string());
+    }
+    return parallel::unpack_local_mesh(bytes, comm);
+}
+
+std::filesystem::path decomposed_mesh_directory(const CaseConfig& config, int n_parts) {
+    return config.resolve(config.output.directory) / ("processors" + std::to_string(n_parts));
+}
+
+std::filesystem::path decompose_case(const CaseConfig& config, int n_parts) {
+    if (n_parts < 2) {
+        throw std::invalid_argument("decompose: needs at least 2 processes");
+    }
+    const mesh::Mesh global = build_mesh_serial(config);
+    const std::vector<int> parts = parallel::partition_rcb(global, n_parts);
+    const auto dir = decomposed_mesh_directory(config, n_parts);
+    std::filesystem::create_directories(dir);
+    const std::array<Label, 3> counts{global.n_cells(), global.n_faces(),
+                                      global.n_internal_faces()};
+    for (int r = 0; r < n_parts; ++r) {
+        const parallel::LocalMesh lm =
+            parallel::decompose(global, parts, r, parallel::Comm::self());
+        write_processor_file(dir / ("processor" + std::to_string(r) + ".bin"), lm, n_parts, r,
+                             counts);
+    }
+    return dir;
+}
+
 void CaseRunner::setup() {
     const parallel::Comm& comm = parallel::Comm::world();
     std::array<Label, 3> counts{0, 0, 0};
@@ -292,7 +370,12 @@ void CaseRunner::setup() {
         counts = {global_mesh_->n_cells(), global_mesh_->n_faces(),
                   global_mesh_->n_internal_faces()};
     }
-    if (comm.parallel()) {
+    if (comm.parallel() && config_.decomposed_mesh) {
+        // Every process reads only its own part (written by decompose_case).
+        const auto file = decomposed_mesh_directory(config_, comm.size()) /
+                          ("processor" + std::to_string(comm.rank()) + ".bin");
+        local_ = std::make_unique<parallel::LocalMesh>(read_processor_file(file, comm, counts));
+    } else if (comm.parallel()) {
         // Root partitions and sends each process its part (no global mesh elsewhere).
         local_ = std::make_unique<parallel::LocalMesh>(
             parallel::distribute(comm.is_root() ? global_mesh_.get() : nullptr, comm));
@@ -688,8 +771,32 @@ fv::KOmegaSst* CaseRunner::mutable_sst() {
 void CaseRunner::write_results(const std::filesystem::path& file) const {
     const auto ng = static_cast<std::size_t>(global_cells_);
     const parallel::LocalMesh* lm = local_.get();
+    // Without a global mesh (decomposed runs) every process writes its owned cells as a piece.
+    const bool pieces = decomposed_run();
+    if (pieces && !piece_) {
+        const mesh::Mesh& full = full_mesh();
+        std::vector<int> zone(static_cast<std::size_t>(full.n_cells()), 1);
+        for (Label c = 0; c < lm->halo.n_owned; ++c) {
+            zone[static_cast<std::size_t>(c)] = 0;
+        }
+        piece_ = std::make_unique<parallel::SubMesh>(
+            parallel::extract_zone(full, zone, {"owned", "ghost"}, 0, nullptr));
+    }
+    auto collect = [&](const Scalar* full_values, std::size_t ncomp) {
+        if (!pieces) {
+            return gather_cells(lm, full_values, ncomp, ng);
+        }
+        std::vector<Scalar> out;
+        out.reserve(piece_->parent_cell.size() * ncomp);
+        for (const Label c : piece_->parent_cell) {
+            for (std::size_t k = 0; k < ncomp; ++k) {
+                out.push_back(full_values[static_cast<std::size_t>(c) * ncomp + k]);
+            }
+        }
+        return out;
+    };
     auto cells = [&](const Scalar* values, std::size_t ncomp) {
-        return gather_cells(lm, to_full_cells(values, ncomp).data(), ncomp, ng);
+        return collect(to_full_cells(values, ncomp).data(), ncomp);
     };
     const std::vector<Vec3> u_cells = velocity();
     const std::vector<Scalar> p_cells = pressure();
@@ -723,19 +830,39 @@ void CaseRunner::write_results(const std::filesystem::path& file) const {
         turbulence.emplace_back("yPlus", cells(sst()->y_plus().data(), 1));
     }
     if (energy_) {
-        turbulence.emplace_back("T", gather_cells(lm, energy_->temperature().data(), 1, ng));
+        turbulence.emplace_back("T", collect(energy_->temperature().data(), 1));
         if (radiation_) {
-            turbulence.emplace_back(
-                "G", gather_cells(lm, radiation_->incident_radiation().data(), 1, ng));
+            turbulence.emplace_back("G", cells(radiation_->incident_radiation().data(), 1));
         }
-    }
-    if (!world().is_root()) {
-        return;
     }
     std::vector<mesh::CellScalarData> scalars{{"p", &p}};
     std::vector<mesh::CellVectorData> vectors{{"U", &u}};
     for (const auto& [name, values] : turbulence) {
         scalars.push_back({name, &values});
+    }
+    if (pieces) {
+        const std::string stem = file.stem().string();
+        const auto piece_dir = file.parent_path() / stem;
+        std::filesystem::create_directories(piece_dir);
+        const std::string piece_name = stem + "_" + std::to_string(world().rank()) + ".vtu";
+        mesh::write_vtu(piece_dir / piece_name, piece_->mesh, scalars, vectors);
+        world().barrier();
+        if (world().is_root()) {
+            std::vector<std::string> names;
+            for (int r = 0; r < world().size(); ++r) {
+                names.push_back(stem + "/" + stem + "_" + std::to_string(r) + ".vtu");
+            }
+            std::vector<std::string> scalar_names;
+            for (const auto& sd : scalars) {
+                scalar_names.push_back(sd.name);
+            }
+            mesh::write_pvtu(std::filesystem::path(file).replace_extension(".pvtu"), names,
+                             scalar_names, {"U"});
+        }
+        return;
+    }
+    if (!world().is_root()) {
+        return;
     }
     mesh::write_vtu(file, *global_mesh_, scalars, vectors);
 }
@@ -1158,6 +1285,9 @@ RunResult CaseRunner::run(const ProgressCallback& progress) {
     result.time = time_;
     result.result_file = dir / (config_.name + ".vtu");
     write_results(result.result_file);
+    if (decomposed_run()) {
+        result.result_file.replace_extension(".pvtu");
+    }
     write_checkpoint(dir / "checkpoint.bin");
     return result;
 }

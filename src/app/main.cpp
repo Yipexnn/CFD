@@ -31,7 +31,9 @@ void print_usage(std::ostream& os) {
        << "  check-mesh <file.msh>      Read a Gmsh 4.1 mesh and print statistics\n"
        << "  run-cavity <n> <Re>        Lid-driven cavity demo, writes cavity.vtu\n"
        << "  run <case.json>            Run a case file (see docs/case_format.md)\n"
-       << "                             MPI: mpiexec -n <N> cfd run <case.json>\n";
+       << "                             MPI: mpiexec -n <N> cfd run <case.json>\n"
+       << "  decompose <case.json> <N>  Write per-process meshes for N processes (cases with\n"
+       << "                             \"decomposed_mesh\": true read only their own part)\n";
 }
 
 // Parses a strictly positive integer. Returns false on non-numeric input or values < 1.
@@ -157,6 +159,20 @@ int run_cavity(int argc, char* argv[]) {
     return converged ? 0 : 2;
 }
 
+int run_decompose(int argc, char* argv[]) {
+    cfd::mesh::Label n = 0;
+    if (argc != 4 || !parse_positive(argv[3], n) || n < 2) {
+        std::cerr << "cfd: error: decompose expects <case.json> <processes >= 2>\n";
+        print_usage(std::cerr);
+        return 1;
+    }
+    const cfd::cases::CaseConfig config = cfd::cases::load_case(argv[2]);
+    const auto dir = cfd::cases::decompose_case(config, static_cast<int>(n));
+    std::cout << "Decomposed " << config.name << " for " << n << " processes: " << dir.string()
+              << "\n";
+    return 0;
+}
+
 int run_case(int argc, char* argv[]) {
     if (argc != 3) {
         std::cerr << "cfd: error: run expects 1 argument\n";
@@ -240,7 +256,8 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
-    if (arg == "mesh-box" || arg == "check-mesh" || arg == "run-cavity" || arg == "run") {
+    if (arg == "mesh-box" || arg == "check-mesh" || arg == "run-cavity" || arg == "run" ||
+        arg == "decompose") {
         try {
             if (arg == "mesh-box") {
                 return run_mesh_box(argc, argv);
@@ -250,6 +267,9 @@ int main(int argc, char* argv[]) {
             }
             if (arg == "run") {
                 return run_case(argc, argv);
+            }
+            if (arg == "decompose") {
+                return run_decompose(argc, argv);
             }
             return run_cavity(argc, argv);
         } catch (const std::exception& e) {

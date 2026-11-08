@@ -26,6 +26,9 @@ struct BoundaryCondition {
     // Multiphase walls: static contact angle [deg] between wall and interface, measured
     // through phase 1 (alpha = 1).
     Scalar contact_angle = 90.0;
+    // Compressible velocity inlets: characteristic far field (Riemann invariants; free stream =
+    // velocity / pressure / temperature) instead of a fixed state; works for in- and outflow.
+    bool far_field = false;
 };
 
 // LimitedLinearUpwind: linear upwind with a Barth-Jespersen gradient limiter (bounded,

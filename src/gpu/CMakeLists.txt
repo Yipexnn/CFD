@@ -2,6 +2,7 @@
 add_library(cfd_gpu STATIC
     src/dispatch.cpp
     src/krylov_openmp.cpp
+    src/device_solver.cpp
 )
 add_library(cfd::gpu ALIAS cfd_gpu)
 target_include_directories(cfd_gpu PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)

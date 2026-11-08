@@ -3,6 +3,7 @@
 #include <cfd/mesh/box_mesher.hpp>
 #include <cmath>
 #include <gtest/gtest.h>
+#include <string>
 
 using cfd::core::Scalar;
 using cfd::core::Vec3;
@@ -282,6 +283,86 @@ TEST(Compressible, TurbulentFlatPlateSkinFriction) {
     }
 }
 
+// Characteristic far field: an acoustic pulse leaves a subsonic tube through both ends
+// almost without reflection, while fixed-state / fixed-pressure ends reflect it.
+TEST(Compressible, FarFieldIsNonReflecting) {
+    const auto mesh = tube(200);
+    const Scalar gamma = 1.4;
+    const Scalar p0 = 1.0;
+    const Scalar rho0 = 1.0;
+    const Scalar u0 = 0.3;
+    const Scalar t0 = p0 / rho0; // r_gas = 1
+    const Scalar amp = 1e-3;
+    auto run = [&](bool far_field) {
+        CompressibleSettings s;
+        s.r_gas = 1.0;
+        s.gamma = gamma;
+        BoundaryCondition in{FlowBoundary::VelocityInlet, Vec3(u0, 0, 0), p0};
+        in.temperature = t0;
+        in.far_field = far_field;
+        BoundaryCondition out = in;
+        if (!far_field) {
+            out = {FlowBoundary::PressureOutlet, Vec3::Zero(), p0};
+        }
+        auto bcs = tube_bcs(FlowBoundary::Empty);
+        bcs["xmin"] = in;
+        bcs["xmax"] = out;
+        CompressibleSolver solver(mesh, bcs, s);
+        std::vector<GasState> init(static_cast<std::size_t>(mesh.n_cells()));
+        const Scalar c0 = std::sqrt(gamma * p0 / rho0);
+        for (std::size_t c = 0; c < init.size(); ++c) {
+            const Scalar x = mesh.cell_centres()[c].x();
+            const Scalar dp = amp * std::exp(-std::pow((x - 0.5) / 0.05, 2));
+            init[c] = {rho0 + dp / (c0 * c0), Vec3(u0, 0, 0), p0 + dp};
+        }
+        solver.set_state(init);
+        Scalar t = 0.0;
+        while (t < 1.2) {
+            const Scalar dt = std::min(solver.stable_dt(), 1.2 - t);
+            (void)solver.step(dt);
+            t += dt;
+        }
+        Scalar dev = 0.0;
+        for (const Scalar p : solver.pressure()) {
+            dev = std::max(dev, std::abs(p - p0));
+        }
+        return dev / amp;
+    };
+    const Scalar far = run(true);
+    const Scalar fixed = run(false);
+    RecordProperty("far_field_residual", std::to_string(far));
+    RecordProperty("fixed_residual", std::to_string(fixed));
+    EXPECT_LT(far, 0.02) << "far field residual pulse " << far;
+    EXPECT_GT(fixed, 5.0 * far) << "fixed boundaries " << fixed;
+}
+
+// Uniform subsonic flow with far-field conditions on all sides stays exactly uniform.
+TEST(Compressible, FarFieldPreservesFreeStream) {
+    cfd::mesh::BoxSpec spec;
+    spec.nx = 8;
+    spec.ny = 4;
+    spec.nz = 1;
+    const auto mesh = cfd::mesh::make_box_mesh(spec);
+    CompressibleSettings s;
+    BoundaryCondition ff{FlowBoundary::VelocityInlet, Vec3(150, 40, 0), 1e5};
+    ff.temperature = 300.0;
+    ff.far_field = true;
+    const BoundaryCondition empty{FlowBoundary::Empty, Vec3::Zero(), 0.0};
+    CompressibleSolver solver(
+        mesh,
+        {{"xmin", ff}, {"xmax", ff}, {"ymin", ff}, {"ymax", ff}, {"zmin", empty}, {"zmax", empty}},
+        s);
+    const GasState free{1e5 / (287.0 * 300.0), Vec3(150, 40, 0), 1e5};
+    solver.set_uniform(free);
+    for (int n = 0; n < 50; ++n) {
+        (void)solver.steady_iteration();
+    }
+    for (std::size_t c = 0; c < static_cast<std::size_t>(mesh.n_cells()); ++c) {
+        EXPECT_NEAR(solver.state(c).p / free.p, 1.0, 1e-10);
+        EXPECT_NEAR(solver.state(c).u.y() / 40.0, 1.0, 1e-9);
+    }
+}
+
 } // namespace
 
 #include <cfd/case/case_config.hpp>
@@ -391,6 +472,21 @@ TEST(Compressible, TurbulentImplicitCaseFile) {
         EXPECT_DOUBLE_EQ(second.compressible()->k()[i], cs->k()[i]);
         EXPECT_DOUBLE_EQ(second.compressible()->omega()[i], cs->omega()[i]);
     }
+}
+
+TEST(Compressible, FarFieldCaseSyntax) {
+    const std::string json = R"({"name": "ff", "mesh": {"type": "box", "cells": [4, 4, 1]},
+        "physics": {"compressible": {}},
+        "boundaries": {"xmin": {"type": "far_field", "velocity": [100, 0, 0], "pressure": 1e5,
+                                "temperature": 300}}})";
+    const auto c = cfd::cases::parse_case(json);
+    EXPECT_TRUE(c.boundaries.at("xmin").far_field);
+    EXPECT_EQ(c.boundaries.at("xmin").kind, FlowBoundary::VelocityInlet);
+    const auto b = cfd::cases::parse_case(cfd::cases::case_to_json(c));
+    EXPECT_TRUE(b.boundaries.at("xmin").far_field);
+    std::string incompressible = json;
+    incompressible.replace(incompressible.find("\"compressible\": {}"), 18, "\"nu\": 1e-3");
+    EXPECT_THROW((void)cfd::cases::parse_case(incompressible), std::runtime_error);
 }
 
 } // namespace
