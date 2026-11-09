@@ -27,6 +27,17 @@
   error > 0.1 %); SST channel identical with both schemes on an orthogonal mesh; GUI
   "Gradients" selector (round-trip test)
 
+## Sphere at Re = 20 / 40 (37k cells, least squares, limited LUD, 450 iterations)
+
+| Re | Cd | Cp | Cf | Schiller–Naumann | Clift–Grace–Weber |
+|---|---|---|---|---|---|
+| 20 | 2.590 | 0.942 | 1.647 | 2.611 | 2.735 |
+| 40 | 1.742 | 0.691 | 1.051 | 1.734 | 1.788 |
+| 100 | 1.086 | 0.504 | 0.582 | 1.087 | 1.087 |
+
+- Re 40 / 100 within 3 % of both correlations; Re 20 is 5 % below Clift–Grace–Weber
+  (the Schiller–Naumann scatter is about ±5 %)
+
 ## GPU face assembly
 - `gpu::assemble_convection_diffusion`: implicit upwind convection + diffusion coefficients
   and flux divergence of all internal faces (CUDA kernel with atomic accumulation, OpenMP
