@@ -32,11 +32,15 @@
 | Re | Cd | Cp | Cf | Schiller–Naumann | Clift–Grace–Weber |
 |---|---|---|---|---|---|
 | 20 | 2.590 | 0.942 | 1.647 | 2.611 | 2.735 |
+| 20, finer wall (9 layers, first 0.004, 42.9k cells) | 2.543 | 0.927 | 1.616 | | |
 | 40 | 1.742 | 0.691 | 1.051 | 1.734 | 1.788 |
 | 100 | 1.086 | 0.504 | 0.582 | 1.087 | 1.087 |
 
-- Re 40 / 100 within 3 % of both correlations; Re 20 is 5 % below Clift–Grace–Weber
+- Re 40 / 100 within 3 % of both correlations; Re 20 is 5–7 % below Clift–Grace–Weber
   (the Schiller–Naumann scatter is about ±5 %)
+- Open: the low-Re deviation is not wall resolution (finer wall layers lower Cd slightly) and
+  not blockage (a larger domain lowered Cd at Re 100); candidates are the coarse far field
+  (size 1.0 D) and the inlet only 5 D upstream – see PLAN item 16
 
 ## GPU face assembly
 - `gpu::assemble_convection_diffusion`: implicit upwind convection + diffusion coefficients
