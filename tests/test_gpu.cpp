@@ -146,6 +146,18 @@ TEST(Gpu, CaseFileDevice) {
     EXPECT_EQ(c.solver.flow.u_solver.type, cfd::fv::LinearSolverType::GpuBiCgStab);
     const auto b = cfd::cases::parse_case(cfd::cases::case_to_json(c));
     EXPECT_EQ(b.solver.flow.p_solver.type, cfd::fv::LinearSolverType::GpuCg);
+    // Default "auto": GPU solvers only if the build finds an accelerator; round trip keeps it.
+    const auto a =
+        cfd::cases::parse_case(R"({"name": "c", "mesh": {"type": "box", "cells": [4, 4, 1]}})");
+    EXPECT_EQ(a.solver.device, cfd::cases::ComputeDevice::Auto);
+    EXPECT_EQ(a.solver.flow.p_solver.type == cfd::fv::LinearSolverType::GpuCg,
+              cfd::gpu::device_available());
+    EXPECT_EQ(cfd::cases::parse_case(cfd::cases::case_to_json(a)).solver.device,
+              cfd::cases::ComputeDevice::Auto);
+    const auto cpu = cfd::cases::parse_case(
+        R"({"name": "c", "mesh": {"type": "box", "cells": [4, 4, 1]}, "solver": {"device": "cpu"}})");
+    EXPECT_EQ(cpu.solver.flow.p_solver.type, cfd::fv::LinearSolverType::AmgCg);
+    EXPECT_EQ(cpu.solver.flow.u_solver.type, cfd::fv::LinearSolverType::BiCgStab);
     const std::string bad = R"({"name": "c", "mesh": {"type": "box", "cells": [4, 4, 1]},
                                 "solver": {"device": "tpu"}})";
     EXPECT_THROW((void)cfd::cases::parse_case(bad), std::runtime_error);

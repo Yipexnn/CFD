@@ -23,6 +23,8 @@ using core::Vec3;
 enum class MeshSource { Box, Gmsh, Geometry };
 enum class TurbulenceKind { Laminar, KOmegaSst };
 enum class SolverMode { Steady, Transient };
+// Linear solvers: Auto = GPU solvers if the build finds an accelerator, else the CPU solvers.
+enum class ComputeDevice { Auto, Cpu, Gpu };
 
 struct MeshConfig {
     MeshSource source = MeshSource::Box;
@@ -94,7 +96,14 @@ struct SolverConfig {
     Scalar end_time = 1.0;     // transient
     Scalar max_courant = 0.0;  // transient: > 0 adapts dt (at most `dt`) to this Courant number
     fv::FlowSettings flow;     // nu, body force, relaxation, schemes, correctors
+    ComputeDevice device = ComputeDevice::Auto;
 };
+
+// true if `device` selects the GPU solvers on this machine (Auto: gpu::device_available()).
+[[nodiscard]] bool uses_gpu(ComputeDevice device);
+// Sets the pressure / momentum linear-solver types of solver.flow from solver.device.
+void apply_device(SolverConfig& solver);
+[[nodiscard]] const char* device_name(ComputeDevice device); // "auto", "cpu", "gpu"
 
 struct OutputConfig {
     std::filesystem::path directory = "results"; // relative to the case file
