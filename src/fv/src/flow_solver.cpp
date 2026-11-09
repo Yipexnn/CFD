@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <array>
 #include <cfd/fv/flow_solver.hpp>
+#include <cfd/gpu/krylov.hpp>
 #include <cmath>
 #include <stdexcept>
 #include <tuple>
@@ -203,6 +204,27 @@ void FlowSolver::compute_initial_flux() {
 
 std::vector<Mat3> FlowSolver::velocity_gradient() const {
     const Mesh& m = geo_.mesh();
+    if (settings_.gradient == GradientScheme::LeastSquares) {
+        const auto ncl = static_cast<std::size_t>(m.n_cells());
+        const auto nifl = static_cast<std::size_t>(m.n_internal_faces());
+        const auto nb = static_cast<std::size_t>(m.n_boundary_faces());
+        std::vector<Mat3> g(ncl, Mat3::Zero());
+        std::vector<Scalar> cell(ncl);
+        std::vector<Scalar> bnd(nb);
+        for (int i = 0; i < 3; ++i) {
+            for (std::size_t c = 0; c < ncl; ++c) {
+                cell[c] = u_[c][i];
+            }
+            for (std::size_t b = 0; b < nb; ++b) {
+                bnd[b] = boundary_velocity(static_cast<Label>(nifl + b))[i];
+            }
+            const std::vector<Vec3> gi = geo_.least_squares_gradient(cell, bnd);
+            for (std::size_t c = 0; c < ncl; ++c) {
+                g[c].col(i) = gi[c]; // g(j, i) = du_i / dx_j
+            }
+        }
+        return g;
+    }
     const auto nc = static_cast<std::size_t>(m.n_cells());
     const auto nf = static_cast<std::size_t>(m.n_faces());
     const auto nif = static_cast<std::size_t>(m.n_internal_faces());
@@ -236,6 +258,27 @@ std::vector<Vec3> FlowSolver::pressure_gradient() const {
     const auto& w = geo_.weights();
     const auto& sf = m.face_area_vectors();
     const auto& vol = m.cell_volumes();
+
+    if (settings_.gradient == GradientScheme::LeastSquares) {
+        // Two passes as below: tangential extrapolation of zero-gradient boundary values.
+        std::vector<Scalar> pb(nf - nif);
+        std::vector<Vec3> g;
+        for (int pass = 0; pass < 2; ++pass) {
+            for (std::size_t f = nif; f < nf; ++f) {
+                const auto p = static_cast<std::size_t>(m.owner()[f]);
+                Scalar v = boundary_pressure(static_cast<Label>(f));
+                if (pass > 0 &&
+                    bc(static_cast<Label>(f - nif)).kind != FlowBoundary::PressureOutlet) {
+                    const Vec3& nrm = geo_.unit_normals()[f];
+                    const Vec3 d = m.face_centres()[f] - m.cell_centres()[p];
+                    v += g[p].dot(d - d.dot(nrm) * nrm);
+                }
+                pb[f - nif] = v;
+            }
+            g = geo_.least_squares_gradient(p_, pb);
+        }
+        return g;
+    }
 
     std::vector<Vec3> internal(nc, Vec3::Zero());
     for (std::size_t f = 0; f < nif; ++f) {
@@ -603,16 +646,28 @@ Scalar FlowSolver::pressure_correction(const MomentumSystem& sys, bool relax_p) 
     LduMatrix eq(m);
     eq.pattern = &geo_.csr_pattern();
     eq.halo = geo_.halo();
-    for (std::size_t f = 0; f < nif; ++f) {
-        const auto p = static_cast<std::size_t>(own[f]);
-        const auto n = static_cast<std::size_t>(nei[f]);
-        const Scalar coeff = rau_f[f] * dc[f];
-        eq.upper[f] = -coeff;
-        eq.lower[f] = -coeff;
-        eq.diag[p] += coeff;
-        eq.diag[n] += coeff;
-        eq.source[p] -= phi_hbya[f];
-        eq.source[n] += phi_hbya[f];
+    if (settings_.p_solver.type == LinearSolverType::GpuCg) {
+        // Face loop on the accelerator: Laplacian coefficients and div(phiHbyA).
+        std::vector<Scalar> divergence(nc, 0.0);
+        gpu::assemble_convection_diffusion(static_cast<int>(nc), static_cast<int>(nif), own.data(),
+                                           nei.data(), phi_hbya.data(), rau_f.data(), dc.data(),
+                                           0.0, eq.upper.data(), eq.lower.data(), eq.diag.data(),
+                                           divergence.data());
+        for (std::size_t c = 0; c < nc; ++c) {
+            eq.source[c] -= divergence[c];
+        }
+    } else {
+        for (std::size_t f = 0; f < nif; ++f) {
+            const auto p = static_cast<std::size_t>(own[f]);
+            const auto n = static_cast<std::size_t>(nei[f]);
+            const Scalar coeff = rau_f[f] * dc[f];
+            eq.upper[f] = -coeff;
+            eq.lower[f] = -coeff;
+            eq.diag[p] += coeff;
+            eq.diag[n] += coeff;
+            eq.source[p] -= phi_hbya[f];
+            eq.source[n] += phi_hbya[f];
+        }
     }
     for (std::size_t f = nif; f < nf; ++f) {
         const auto p = static_cast<std::size_t>(own[f]);

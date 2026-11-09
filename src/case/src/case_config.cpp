@@ -640,7 +640,7 @@ CaseConfig parse_case(const std::string& json_text, const std::filesystem::path&
         check_keys(s, path,
                    {"mode", "max_iterations", "tolerance", "dt", "end_time", "alpha_u", "alpha_p",
                     "convection", "non_orthogonal_correctors", "piso_correctors", "time_scheme",
-                    "max_courant", "device"});
+                    "max_courant", "device", "gradient"});
         c.solver.max_courant = get_number(s, "max_courant", path, c.solver.max_courant);
         const std::string mode = get_string(s, "mode", path, "steady");
         if (mode == "steady") {
@@ -654,6 +654,14 @@ CaseConfig parse_case(const std::string& json_text, const std::filesystem::path&
         c.solver.tolerance = get_number(s, "tolerance", path, c.solver.tolerance);
         c.solver.dt = get_number(s, "dt", path, c.solver.dt);
         c.solver.end_time = get_number(s, "end_time", path, c.solver.end_time);
+        const std::string gradient = get_string(s, "gradient", path, "gauss");
+        if (gradient == "gauss") {
+            flow.gradient = fv::GradientScheme::Gauss;
+        } else if (gradient == "least_squares") {
+            flow.gradient = fv::GradientScheme::LeastSquares;
+        } else {
+            fail(path + ".gradient", "unknown scheme '" + gradient + "' (gauss, least_squares)");
+        }
         const std::string device = get_string(s, "device", path, "cpu");
         if (device == "gpu") {
             flow.p_solver.type = fv::LinearSolverType::GpuCg;

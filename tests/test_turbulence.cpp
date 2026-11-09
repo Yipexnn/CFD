@@ -151,3 +151,24 @@ TEST(Turbulence, LaminarTestsUnaffectedWithoutModel) {
     EXPECT_EQ(ch.flow.turbulence_model(), nullptr);
     EXPECT_EQ(ch.flow.simple_iteration().k, 0.0);
 }
+
+// Least-squares gradients (flow and SST) on the orthogonal channel give the Gauss result.
+TEST(Turbulence, LeastSquaresGradientsChannel) {
+    Channel gauss(20, 1.0, 2000.0);
+    EXPECT_LT(gauss.solve(20000), 20000);
+    cfd::fv::FlowSettings s = Channel::settings(2000.0);
+    s.gradient = GradientScheme::LeastSquares;
+    const auto mesh = Channel::make_mesh(20, 1.0);
+    FlowSolver flow(mesh, Channel::conditions(), s);
+    KOmegaSst sst(flow, SstSettings{1.0, 10.0});
+    flow.set_uniform_velocity(Vec3(15.0, 0.0, 0.0));
+    flow.set_turbulence_model(&sst);
+    int it = 1;
+    for (; it <= 20000 && flow.simple_iteration().max() >= 1e-7; ++it) {
+    }
+    EXPECT_LT(it, 20000);
+    for (std::size_t c = 0; c < flow.velocity().size(); ++c) {
+        EXPECT_NEAR(flow.velocity()[c].x(), gauss.flow.velocity()[c].x(),
+                    1e-3 * gauss.flow.velocity()[c].x());
+    }
+}

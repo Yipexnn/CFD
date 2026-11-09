@@ -254,3 +254,64 @@ TEST(Gpu, PersistentSystemRepeatedSolves) {
     EXPECT_EQ(cache.device->on_device(),
               cfd::gpu::device_available() && cfd::gpu::backend_name() == "cuda");
 }
+
+#include <cfd/fv/scalar_transport.hpp>
+
+// FV assembly kernel = CPU assembly; a scalar transport solve with the accelerator solvers
+// (assembly + solve) gives the CPU result.
+TEST(Gpu, AssemblyMatchesCpu) {
+    cfd::mesh::BoxSpec spec;
+    spec.nx = 7;
+    spec.ny = 5;
+    spec.nz = 3;
+    const auto mesh = cfd::mesh::make_box_mesh(spec);
+    const auto nif = static_cast<std::size_t>(mesh.n_internal_faces());
+    const auto nc = static_cast<std::size_t>(mesh.n_cells());
+    std::vector<double> flux(nif);
+    std::vector<double> gamma(nif);
+    std::vector<double> dc(nif);
+    for (std::size_t f = 0; f < nif; ++f) {
+        flux[f] = std::sin(1.3 * static_cast<double>(f));
+        gamma[f] = 0.1 + 0.01 * static_cast<double>(f % 7);
+        dc[f] = 2.0 + 0.1 * static_cast<double>(f % 3);
+    }
+    std::vector<double> up(nif), lo(nif), diag(nc, 1.0), div(nc, 0.0);
+    cfd::gpu::assemble_convection_diffusion(
+        static_cast<int>(nc), static_cast<int>(nif), mesh.owner().data(), mesh.neighbour().data(),
+        flux.data(), gamma.data(), dc.data(), 1.0, up.data(), lo.data(), diag.data(), div.data());
+    std::vector<double> diag_ref(nc, 1.0), div_ref(nc, 0.0);
+    for (std::size_t f = 0; f < nif; ++f) {
+        const double g = gamma[f] * dc[f];
+        EXPECT_DOUBLE_EQ(up[f], std::min(flux[f], 0.0) - g);
+        EXPECT_DOUBLE_EQ(lo[f], -std::max(flux[f], 0.0) - g);
+        const auto p = static_cast<std::size_t>(mesh.owner()[f]);
+        const auto n = static_cast<std::size_t>(mesh.neighbour()[f]);
+        diag_ref[p] += std::max(flux[f], 0.0) + g;
+        diag_ref[n] += -std::min(flux[f], 0.0) + g;
+        div_ref[p] += flux[f];
+        div_ref[n] -= flux[f];
+    }
+    for (std::size_t c = 0; c < nc; ++c) {
+        EXPECT_NEAR(diag[c], diag_ref[c], 1e-12);
+        EXPECT_NEAR(div[c], div_ref[c], 1e-12);
+    }
+
+    // Diffusion + source solve through solve_scalar with CPU and accelerator settings.
+    const cfd::fv::FvGeometry geo(mesh);
+    cfd::fv::ScalarEquation eq;
+    eq.gamma_face.assign(static_cast<std::size_t>(mesh.n_faces()), 0.5);
+    eq.su.assign(nc, 1.0);
+    eq.sp.assign(nc, -0.2);
+    eq.boundary.assign(static_cast<std::size_t>(mesh.n_boundary_faces()),
+                       {cfd::fv::ScalarBoundary::Kind::FixedValue, 0.0});
+    const std::vector<double> zero_flux(static_cast<std::size_t>(mesh.n_faces()), 0.0);
+    std::vector<double> t_cpu(nc, 0.0);
+    std::vector<double> t_gpu(nc, 0.0);
+    (void)cfd::fv::solve_scalar(geo, zero_flux, eq, t_cpu,
+                                {cfd::fv::LinearSolverType::BiCgStab, 1e-14, 1e-12, 1000});
+    (void)cfd::fv::solve_scalar(geo, zero_flux, eq, t_gpu,
+                                {cfd::fv::LinearSolverType::GpuBiCgStab, 1e-14, 1e-12, 1000});
+    for (std::size_t c = 0; c < nc; ++c) {
+        EXPECT_NEAR(t_gpu[c], t_cpu[c], 1e-9);
+    }
+}

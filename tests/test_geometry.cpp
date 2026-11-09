@@ -211,3 +211,66 @@ TEST(Geometry, GmshPhysicalVolumesAsZones) {
 }
 
 } // namespace
+
+#include <cfd/fv/fv_geometry.hpp>
+
+namespace {
+
+// Least-squares gradients are exact for linear fields on a skewed tetrahedral mesh; the
+// Green-Gauss gradient with linear face interpolation is not.
+TEST(Geometry, LeastSquaresGradientExactOnTets) {
+    const std::string gmsh = cfd::geometry::find_gmsh();
+    if (gmsh.empty()) {
+        GTEST_SKIP() << "Gmsh not installed";
+    }
+    GeometrySpec s;
+    s.domain_min = Vec3(0, 0, 0);
+    s.domain_max = Vec3(1, 1, 1);
+    Body sphere;
+    sphere.kind = Body::Kind::Sphere;
+    sphere.a = Vec3(0.5, 0.5, 0.5);
+    sphere.radius = 0.2;
+    s.bodies.push_back(sphere);
+    s.size = 0.15;
+    const auto dir = std::filesystem::temp_directory_path() / "cfd_test_lsq_gradient";
+    const auto mesh = cfd::geometry::generate_mesh(s, dir, gmsh);
+    const cfd::fv::FvGeometry geo(mesh);
+    const Vec3 g(1.5, -2.0, 0.75);
+    auto phi = [&](const Vec3& x) { return 3.0 + g.dot(x); };
+    std::vector<double> cells(static_cast<std::size_t>(mesh.n_cells()));
+    for (std::size_t c = 0; c < cells.size(); ++c) {
+        cells[c] = phi(mesh.cell_centres()[c]);
+    }
+    const auto nif = static_cast<std::size_t>(mesh.n_internal_faces());
+    std::vector<double> bnd(static_cast<std::size_t>(mesh.n_boundary_faces()));
+    for (std::size_t b = 0; b < bnd.size(); ++b) {
+        bnd[b] = phi(mesh.face_centres()[nif + b]);
+    }
+    const auto lsq = geo.least_squares_gradient(cells, bnd);
+    double err_lsq = 0.0;
+    double err_gauss = 0.0;
+    for (std::size_t c = 0; c < cells.size(); ++c) {
+        err_lsq = std::max(err_lsq, (lsq[c] - g).norm());
+        Vec3 gauss = Vec3::Zero();
+        for (auto k = static_cast<std::size_t>(mesh.cell_face_offsets()[c]);
+             k < static_cast<std::size_t>(mesh.cell_face_offsets()[c + 1]); ++k) {
+            const auto f = static_cast<std::size_t>(mesh.cell_faces()[k]);
+            double value = 0.0;
+            if (f < nif) {
+                const double w = geo.weights()[f];
+                value = w * cells[static_cast<std::size_t>(mesh.owner()[f])] +
+                        (1.0 - w) * cells[static_cast<std::size_t>(mesh.neighbour()[f])];
+            } else {
+                value = bnd[f - nif];
+            }
+            const double sign = static_cast<std::size_t>(mesh.owner()[f]) == c ? 1.0 : -1.0;
+            gauss += sign * value * mesh.face_area_vectors()[f];
+        }
+        gauss /= mesh.cell_volumes()[c];
+        err_gauss = std::max(err_gauss, (gauss - g).norm());
+    }
+    EXPECT_LT(err_lsq, 1e-9 * g.norm());
+    EXPECT_GT(err_gauss, 1e-3 * g.norm()); // inconsistent on skewed cells
+}
+
+} // namespace

@@ -148,6 +148,7 @@ private:
     QComboBox* convection_ = nullptr;
     QComboBox* time_scheme_ = nullptr;
     QComboBox* device_ = nullptr;
+    QComboBox* gradient_ = nullptr;
     QSpinBox* non_orth_correctors_ = nullptr;
     QSpinBox* piso_correctors_ = nullptr;
 

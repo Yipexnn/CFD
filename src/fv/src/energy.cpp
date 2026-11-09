@@ -199,6 +199,7 @@ Scalar EnergyEquation::correct(const FlowSolver& flow, Scalar dt) {
     eq.su = source_su_.empty() ? std::vector<Scalar>(t_.size(), 0.0) : source_su_;
     eq.sp = source_sp_.empty() ? std::vector<Scalar>(t_.size(), 0.0) : source_sp_;
     eq.boundary = bc_;
+    eq.gradient = flow.settings().gradient;
     eq.relaxation = dt > 0.0 ? 1.0 : settings_.relaxation;
     eq.dt = dt;
     eq.old_value = &t_old_;

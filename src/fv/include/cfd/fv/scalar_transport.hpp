@@ -33,6 +33,7 @@ struct ScalarEquation {
     const std::vector<Scalar>* old_value = nullptr;
     const std::vector<Scalar>* capacity = nullptr; // optional factor of the time term per cell
     bool linear_upwind = true;
+    GradientScheme gradient = GradientScheme::Gauss; // linear upwind / non-orthogonal parts
 };
 
 // Boundary-face values of a cell scalar for the given boundary conditions.
@@ -40,10 +41,11 @@ struct ScalarEquation {
                                                   const std::vector<Scalar>& field,
                                                   const std::vector<ScalarBoundary>& bc);
 
-// Gauss-linear gradient of a cell scalar.
+// Gradient of a cell scalar (Gauss-linear or least squares).
 [[nodiscard]] std::vector<Vec3> scalar_gradient(const FvGeometry& geo,
                                                 const std::vector<Scalar>& field,
-                                                const std::vector<ScalarBoundary>& bc);
+                                                const std::vector<ScalarBoundary>& bc,
+                                                GradientScheme scheme = GradientScheme::Gauss);
 
 // Assembles and solves the equation in place; returns the linear solve result.
 LinearSolveResult solve_scalar(const FvGeometry& geo, const std::vector<Scalar>& face_flux,

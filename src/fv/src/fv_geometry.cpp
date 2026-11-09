@@ -67,4 +67,62 @@ FvGeometry::FvGeometry(const Mesh& mesh, const parallel::Halo* halo)
     }
 }
 
+void FvGeometry::build_least_squares() const {
+    const Mesh& m = *mesh_;
+    const auto nc = static_cast<std::size_t>(m.n_cells());
+    const auto nf = static_cast<std::size_t>(m.n_faces());
+    const auto nif = static_cast<std::size_t>(m.n_internal_faces());
+    const auto& cc = m.cell_centres();
+    const auto& cf = m.face_centres();
+    std::vector<Eigen::Matrix3d> mat(nc, Eigen::Matrix3d::Zero());
+    for (std::size_t f = 0; f < nf; ++f) {
+        const auto p = static_cast<std::size_t>(m.owner()[f]);
+        const Vec3 d = f < nif ? Vec3(cc[static_cast<std::size_t>(m.neighbour()[f])] - cc[p])
+                               : Vec3(cf[f] - cc[p]);
+        const Eigen::Matrix3d dd = d * d.transpose() / d.squaredNorm();
+        mat[p] += dd;
+        if (f < nif) {
+            mat[static_cast<std::size_t>(m.neighbour()[f])] += dd;
+        }
+    }
+    lsq_inverse_.resize(nc);
+    for (std::size_t c = 0; c < nc; ++c) {
+        lsq_inverse_[c] = mat[c].inverse();
+    }
+}
+
+std::vector<Vec3>
+FvGeometry::least_squares_gradient(const std::vector<Scalar>& cell_values,
+                                   const std::vector<Scalar>& boundary_values) const {
+    if (lsq_inverse_.empty()) {
+        build_least_squares();
+    }
+    const Mesh& m = *mesh_;
+    const auto nc = static_cast<std::size_t>(m.n_cells());
+    const auto nf = static_cast<std::size_t>(m.n_faces());
+    const auto nif = static_cast<std::size_t>(m.n_internal_faces());
+    const auto& cc = m.cell_centres();
+    const auto& cf = m.face_centres();
+    std::vector<Vec3> rhs(nc, Vec3::Zero());
+    for (std::size_t f = 0; f < nf; ++f) {
+        const auto p = static_cast<std::size_t>(m.owner()[f]);
+        if (f < nif) {
+            const auto n = static_cast<std::size_t>(m.neighbour()[f]);
+            const Vec3 d = cc[n] - cc[p];
+            const Vec3 g = d / d.squaredNorm() * (cell_values[n] - cell_values[p]);
+            rhs[p] += g;
+            rhs[n] += g; // (-d)(phi_P - phi_N) = d (phi_N - phi_P)
+        } else {
+            const Vec3 d = cf[f] - cc[p];
+            rhs[p] += d / d.squaredNorm() * (boundary_values[f - nif] - cell_values[p]);
+        }
+    }
+    std::vector<Vec3> grad(nc);
+    for (std::size_t c = 0; c < nc; ++c) {
+        grad[c] = lsq_inverse_[c] * rhs[c];
+    }
+    exchange(grad);
+    return grad;
+}
+
 } // namespace cfd::fv

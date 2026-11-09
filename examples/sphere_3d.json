@@ -1,7 +1,8 @@
 {
   // Steady flow past a sphere at Re = 100 (D = 1, U = 1, nu = 0.01) on a 3D Gmsh mesh with
   // prism boundary layers. Reference: Cd = 1.09 (Schiller-Naumann 24/Re (1 + 0.15 Re^0.687),
-  // Johnson & Patel 1999: 1.087). Needs Gmsh. Forces in results/sphere_3d/forces.csv.
+  // Johnson & Patel 1999: 1.087). Least-squares gradients are needed on the tetrahedra
+  // (Green-Gauss gives Cd ~1.16). Needs Gmsh. Forces in results/sphere_3d/forces.csv.
   "name": "sphere_3d",
   "mesh": {
     "type": "geometry",
@@ -22,7 +23,7 @@
     "farfield": { "type": "symmetry" }
   },
   "initial": { "velocity": [1, 0, 0] },
-  "solver": { "max_iterations": 1500, "tolerance": 1e-6, "convection": "limited_linear_upwind",
+  "solver": { "max_iterations": 1500, "tolerance": 1e-6, "convection": "limited_linear_upwind", "gradient": "least_squares",
               "non_orthogonal_correctors": 1 },
   "forces": { "patches": ["sphere"], "reference_velocity": 1.0, "reference_area": 0.7853981633974483 },
   "output": { "directory": "results/sphere_3d", "log_interval": 100 }

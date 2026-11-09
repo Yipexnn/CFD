@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <cfd/fv/scalar_transport.hpp>
+#include <cfd/gpu/krylov.hpp>
 #include <cmath>
 #include <stdexcept>
 
@@ -39,7 +40,10 @@ std::vector<Scalar> boundary_values(const FvGeometry& geo, const std::vector<Sca
 }
 
 std::vector<Vec3> scalar_gradient(const FvGeometry& geo, const std::vector<Scalar>& field,
-                                  const std::vector<ScalarBoundary>& bc) {
+                                  const std::vector<ScalarBoundary>& bc, GradientScheme scheme) {
+    if (scheme == GradientScheme::LeastSquares) {
+        return geo.least_squares_gradient(field, boundary_values(geo, field, bc));
+    }
     const Mesh& m = geo.mesh();
     const auto nc = static_cast<std::size_t>(m.n_cells());
     const auto nf = static_cast<std::size_t>(m.n_faces());
@@ -86,23 +90,34 @@ LinearSolveResult solve_scalar(const FvGeometry& geo, const std::vector<Scalar>&
         throw std::invalid_argument("solve_scalar: size mismatch");
     }
 
-    const std::vector<Vec3> grad = scalar_gradient(geo, field, eq.boundary);
+    const std::vector<Vec3> grad = scalar_gradient(geo, field, eq.boundary, eq.gradient);
     LduMatrix a(m);
     a.pattern = &geo.csr_pattern();
     a.halo = geo.halo();
     std::vector<Scalar> divergence(nc, 0.0);
 
+    // Implicit internal-face coefficients: on the accelerator when GPU solvers are selected.
+    const bool device =
+        settings.type == LinearSolverType::GpuCg || settings.type == LinearSolverType::GpuBiCgStab;
+    if (device) {
+        gpu::assemble_convection_diffusion(static_cast<int>(nc), static_cast<int>(nif), own.data(),
+                                           nei.data(), face_flux.data(), eq.gamma_face.data(),
+                                           dc.data(), 1.0, a.upper.data(), a.lower.data(),
+                                           a.diag.data(), divergence.data());
+    }
     for (std::size_t f = 0; f < nif; ++f) {
         const auto p = static_cast<std::size_t>(own[f]);
         const auto n = static_cast<std::size_t>(nei[f]);
         const Scalar flux = face_flux[f];
-        const Scalar diff = eq.gamma_face[f] * dc[f];
-        a.upper[f] = std::min(flux, 0.0) - diff;
-        a.lower[f] = -std::max(flux, 0.0) - diff;
-        a.diag[p] += std::max(flux, 0.0) + diff;
-        a.diag[n] += -std::min(flux, 0.0) + diff;
-        divergence[p] += flux;
-        divergence[n] -= flux;
+        if (!device) {
+            const Scalar diff = eq.gamma_face[f] * dc[f];
+            a.upper[f] = std::min(flux, 0.0) - diff;
+            a.lower[f] = -std::max(flux, 0.0) - diff;
+            a.diag[p] += std::max(flux, 0.0) + diff;
+            a.diag[n] += -std::min(flux, 0.0) + diff;
+            divergence[p] += flux;
+            divergence[n] -= flux;
+        }
 
         Scalar explicit_flux = 0.0;
         if (eq.linear_upwind) {

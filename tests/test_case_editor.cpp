@@ -28,6 +28,7 @@ TEST(CaseEditor, RoundTripOfNewSettings) {
     rs.emissivity = 0.7;
     rs.patch_emissivity["xmin"] = 0.3;
     c.radiation = rs;
+    c.solver.flow.gradient = fv::GradientScheme::LeastSquares;
     fv::BoundaryCondition wall{fv::FlowBoundary::Wall, core::Vec3::Zero(), 0.0};
     wall.contact_angle = 60.0;
     wall.temperature = 350.0;
@@ -54,6 +55,7 @@ TEST(CaseEditor, RoundTripOfNewSettings) {
     EXPECT_DOUBLE_EQ(b.radiation->emissivity, 0.7);
     EXPECT_DOUBLE_EQ(b.radiation->patch_emissivity.at("xmin"), 0.3); // no widget: kept
     EXPECT_DOUBLE_EQ(b.boundaries.at("xmin").contact_angle, 60.0);
+    EXPECT_EQ(b.solver.flow.gradient, fv::GradientScheme::LeastSquares);
     EXPECT_DOUBLE_EQ(b.boundaries.at("xmin").temperature, 350.0);
 }
 

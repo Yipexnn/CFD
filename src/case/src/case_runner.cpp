@@ -1088,7 +1088,9 @@ RunResult CaseRunner::run(const ProgressCallback& progress) {
         if (step_ == 0) {
             forces_log << "step,time";
             for (const auto& name : fc.patches) {
-                for (const char* c : {"Fx", "Fy", "Fz", "Cx", "Cy", "Cz"}) {
+                // C = total coefficient, Cp / Cf = pressure / friction (viscous) parts.
+                for (const char* c : {"Fx", "Fy", "Fz", "Cx", "Cy", "Cz", "Cpx", "Cpy", "Cpz",
+                                      "Cfx", "Cfy", "Cfz"}) {
                     forces_log << ',' << name << '_' << c;
                 }
             }
@@ -1101,10 +1103,14 @@ RunResult CaseRunner::run(const ProgressCallback& progress) {
     auto write_forces = [&]() {
         forces_log << step_ << ',' << time_;
         for (const auto& name : fc.patches) {
-            const Vec3 f = force(name);
+            const fv::PatchForce pf = flow_->patch_force(name);
+            const Vec3 f = fc.density * pf.total();
+            const Vec3 cp = fc.density * pf.pressure / dynamic_area;
+            const Vec3 cv = fc.density * pf.viscous / dynamic_area;
             forces_log << ',' << f.x() << ',' << f.y() << ',' << f.z() << ','
                        << f.x() / dynamic_area << ',' << f.y() / dynamic_area << ','
-                       << f.z() / dynamic_area;
+                       << f.z() / dynamic_area << ',' << cp.x() << ',' << cp.y() << ',' << cp.z()
+                       << ',' << cv.x() << ',' << cv.y() << ',' << cv.z();
         }
         forces_log << '\n';
     };
