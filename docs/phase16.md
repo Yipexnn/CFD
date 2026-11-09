@@ -46,4 +46,12 @@
 - Open: the cause of the low-Re deficit (both pressure and friction parts are low)
 
 ## Sphere at Re = 300 (unsteady wake)
-- Pending
+- Mesh 98 802 cells (prism layers 6 × 0.008, wake box x 0.3…9, |y|, |z| < 1.5 with size 0.2),
+  BDF2 + PISO, dt 0.08, least squares, 4 MPI processes (1.5 s per step)
+- Limited linear upwind: the flow settles to the **steady oblique wake** (no shedding):
+  Cd 0.667, lift 0.033; Johnson & Patel 1999 (periodic): mean Cd 0.656, lift 0.069,
+  St 0.137 – the Barth-Jespersen limiter is too dissipative to sustain the weak instability
+  at Re 300 (it behaves like Re ≈ 250 with lower lift)
+- Unlimited linear upwind (restart at t = 40): diverges on this tetrahedral mesh (t ≈ 56)
+- Open: a smoother limiter (e.g. Venkatakrishnan, as in the compressible solver) or a
+  bounded central scheme for the momentum equation, then St / mean lift
