@@ -327,3 +327,131 @@ TEST(Gpu, AssemblyMatchesCpu) {
         EXPECT_NEAR(t_gpu[c], t_cpu[c], 1e-9);
     }
 }
+
+#include <cfd/fv/scalar_transport.hpp>
+#include <cfd/gpu/fv_device.hpp>
+
+namespace {
+
+// Box mesh with the interior points moved in x / y (skewed, non-orthogonal cells; planar faces).
+cfd::mesh::Mesh skewed_box(int nx, int ny, int nz, double lz) {
+    cfd::mesh::BoxSpec spec;
+    spec.nx = nx;
+    spec.ny = ny;
+    spec.nz = nz;
+    spec.max = Vec3(1.0, 1.0, lz);
+    if (nz == 1) {
+        spec.patch_types[4] = cfd::mesh::PatchType::Symmetry;
+        spec.patch_types[5] = cfd::mesh::PatchType::Symmetry;
+    }
+    const auto box = cfd::mesh::make_box_mesh(spec);
+    std::vector<Vec3> pts = box.points();
+    const double hx = 1.0 / nx;
+    const double hy = 1.0 / ny;
+    for (auto& p : pts) {
+        if (p.x() > 1e-9 && p.x() < 1.0 - 1e-9 && p.y() > 1e-9 && p.y() < 1.0 - 1e-9) {
+            const double s = 17.0 * p.x() + 31.0 * p.y();
+            p.x() += 0.25 * hx * std::sin(s);
+            p.y() += 0.25 * hy * std::cos(1.7 * s);
+        }
+    }
+    std::vector<cfd::core::Label> offsets{0};
+    std::vector<cfd::core::Label> fp;
+    for (cfd::core::Label f = 0; f < box.n_faces(); ++f) {
+        const auto face = box.face(f);
+        fp.insert(fp.end(), face.begin(), face.end());
+        offsets.push_back(static_cast<cfd::core::Label>(fp.size()));
+    }
+    return {pts, offsets, fp, box.owner(), box.neighbour(), box.patches(), box.n_cells()};
+}
+
+} // namespace
+
+// Device gradients (Green-Gauss, least squares) and scalar face corrections equal the CPU loops.
+TEST(Gpu, FvKernelsMatchCpu) {
+    const auto mesh = skewed_box(6, 5, 4, 1.0);
+    const cfd::fv::FvGeometry geo(mesh);
+    const auto nc = static_cast<std::size_t>(mesh.n_cells());
+    const auto nf = static_cast<std::size_t>(mesh.n_faces());
+    const auto nif = static_cast<std::size_t>(mesh.n_internal_faces());
+    auto field = [](const Vec3& x) {
+        return std::sin(2.0 * x.x()) + x.y() * x.y() + x.x() * x.z();
+    };
+    std::vector<Scalar> phi(nc);
+    for (std::size_t c = 0; c < nc; ++c) {
+        phi[c] = field(mesh.cell_centres()[c]);
+    }
+    std::vector<Scalar> bv(nf - nif);
+    for (std::size_t f = nif; f < nf; ++f) {
+        bv[f - nif] = field(mesh.face_centres()[f]);
+    }
+    for (const auto scheme :
+         {cfd::fv::GradientScheme::Gauss, cfd::fv::GradientScheme::LeastSquares}) {
+        const auto cpu = geo.gradient(phi, bv, scheme, false);
+        const auto dev = geo.gradient(phi, bv, scheme, true);
+        for (std::size_t c = 0; c < nc; ++c) {
+            EXPECT_NEAR((dev[c] - cpu[c]).norm(), 0.0, 1e-12);
+        }
+    }
+    EXPECT_EQ(geo.device().on_device(), cfd::gpu::device_available());
+
+    // Explicit linear-upwind + non-orthogonal corrections against the CPU face loop.
+    std::vector<Scalar> flux(nf);
+    std::vector<Scalar> gamma(nf);
+    for (std::size_t f = 0; f < nf; ++f) {
+        flux[f] = std::sin(0.7 * static_cast<double>(f));
+        gamma[f] = 0.05 + 0.01 * static_cast<double>(f % 5);
+    }
+    const auto g = geo.gradient(phi, bv, cfd::fv::GradientScheme::LeastSquares, false);
+    std::vector<Scalar> ref(nc, 0.5);
+    std::vector<Scalar> src(nc, 0.5);
+    const auto& cf = mesh.face_centres();
+    const auto& cc = mesh.cell_centres();
+    for (std::size_t f = 0; f < nif; ++f) {
+        const auto p = static_cast<std::size_t>(mesh.owner()[f]);
+        const auto n = static_cast<std::size_t>(mesh.neighbour()[f]);
+        const std::size_t up = flux[f] >= 0.0 ? p : n;
+        const double w = geo.weights()[f];
+        const double e = -flux[f] * g[up].dot(cf[f] - cc[up]) +
+                         gamma[f] * geo.corrections()[f].dot(w * g[p] + (1.0 - w) * g[n]);
+        ref[p] += e;
+        ref[n] -= e;
+    }
+    geo.device().scalar_corrections(phi.data(), bv.data(), true, flux.data(), gamma.data(), true,
+                                    src.data());
+    for (std::size_t c = 0; c < nc; ++c) {
+        EXPECT_NEAR(src[c], ref[c], 1e-12);
+    }
+}
+
+// Lid-driven cavity on a skewed mesh with limited linear upwind and least-squares gradients:
+// the accelerator path (gradients, limiter, momentum and scalar corrections, assembly,
+// AMG-PCG) converges to the CPU solution; the variable viscosity enables the transpose term.
+TEST(Gpu, SkewedCavityMatchesCpu) {
+    const auto mesh = skewed_box(16, 16, 1, 1.0 / 16);
+    auto run = [&](bool gpu) {
+        cfd::fv::FlowSettings s;
+        s.nu = 0.01;
+        s.convection = cfd::fv::ConvectionScheme::LimitedLinearUpwind;
+        s.gradient = cfd::fv::GradientScheme::LeastSquares;
+        s.n_non_orth_correctors = 1;
+        if (gpu) {
+            s.p_solver.type = cfd::fv::LinearSolverType::GpuCg;
+            s.u_solver.type = cfd::fv::LinearSolverType::GpuBiCgStab;
+        }
+        cfd::fv::FlowSolver solver(
+            mesh, {{"ymax", {cfd::fv::FlowBoundary::Wall, Vec3(1.0, 0.0, 0.0), 0.0}}}, s);
+        std::vector<Scalar> nu(static_cast<std::size_t>(mesh.n_cells()));
+        for (std::size_t c = 0; c < nu.size(); ++c) {
+            nu[c] = 0.01 * (1.0 + 0.5 * mesh.cell_centres()[c].x());
+        }
+        solver.set_cell_viscosity(nu);
+        EXPECT_LT(solver.solve_steady(1e-8, 4000), 4000);
+        return solver.velocity();
+    };
+    const auto u_cpu = run(false);
+    const auto u_gpu = run(true);
+    for (std::size_t c = 0; c < u_cpu.size(); ++c) {
+        EXPECT_NEAR((u_gpu[c] - u_cpu[c]).norm(), 0.0, 1e-5);
+    }
+}

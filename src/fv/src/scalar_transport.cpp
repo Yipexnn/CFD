@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <cfd/fv/scalar_transport.hpp>
+#include <cfd/gpu/fv_device.hpp>
 #include <cfd/gpu/krylov.hpp>
 #include <cmath>
 #include <stdexcept>
@@ -40,33 +41,9 @@ std::vector<Scalar> boundary_values(const FvGeometry& geo, const std::vector<Sca
 }
 
 std::vector<Vec3> scalar_gradient(const FvGeometry& geo, const std::vector<Scalar>& field,
-                                  const std::vector<ScalarBoundary>& bc, GradientScheme scheme) {
-    if (scheme == GradientScheme::LeastSquares) {
-        return geo.least_squares_gradient(field, boundary_values(geo, field, bc));
-    }
-    const Mesh& m = geo.mesh();
-    const auto nc = static_cast<std::size_t>(m.n_cells());
-    const auto nf = static_cast<std::size_t>(m.n_faces());
-    const auto nif = static_cast<std::size_t>(m.n_internal_faces());
-    const auto& w = geo.weights();
-    const auto& sf = m.face_area_vectors();
-    const std::vector<Scalar> bv = boundary_values(geo, field, bc);
-    std::vector<Vec3> grad(nc, Vec3::Zero());
-    for (std::size_t f = 0; f < nif; ++f) {
-        const auto p = static_cast<std::size_t>(m.owner()[f]);
-        const auto n = static_cast<std::size_t>(m.neighbour()[f]);
-        const Vec3 flux = sf[f] * (w[f] * field[p] + (1.0 - w[f]) * field[n]);
-        grad[p] += flux;
-        grad[n] -= flux;
-    }
-    for (std::size_t f = nif; f < nf; ++f) {
-        grad[static_cast<std::size_t>(m.owner()[f])] += sf[f] * bv[f - nif];
-    }
-    for (std::size_t c = 0; c < nc; ++c) {
-        grad[c] /= m.cell_volumes()[c];
-    }
-    geo.exchange(grad);
-    return grad;
+                                  const std::vector<ScalarBoundary>& bc, GradientScheme scheme,
+                                  bool device) {
+    return geo.gradient(field, boundary_values(geo, field, bc), scheme, device);
 }
 
 LinearSolveResult solve_scalar(const FvGeometry& geo, const std::vector<Scalar>& face_flux,
@@ -90,15 +67,25 @@ LinearSolveResult solve_scalar(const FvGeometry& geo, const std::vector<Scalar>&
         throw std::invalid_argument("solve_scalar: size mismatch");
     }
 
-    const std::vector<Vec3> grad = scalar_gradient(geo, field, eq.boundary, eq.gradient);
     LduMatrix a(m);
     a.pattern = &geo.csr_pattern();
     a.halo = geo.halo();
     std::vector<Scalar> divergence(nc, 0.0);
 
-    // Implicit internal-face coefficients: on the accelerator when GPU solvers are selected.
+    // Implicit internal-face coefficients: on the accelerator when GPU solvers are selected;
+    // on a serial mesh also the gradient and the explicit face corrections.
     const bool device =
         settings.type == LinearSolverType::GpuCg || settings.type == LinearSolverType::GpuBiCgStab;
+    const bool device_fv = device && geo.device_capable();
+    std::vector<Vec3> grad;
+    if (device_fv) {
+        const std::vector<Scalar> bv = boundary_values(geo, field, eq.boundary);
+        geo.device().scalar_corrections(
+            field.data(), bv.data(), eq.gradient == GradientScheme::LeastSquares, face_flux.data(),
+            eq.gamma_face.data(), eq.linear_upwind, a.source.data());
+    } else {
+        grad = scalar_gradient(geo, field, eq.boundary, eq.gradient);
+    }
     if (device) {
         gpu::assemble_convection_diffusion(static_cast<int>(nc), static_cast<int>(nif), own.data(),
                                            nei.data(), face_flux.data(), eq.gamma_face.data(),
@@ -119,6 +106,9 @@ LinearSolveResult solve_scalar(const FvGeometry& geo, const std::vector<Scalar>&
             divergence[n] -= flux;
         }
 
+        if (device_fv) {
+            continue; // explicit corrections done on the device
+        }
         Scalar explicit_flux = 0.0;
         if (eq.linear_upwind) {
             const std::size_t up = flux >= 0.0 ? p : n;
