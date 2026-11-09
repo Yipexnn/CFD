@@ -429,10 +429,11 @@ TEST(Gpu, FvKernelsMatchCpu) {
 // AMG-PCG) converges to the CPU solution; the variable viscosity enables the transpose term.
 TEST(Gpu, SkewedCavityMatchesCpu) {
     const auto mesh = skewed_box(16, 16, 1, 1.0 / 16);
-    auto run = [&](bool gpu) {
+    auto run = [&](bool gpu, cfd::fv::Limiter limiter) {
         cfd::fv::FlowSettings s;
         s.nu = 0.01;
         s.convection = cfd::fv::ConvectionScheme::LimitedLinearUpwind;
+        s.limiter = limiter;
         s.gradient = cfd::fv::GradientScheme::LeastSquares;
         s.n_non_orth_correctors = 1;
         if (gpu) {
@@ -449,9 +450,18 @@ TEST(Gpu, SkewedCavityMatchesCpu) {
         EXPECT_LT(solver.solve_steady(1e-8, 4000), 4000);
         return solver.velocity();
     };
-    const auto u_cpu = run(false);
-    const auto u_gpu = run(true);
-    for (std::size_t c = 0; c < u_cpu.size(); ++c) {
-        EXPECT_NEAR((u_gpu[c] - u_cpu[c]).norm(), 0.0, 1e-5);
+    for (const auto limiter :
+         {cfd::fv::Limiter::BarthJespersen, cfd::fv::Limiter::Venkatakrishnan}) {
+        const auto u_cpu = run(false, limiter);
+        const auto u_gpu = run(true, limiter);
+        for (std::size_t c = 0; c < u_cpu.size(); ++c) {
+            EXPECT_NEAR((u_gpu[c] - u_cpu[c]).norm(), 0.0, 1e-5);
+        }
     }
+    const std::string json = R"({"name": "c", "mesh": {"type": "box", "cells": [4, 4, 1]},
+        "solver": {"convection": "limited_linear_upwind", "limiter": "venkatakrishnan",
+                   "venkat_k": 0.2}})";
+    const auto c = cfd::cases::parse_case(cfd::cases::case_to_json(cfd::cases::parse_case(json)));
+    EXPECT_EQ(c.solver.flow.limiter, cfd::fv::Limiter::Venkatakrishnan);
+    EXPECT_DOUBLE_EQ(c.solver.flow.venkat_k, 0.2);
 }

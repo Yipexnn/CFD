@@ -4,6 +4,7 @@
 #include <cfd/gpu/fv_device.hpp>
 #include <cfd/gpu/krylov.hpp>
 #include <cmath>
+#include <limits>
 #include <stdexcept>
 #include <tuple>
 #include <utility>
@@ -201,6 +202,21 @@ void FlowSolver::compute_initial_flux() {
                       ? 0.0
                       : boundary_velocity(static_cast<Label>(f)).dot(sf[f]);
     }
+}
+
+Vec3 FlowSolver::venkat_eps2() const {
+    Vec3 lo = Vec3::Constant(std::numeric_limits<Scalar>::max());
+    Vec3 hi = Vec3::Constant(std::numeric_limits<Scalar>::lowest());
+    for (Label c = 0; c < geo_.n_owned(); ++c) {
+        lo = lo.cwiseMin(u_[static_cast<std::size_t>(c)]);
+        hi = hi.cwiseMax(u_[static_cast<std::size_t>(c)]);
+    }
+    Vec3 eps2;
+    for (int i = 0; i < 3; ++i) {
+        const Scalar range = geo_.comm().max(hi[i]) - geo_.comm().min(lo[i]);
+        eps2[i] = std::pow(settings_.venkat_k * range, 2) + 1e-300;
+    }
+    return eps2;
 }
 
 bool FlowSolver::device_fv() const {
@@ -468,6 +484,8 @@ void FlowSolver::assemble_momentum(MomentumSystem& sys, Scalar dt, bool relax) c
             u_max[p] = u_max[p].cwiseMax(ub);
         }
         limiter.assign(nc, Vec3::Ones());
+        const bool venkat = settings_.limiter == Limiter::Venkatakrishnan;
+        const Vec3 eps2 = venkat_eps2();
         auto limit = [&](std::size_t c, std::size_t f) {
             const Vec3 delta = grad[c].transpose() * Vec3(cf[f] - cc[c]);
             for (int i = 0; i < 3; ++i) {
@@ -476,7 +494,10 @@ void FlowSolver::assemble_momentum(MomentumSystem& sys, Scalar dt, bool relax) c
                     continue;
                 }
                 const Scalar bound = d > 0.0 ? u_max[c][i] - u_[c][i] : u_min[c][i] - u_[c][i];
-                limiter[c][i] = std::min(limiter[c][i], std::max(bound / d, 0.0));
+                const Scalar phi = venkat ? (bound * bound + eps2[i] + 2.0 * d * bound) /
+                                                (bound * bound + 2.0 * d * d + d * bound + eps2[i])
+                                          : std::max(bound / d, 0.0);
+                limiter[c][i] = std::min(limiter[c][i], phi);
             }
         };
         for (std::size_t f = 0; f < nf; ++f) {
@@ -506,8 +527,10 @@ void FlowSolver::assemble_momentum(MomentumSystem& sys, Scalar dt, bool relax) c
         for (std::size_t f = 0; f < nif; ++f) {
             nu_f[f] = nu_face(f);
         }
+        const Vec3 eps2 = venkat_eps2();
         geo_.device().momentum_corrections(phi_.data(), nu_f.data(), linear_upwind, limited,
-                                           transpose_term,
+                                           settings_.limiter == Limiter::Venkatakrishnan,
+                                           eps2.data(), transpose_term,
                                            reinterpret_cast<Scalar*>(sys.source.data()));
     }
 

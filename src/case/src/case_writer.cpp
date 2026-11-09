@@ -361,6 +361,9 @@ std::string case_to_json(const CaseConfig& config) {
     solver["alpha_u"] = flow.alpha_u;
     solver["alpha_p"] = flow.alpha_p;
     solver["convection"] = convection_name(flow.convection);
+    solver["limiter"] =
+        flow.limiter == fv::Limiter::Venkatakrishnan ? "venkatakrishnan" : "barth_jespersen";
+    solver["venkat_k"] = flow.venkat_k;
     solver["device"] = device_name(s.device);
     solver["gradient"] =
         flow.gradient == fv::GradientScheme::LeastSquares ? "least_squares" : "gauss";

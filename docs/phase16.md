@@ -53,5 +53,13 @@
   St 0.137 – the Barth-Jespersen limiter is too dissipative to sustain the weak instability
   at Re 300 (it behaves like Re ≈ 250 with lower lift)
 - Unlimited linear upwind (restart at t = 40): diverges on this tetrahedral mesh (t ≈ 56)
-- Open: a smoother limiter (e.g. Venkatakrishnan, as in the compressible solver) or a
-  bounded central scheme for the momentum equation, then St / mean lift
+- Venkatakrishnan limiter for the momentum equation (new `solver.limiter`, K = 0.05,
+  restart at t = 40): still steady at t = 92 (force fluctuations < 5e-4), Cd 0.678,
+  lift 0.050 (Barth-Jespersen: 0.033) – less damping, but no shedding yet
+- Open: shedding needs a finer wake mesh (0.2 → 0.1, about 4× the cells) and / or a less
+  dissipative scheme; then St / mean lift
+
+## Venkatakrishnan limiter (momentum)
+- `solver.limiter`: `"barth_jespersen"` (default, unchanged results) or `"venkatakrishnan"`
+  with `solver.venkat_k` (threshold relative to the global range of each velocity component)
+- CPU loop and GPU kernel; test: skewed cavity GPU = CPU with both limiters, case round trip

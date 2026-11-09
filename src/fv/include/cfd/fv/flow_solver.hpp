@@ -44,6 +44,10 @@ struct FlowSettings {
     Vec3 body_force = Vec3::Zero(); // acceleration [m/s^2], e.g. driving pressure gradient
     ConvectionScheme convection = ConvectionScheme::LinearUpwind;
     GradientScheme gradient = GradientScheme::Gauss;
+    // LimitedLinearUpwind: limiter per velocity component; Venkatakrishnan threshold
+    // eps = venkat_k * (global range of the component).
+    Limiter limiter = Limiter::BarthJespersen;
+    Scalar venkat_k = 0.05;
     Scalar alpha_u = 0.7; // SIMPLE velocity under-relaxation
     Scalar alpha_p = 0.3; // SIMPLE pressure under-relaxation
     int n_non_orth_correctors = 0;
@@ -150,6 +154,8 @@ private:
     // Explicit FV parts (gradients, face corrections) on the accelerator kernels: GPU solvers
     // selected and a serial mesh.
     [[nodiscard]] bool device_fv() const;
+    // Venkatakrishnan eps^2 per velocity component (global range, all processes).
+    [[nodiscard]] Vec3 venkat_eps2() const;
     struct MomentumSystem {
         LduMatrix base;           // shared coefficients (diag, lower, upper)
         std::vector<Vec3> diag;   // per-component diagonal

@@ -76,8 +76,10 @@ void DeviceFv::scalar_corrections(const double* phi, const double* bv, bool leas
 }
 
 void DeviceFv::momentum_corrections(const double* flux, const double* nu_face, bool linear_upwind,
-                                    bool limited, bool transpose_term, double* source) {
-    impl_->momentum_corrections(flux, nu_face, linear_upwind, limited, transpose_term, source);
+                                    bool limited, bool venkat, const double* eps2,
+                                    bool transpose_term, double* source) {
+    impl_->momentum_corrections(flux, nu_face, linear_upwind, limited, venkat, eps2, transpose_term,
+                                source);
 }
 
 bool DeviceFv::on_device() const {

@@ -233,6 +233,8 @@ Patches without an entry get a default from their patch type:
 | `non_orthogonal_correctors` | int | `0` | Must be >= 0. |
 | `piso_correctors` | int | `2` | Must be >= 1. |
 | `max_courant` | number | `0` | Transient multiphase: adapt the time step (at most `dt`) to this Courant number; `0` = fixed `dt`. |
+| `limiter` | string | `"barth_jespersen"` | `limited_linear_upwind`: `"barth_jespersen"` (strict bounds) or `"venkatakrishnan"` (smooth, less dissipative, e.g. for vortex shedding). |
+| `venkat_k` | number | `0.05` | Venkatakrishnan threshold relative to the global range of each velocity component (larger = less limiting). |
 | `device` | string | `"auto"` | `"auto"`: GPU solvers if the build finds an accelerator, else CPU (the choice is printed at the start of `cfd run`). `"cpu"`: AMG-PCG (pressure) / BiCGStab on the CPU. `"gpu"`: pressure and momentum linear systems with AMG-preconditioned CG (pressure) / Jacobi BiCGStab on the accelerator of the build (CUDA, OpenMP offload; host threads without a device). MPI runs use the CPU solvers. |
 | `time_scheme` | string | `"euler"` | Transient: `"euler"` (1st order) or `"backward"` (BDF2, 2nd order). |
 
