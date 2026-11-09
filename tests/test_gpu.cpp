@@ -395,6 +395,29 @@ TEST(Gpu, FvKernelsMatchCpu) {
     }
     EXPECT_EQ(geo.device().on_device(), cfd::gpu::device_available());
 
+    // Skewness-corrected Gauss: exact for a linear field on the skewed mesh (plain Gauss is not).
+    {
+        const Vec3 a(0.7, -1.3, 2.1);
+        std::vector<Scalar> lin(nc);
+        std::vector<Scalar> lin_b(nf - nif);
+        for (std::size_t c = 0; c < nc; ++c) {
+            lin[c] = a.dot(mesh.cell_centres()[c]) + 0.4;
+        }
+        for (std::size_t f = nif; f < nf; ++f) {
+            lin_b[f - nif] = a.dot(mesh.face_centres()[f]) + 0.4;
+        }
+        const auto gc = geo.gradient(lin, lin_b, cfd::fv::GradientScheme::GaussCorrected);
+        const auto gg = geo.gradient(lin, lin_b, cfd::fv::GradientScheme::Gauss);
+        double err_c = 0.0;
+        double err_g = 0.0;
+        for (std::size_t c = 0; c < nc; ++c) {
+            err_c = std::max(err_c, (gc[c] - a).norm());
+            err_g = std::max(err_g, (gg[c] - a).norm());
+        }
+        EXPECT_LT(err_c, 1e-10);
+        EXPECT_GT(err_g, 1e-3);
+    }
+
     // Explicit linear-upwind + non-orthogonal corrections against the CPU face loop.
     std::vector<Scalar> flux(nf);
     std::vector<Scalar> gamma(nf);

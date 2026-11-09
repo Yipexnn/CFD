@@ -367,8 +367,9 @@ std::string case_to_json(const CaseConfig& config) {
         flow.limiter == fv::Limiter::Venkatakrishnan ? "venkatakrishnan" : "barth_jespersen";
     solver["venkat_k"] = flow.venkat_k;
     solver["device"] = device_name(s.device);
-    solver["gradient"] =
-        flow.gradient == fv::GradientScheme::LeastSquares ? "least_squares" : "gauss";
+    solver["gradient"] = flow.gradient == fv::GradientScheme::LeastSquares     ? "least_squares"
+                         : flow.gradient == fv::GradientScheme::GaussCorrected ? "gauss_corrected"
+                                                                               : "gauss";
     solver["non_orthogonal_correctors"] = flow.n_non_orth_correctors;
     solver["piso_correctors"] = flow.n_piso_correctors;
     solver["max_courant"] = s.max_courant;

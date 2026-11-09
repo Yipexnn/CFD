@@ -76,7 +76,8 @@ LinearSolveResult solve_scalar(const FvGeometry& geo, const std::vector<Scalar>&
     // on a serial mesh also the gradient and the explicit face corrections.
     const bool device =
         settings.type == LinearSolverType::GpuCg || settings.type == LinearSolverType::GpuBiCgStab;
-    const bool device_fv = device && geo.device_capable();
+    const bool device_fv =
+        device && geo.device_capable() && eq.gradient != GradientScheme::GaussCorrected;
     std::vector<Vec3> grad;
     if (device_fv) {
         const std::vector<Scalar> bv = boundary_values(geo, field, eq.boundary);

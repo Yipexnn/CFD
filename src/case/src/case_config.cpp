@@ -679,8 +679,11 @@ CaseConfig parse_case(const std::string& json_text, const std::filesystem::path&
             flow.gradient = fv::GradientScheme::Gauss;
         } else if (gradient == "least_squares") {
             flow.gradient = fv::GradientScheme::LeastSquares;
+        } else if (gradient == "gauss_corrected") {
+            flow.gradient = fv::GradientScheme::GaussCorrected;
         } else {
-            fail(path + ".gradient", "unknown scheme '" + gradient + "' (gauss, least_squares)");
+            fail(path + ".gradient",
+                 "unknown scheme '" + gradient + "' (gauss, least_squares, gauss_corrected)");
         }
         const std::string lim = get_string(s, "limiter", path, "barth_jespersen");
         if (lim == "barth_jespersen") {
