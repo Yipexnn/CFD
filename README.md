@@ -75,17 +75,20 @@ Gmsh executable:
   written as `.pvtu` pieces (no process ever holds the whole mesh).
 - Details and benchmarks: [docs/phase7.md](docs/phase7.md).
 
-## GPU linear solvers (optional)
+## GPU solvers (optional)
 
-`CFD_GPU_BACKEND` = `none` (default) | `cuda` | `openmp`; enable per case with
-`"solver": {"device": "gpu"}` or the GUI "Linear solvers" setting. `cfd --info` shows the backend.
+`CFD_GPU_BACKEND` = `none` (default) | `cuda` | `openmp`. `"solver": {"device": "auto"}`
+(default) uses the GPU if the build finds one, else the CPU; `"cpu"` / `"gpu"` force one (GUI:
+"Linear solvers"). `cfd run` prints the choice, `cfd --info` the backend. On the GPU: linear
+solvers (AMG-PCG, BiCGStab), matrix assembly, gradients, limiter and explicit face corrections.
 - Windows + NVIDIA: install the CUDA Toolkit (12.x, with Visual Studio integration), then use
   the preset `windows-msvc-gui-cuda-release` (builds for the installed GPU: `native`).
 - Linux CUDA: `-DCFD_GPU_BACKEND=cuda -DCMAKE_CUDA_ARCHITECTURES=native`.
 - Linux OpenMP offload (GCC): `sudo apt install gcc-13-offload-nvptx`, then
   `-DCFD_GPU_BACKEND=openmp "-DCFD_OMP_OFFLOAD_FLAGS=-foffload=nvptx-none -fcf-protection=none -fno-stack-protector"`
   (MSVC has no offload: host threads).
-- Without a device the same solvers run on host threads. Details: [docs/phase11.md](docs/phase11.md).
+- Forced `"gpu"` without a device runs the same kernels on host threads. Details:
+  [docs/phase11.md](docs/phase11.md), [docs/phase16.md](docs/phase16.md).
 
 ## Usage
 
@@ -134,7 +137,7 @@ Scriptable options (also used by CI): `cfd_gui case.json --run --show slice,vect
 - `src/mesh` – mesh, Gmsh reader, VTU writer
 - `src/geometry` – geometry (primitives, STL/STEP) → Gmsh auto meshing
 - `src/parallel` – MPI wrapper, mesh decomposition, halo exchange
-- `src/gpu` – accelerated Krylov solvers (CUDA / OpenMP offload / host)
+- `src/gpu` – accelerated Krylov solvers and FV kernels (CUDA / OpenMP offload / host)
 - `validation` – benchmark programs
 - `tests` – unit tests
 - `cmake` – CMake helper modules
