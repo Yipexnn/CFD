@@ -228,6 +228,7 @@ Patches without an entry get a default from their patch type:
 | `alpha_u` | number | `0.7` | Velocity under-relaxation, 0 < alpha <= 1. |
 | `alpha_p` | number | `0.3` | Pressure under-relaxation, 0 < alpha <= 1. |
 | `convection` | string | `"linear_upwind"` | `"linear_upwind"`, `"limited_linear_upwind"` (bounded, recommended for high Reynolds numbers / coarse meshes) or `"upwind"` (first order). |
+| `gradient` | string | `"gauss"` | Cell gradients: `"gauss"` (Green-Gauss) or `"least_squares"` (weighted least squares; second order on skewed cells). |
 | `non_orthogonal_correctors` | int | `0` | Must be >= 0. |
 | `piso_correctors` | int | `2` | Must be >= 1. |
 | `max_courant` | number | `0` | Transient multiphase: adapt the time step (at most `dt`) to this Courant number; `0` = fixed `dt`. |
@@ -252,7 +253,8 @@ Written to `output.directory`:
 - `<name>_<step>.vtu`: intermediate results (`write_interval > 0`).
 - `<name>.vtu`: final result (cell data U, p and, with SST, k, omega, nut, yPlus).
 - `residuals.csv`: step, time, Ux, Uy, Uz, p, k, omega, continuity, T.
-- `forces.csv`: step, time and per force patch Fx, Fy, Fz, Cx, Cy, Cz.
+- `forces.csv`: step, time and per force patch Fx, Fy, Fz, Cx, Cy, Cz, then the pressure
+  (Cpx, Cpy, Cpz) and friction (Cfx, Cfy, Cfz) parts of the coefficients.
 - `heat.csv`: step, time and per heat patch Q, Nu.
 - `mesh/`: Gmsh script, mesh and log (geometry meshes).
 - `checkpoint.bin`: restart file (fields, face flux, step and time).
