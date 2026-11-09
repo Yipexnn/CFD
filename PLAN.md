@@ -43,7 +43,8 @@ Goal: realistic 3D CFD desktop application, running locally on Windows.
 12. ✅ **Variable properties, radiation, 3D prism layers** – PropertyLaw (ν(T), α(T), Sutherland μ(T)), P1 radiation (radiative equilibrium validation), 3D prism boundary layers (sphere Re 100) → details: [docs/phase12.md](docs/phase12.md)
 13. ✅ **GUI settings, sphere study, radiation + solids, parallel mesh distribution, GPU AMG** → details: [docs/phase13.md](docs/phase13.md)
 14. ✅ **Compressible far field, decomposed meshes, GPU assembly, sphere study** → details: [docs/phase14.md](docs/phase14.md)
-15. **Later** – sphere drag discrepancy (tet discretisation / wall shear), FV coefficient assembly on the GPU, GPU hardware test
+15. ✅ **Sphere drag resolved (least-squares gradients), GPU face assembly** → details: [docs/phase15.md](docs/phase15.md)
+16. **Later** – GPU hardware test, explicit FV parts / gradients on the GPU, further 3D validation (sphere Re 20–300, unsteady wake)
 
 ## Notes
 - Development environment is Linux; code stays portable. Windows build/test via CI; GUI tested on user's PC.
