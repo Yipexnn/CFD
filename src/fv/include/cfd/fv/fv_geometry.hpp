@@ -3,7 +3,12 @@
 #include <Eigen/Dense>
 #include <cfd/fv/ldu_matrix.hpp>
 #include <cfd/mesh/mesh.hpp>
+#include <memory>
 #include <vector>
+
+namespace cfd::gpu {
+class DeviceFv;
+} // namespace cfd::gpu
 
 namespace cfd::fv {
 
@@ -62,6 +67,19 @@ public:
     [[nodiscard]] std::vector<Vec3>
     least_squares_gradient(const std::vector<Scalar>& cell_values,
                            const std::vector<Scalar>& boundary_values) const;
+    // Green-Gauss gradient with linear face interpolation (boundary_values as above).
+    [[nodiscard]] std::vector<Vec3>
+    gauss_gradient(const std::vector<Scalar>& cell_values,
+                   const std::vector<Scalar>& boundary_values) const;
+    // Gradient with the given scheme; device: on the accelerator kernels (gpu::DeviceFv, host
+    // threads without a device; ignored for decomposed meshes). Same result as the CPU loops.
+    [[nodiscard]] std::vector<Vec3> gradient(const std::vector<Scalar>& cell_values,
+                                             const std::vector<Scalar>& boundary_values,
+                                             GradientScheme scheme, bool device = false) const;
+    // True if the accelerator kernels can be used (serial mesh, no halo).
+    [[nodiscard]] bool device_capable() const { return halo_ == nullptr; }
+    // Mesh copy for the accelerator kernels, built on first use (throws for decomposed meshes).
+    [[nodiscard]] gpu::DeviceFv& device() const;
     [[nodiscard]] const std::vector<Vec3>& unit_normals() const { return unit_normals_; }
     [[nodiscard]] const std::vector<Scalar>& face_areas() const { return face_areas_; }
 
@@ -74,6 +92,7 @@ public:
 private:
     void build_least_squares() const;
     mutable std::vector<Eigen::Matrix3d> lsq_inverse_;
+    mutable std::shared_ptr<gpu::DeviceFv> device_;
     const Mesh* mesh_;
     const parallel::Halo* halo_ = nullptr;
     std::vector<Scalar> weights_;

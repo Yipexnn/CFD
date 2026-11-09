@@ -41,11 +41,12 @@ struct ScalarEquation {
                                                   const std::vector<Scalar>& field,
                                                   const std::vector<ScalarBoundary>& bc);
 
-// Gradient of a cell scalar (Gauss-linear or least squares).
+// Gradient of a cell scalar (Gauss-linear or least squares); device: accelerator kernels.
 [[nodiscard]] std::vector<Vec3> scalar_gradient(const FvGeometry& geo,
                                                 const std::vector<Scalar>& field,
                                                 const std::vector<ScalarBoundary>& bc,
-                                                GradientScheme scheme = GradientScheme::Gauss);
+                                                GradientScheme scheme = GradientScheme::Gauss,
+                                                bool device = false);
 
 // Assembles and solves the equation in place; returns the linear solve result.
 LinearSolveResult solve_scalar(const FvGeometry& geo, const std::vector<Scalar>& face_flux,

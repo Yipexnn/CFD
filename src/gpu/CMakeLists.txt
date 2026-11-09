@@ -1,8 +1,10 @@
-# Accelerated linear solvers (CFD_GPU_BACKEND: none | openmp | cuda).
+# Accelerated linear solvers and finite-volume kernels (CFD_GPU_BACKEND: none | openmp | cuda).
 add_library(cfd_gpu STATIC
     src/dispatch.cpp
     src/krylov_openmp.cpp
     src/device_solver.cpp
+    src/fv_device.cpp
+    src/fv_openmp.cpp
 )
 add_library(cfd::gpu ALIAS cfd_gpu)
 target_include_directories(cfd_gpu PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -27,7 +29,7 @@ if(CFD_GPU_BACKEND STREQUAL "openmp")
 elseif(CFD_GPU_BACKEND STREQUAL "cuda")
     enable_language(CUDA)
     find_package(CUDAToolkit REQUIRED)
-    target_sources(cfd_gpu PRIVATE src/krylov_cuda.cu)
+    target_sources(cfd_gpu PRIVATE src/krylov_cuda.cu src/fv_cuda.cu)
     target_compile_definitions(cfd_gpu PUBLIC CFD_GPU_CUDA)
     target_link_libraries(cfd_gpu PUBLIC CUDA::cudart)
     set_target_properties(cfd_gpu PROPERTIES CUDA_STANDARD 17 CUDA_STANDARD_REQUIRED ON)

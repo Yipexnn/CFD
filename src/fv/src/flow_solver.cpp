@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <array>
 #include <cfd/fv/flow_solver.hpp>
+#include <cfd/gpu/fv_device.hpp>
 #include <cfd/gpu/krylov.hpp>
 #include <cmath>
 #include <stdexcept>
@@ -202,8 +203,29 @@ void FlowSolver::compute_initial_flux() {
     }
 }
 
+bool FlowSolver::device_fv() const {
+    return settings_.p_solver.type == LinearSolverType::GpuCg && geo_.device_capable();
+}
+
 std::vector<Mat3> FlowSolver::velocity_gradient() const {
     const Mesh& m = geo_.mesh();
+    if (device_fv()) {
+        // Accelerator kernels; u, its boundary values and the gradient stay on the device for
+        // the momentum corrections.
+        static_assert(sizeof(Mat3) == 9 * sizeof(Scalar) && sizeof(Vec3) == 3 * sizeof(Scalar));
+        const auto nifl = static_cast<std::size_t>(m.n_internal_faces());
+        const auto nb = static_cast<std::size_t>(m.n_boundary_faces());
+        std::vector<Vec3> ub(nb);
+        for (std::size_t b = 0; b < nb; ++b) {
+            ub[b] = boundary_velocity(static_cast<Label>(nifl + b));
+        }
+        std::vector<Mat3> g(u_.size());
+        geo_.device().vector_gradient(reinterpret_cast<const Scalar*>(u_.data()),
+                                      reinterpret_cast<const Scalar*>(ub.data()),
+                                      settings_.gradient == GradientScheme::LeastSquares,
+                                      reinterpret_cast<Scalar*>(g.data()));
+        return g;
+    }
     if (settings_.gradient == GradientScheme::LeastSquares) {
         const auto ncl = static_cast<std::size_t>(m.n_cells());
         const auto nifl = static_cast<std::size_t>(m.n_internal_faces());
@@ -275,7 +297,27 @@ std::vector<Vec3> FlowSolver::pressure_gradient() const {
                 }
                 pb[f - nif] = v;
             }
-            g = geo_.least_squares_gradient(p_, pb);
+            g = geo_.gradient(p_, pb, GradientScheme::LeastSquares, device_fv());
+        }
+        return g;
+    }
+    if (device_fv()) {
+        // Same two passes as below with the accelerator kernels.
+        std::vector<Scalar> pb(nf - nif);
+        std::vector<Vec3> g;
+        for (int pass = 0; pass < 2; ++pass) {
+            for (std::size_t f = nif; f < nf; ++f) {
+                const auto p = static_cast<std::size_t>(m.owner()[f]);
+                Scalar v = boundary_pressure(static_cast<Label>(f));
+                if (pass > 0 &&
+                    bc(static_cast<Label>(f - nif)).kind != FlowBoundary::PressureOutlet) {
+                    const Vec3& nrm = geo_.unit_normals()[f];
+                    const Vec3 d = m.face_centres()[f] - m.cell_centres()[p];
+                    v += g[p].dot(d - d.dot(nrm) * nrm);
+                }
+                pb[f - nif] = v;
+            }
+            g = geo_.gradient(p_, pb, GradientScheme::Gauss, true);
         }
         return g;
     }
@@ -406,8 +448,9 @@ void FlowSolver::assemble_momentum(MomentumSystem& sys, Scalar dt, bool relax) c
 
     // Barth-Jespersen limiter per cell and component: the reconstructed face values must
     // stay within the min/max of the cell and its face neighbours (boundary values included).
+    const bool device = device_fv(); // limiter and explicit fluxes on the accelerator
     std::vector<Vec3> limiter;
-    if (settings_.convection == ConvectionScheme::LimitedLinearUpwind) {
+    if (settings_.convection == ConvectionScheme::LimitedLinearUpwind && !device) {
         std::vector<Vec3> u_min(u_);
         std::vector<Vec3> u_max(u_);
         for (std::size_t f = 0; f < nif; ++f) {
@@ -451,20 +494,37 @@ void FlowSolver::assemble_momentum(MomentumSystem& sys, Scalar dt, bool relax) c
     // Laminar viscosity in a cell (constant or the field from set_cell_viscosity).
     auto nu_c = [&](std::size_t c) { return variable_nu ? cell_nu_[c] : nu; };
     const bool transpose_term = nut != nullptr || variable_nu;
+    // Effective face viscosity of an internal face.
+    auto nu_face = [&](std::size_t f) {
+        const auto p = static_cast<std::size_t>(own[f]);
+        const auto n = static_cast<std::size_t>(nei[f]);
+        const Scalar nu_lam = w[f] * nu_c(p) + (1.0 - w[f]) * nu_c(n);
+        return nut != nullptr ? nu_lam + w[f] * (*nut)[p] + (1.0 - w[f]) * (*nut)[n] : nu_lam;
+    };
+    if (device) {
+        std::vector<Scalar> nu_f(nif);
+        for (std::size_t f = 0; f < nif; ++f) {
+            nu_f[f] = nu_face(f);
+        }
+        geo_.device().momentum_corrections(phi_.data(), nu_f.data(), linear_upwind, limited,
+                                           transpose_term,
+                                           reinterpret_cast<Scalar*>(sys.source.data()));
+    }
 
     for (std::size_t f = 0; f < nif; ++f) {
         const auto p = static_cast<std::size_t>(own[f]);
         const auto n = static_cast<std::size_t>(nei[f]);
         const Scalar flux = phi_[f];
-        const Scalar nu_lam = w[f] * nu_c(p) + (1.0 - w[f]) * nu_c(n);
-        const Scalar nu_f =
-            nut != nullptr ? nu_lam + w[f] * (*nut)[p] + (1.0 - w[f]) * (*nut)[n] : nu_lam;
+        const Scalar nu_f = nu_face(f);
         const Scalar diff = nu_f * dc[f];
 
         a.upper[f] = std::min(flux, 0.0) - diff;
         a.lower[f] = -std::max(flux, 0.0) - diff;
         a.diag[p] += std::max(flux, 0.0) + diff;
         a.diag[n] += -std::min(flux, 0.0) + diff;
+        if (device) {
+            continue;
+        }
 
         Vec3 explicit_flux = Vec3::Zero();
         if (linear_upwind) {

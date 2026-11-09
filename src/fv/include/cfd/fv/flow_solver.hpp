@@ -147,6 +147,9 @@ public:
     [[nodiscard]] Scalar continuity_error() const;
 
 private:
+    // Explicit FV parts (gradients, face corrections) on the accelerator kernels: GPU solvers
+    // selected and a serial mesh.
+    [[nodiscard]] bool device_fv() const;
     struct MomentumSystem {
         LduMatrix base;           // shared coefficients (diag, lower, upper)
         std::vector<Vec3> diag;   // per-component diagonal

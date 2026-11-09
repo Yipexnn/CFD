@@ -53,9 +53,11 @@ Start `build\windows-msvc-gui-release\src\gui\cfd_gui.exe`.
 - [ ] Enable preset `windows-msvc-gui-cuda-release`, reload CMake, build `cfd_gui`
 - [ ] `cfd.exe --info` shows `GPU: cuda (device: <your GPU>)`
 - [ ] Run "All CTest" (Gpu.* tests now run on the GPU)
-- [ ] Copy `examples\cavity.json`, add `"device": "gpu"` to `"solver"`, run → converges like
-      the CPU run; note the run time of both
-- [ ] GUI: Solver page → "Linear solvers: GPU" → Run cavity → same result
+- [ ] `cfd.exe run examples\cavity.json` prints `Linear solvers: GPU, cuda (device: ...)`
+      (default `"device": "auto"`); converges like with `"device": "cpu"`; note both run times
+- [ ] Same for `examples\sphere_3d.json` (needs Gmsh): Cd ≈ 1.07–1.09 with GPU and CPU
+- [ ] GUI: Solver page → "Linear solvers": Auto shows "GPU found"; Run cavity with Auto / CPU /
+      GPU → same result
 
 ## 6. Report
 For each failed item: what you did, what happened, Log text, screenshot.

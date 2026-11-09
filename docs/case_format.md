@@ -59,6 +59,7 @@ Gmsh meshes accept only `type` and `file`; box meshes accept only the keys above
 | `size` | number | `0.05` | Maximum cell size. |
 | `size_near` | number | `0` | Cell size at body surfaces (<= 0: `size`). |
 | `refine_distance` | number | `0` | Distance over which `size_near` grows to `size`. |
+| `refine_boxes` | array | none | 3D: regions with a smaller cell size, e.g. a wake: `[{"min": [x, y, z], "max": [x, y, z], "size": h}]` (Gmsh box fields, combined with the body refinement). |
 | `boundary_layer` | object | none | `layers`, `first` (first cell height), `ratio` (growth). 2D: quad layers around bodies; 3D (external flow, non-solid bodies in a box domain): prism layers extruded along the body surface normals, tetrahedra elsewhere. |
 | `quads` | bool | `true` | 2D: recombine into quads (hex cells after extrusion). |
 | `domain_patches` | object | face names | Patch names of the box faces `xmin` ... `zmax`. Equal names are merged. |
@@ -232,7 +233,7 @@ Patches without an entry get a default from their patch type:
 | `non_orthogonal_correctors` | int | `0` | Must be >= 0. |
 | `piso_correctors` | int | `2` | Must be >= 1. |
 | `max_courant` | number | `0` | Transient multiphase: adapt the time step (at most `dt`) to this Courant number; `0` = fixed `dt`. |
-| `device` | string | `"cpu"` | `"gpu"`: pressure and momentum linear systems with AMG-preconditioned CG (pressure) / Jacobi BiCGStab on the accelerator of the build (CUDA, OpenMP offload; host threads without a device). MPI runs use the CPU solvers. |
+| `device` | string | `"auto"` | `"auto"`: GPU solvers if the build finds an accelerator, else CPU (the choice is printed at the start of `cfd run`). `"cpu"`: AMG-PCG (pressure) / BiCGStab on the CPU. `"gpu"`: pressure and momentum linear systems with AMG-preconditioned CG (pressure) / Jacobi BiCGStab on the accelerator of the build (CUDA, OpenMP offload; host threads without a device). MPI runs use the CPU solvers. |
 | `time_scheme` | string | `"euler"` | Transient: `"euler"` (1st order) or `"backward"` (BDF2, 2nd order). |
 
 `dt`, `end_time`, `alpha_*` and the corrector counts are validated in both modes.

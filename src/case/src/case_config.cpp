@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <cfd/case/case_config.hpp>
+#include <cfd/gpu/krylov.hpp>
 #include <fstream>
 #include <nlohmann/json.hpp>
 #include <set>
@@ -159,7 +160,8 @@ geometry::GeometrySpec parse_geometry(const json& j, const std::string& path,
                                       std::vector<SolidConfig>& solids) {
     check_keys(j, path,
                {"type", "min", "max", "bodies", "internal", "two_d", "size", "size_near",
-                "refine_distance", "boundary_layer", "quads", "domain_patches", "patches"});
+                "refine_distance", "refine_boxes", "boundary_layer", "quads", "domain_patches",
+                "patches"});
     geometry::GeometrySpec g;
     g.domain_min = get_vec3(j, "min", path, g.domain_min);
     g.domain_max = get_vec3(j, "max", path, g.domain_max);
@@ -177,6 +179,24 @@ geometry::GeometrySpec parse_geometry(const json& j, const std::string& path,
     g.size = get_number(j, "size", path, g.size);
     g.size_near = get_number(j, "size_near", path, g.size_near);
     g.refine_distance = get_number(j, "refine_distance", path, g.refine_distance);
+    if (j.contains("refine_boxes")) {
+        if (!j["refine_boxes"].is_array()) {
+            fail(path + ".refine_boxes", "expected an array");
+        }
+        for (std::size_t i = 0; i < j["refine_boxes"].size(); ++i) {
+            const json& b = j["refine_boxes"][i];
+            const std::string bp = path + ".refine_boxes[" + std::to_string(i) + "]";
+            check_keys(b, bp, {"min", "max", "size"});
+            geometry::RefineBox box;
+            box.min = get_vec3(b, "min", bp, box.min);
+            box.max = get_vec3(b, "max", bp, box.max);
+            box.size = get_number(b, "size", bp, box.size);
+            if (!(box.size > 0.0) || (box.max - box.min).minCoeff() <= 0.0) {
+                fail(bp, "needs size > 0 and max > min");
+            }
+            g.refine_boxes.push_back(box);
+        }
+    }
     g.quads = get_bool(j, "quads", path, g.quads);
     if (!(g.size > 0.0)) {
         fail(path + ".size", "must be positive");
@@ -662,12 +682,15 @@ CaseConfig parse_case(const std::string& json_text, const std::filesystem::path&
         } else {
             fail(path + ".gradient", "unknown scheme '" + gradient + "' (gauss, least_squares)");
         }
-        const std::string device = get_string(s, "device", path, "cpu");
-        if (device == "gpu") {
-            flow.p_solver.type = fv::LinearSolverType::GpuCg;
-            flow.u_solver.type = fv::LinearSolverType::GpuBiCgStab;
-        } else if (device != "cpu") {
-            fail(path + ".device", "unknown device '" + device + "' (cpu, gpu)");
+        const std::string device = get_string(s, "device", path, "auto");
+        if (device == "auto") {
+            c.solver.device = ComputeDevice::Auto;
+        } else if (device == "cpu") {
+            c.solver.device = ComputeDevice::Cpu;
+        } else if (device == "gpu") {
+            c.solver.device = ComputeDevice::Gpu;
+        } else {
+            fail(path + ".device", "unknown device '" + device + "' (auto, cpu, gpu)");
         }
         flow.alpha_u = get_number(s, "alpha_u", path, flow.alpha_u);
         flow.alpha_p = get_number(s, "alpha_p", path, flow.alpha_p);
@@ -815,6 +838,7 @@ CaseConfig parse_case(const std::string& json_text, const std::filesystem::path&
             fail("physics.compressible", "turbulence needs mu > 0");
         }
     }
+    apply_device(c.solver);
     if (c.multiphase) {
         if (c.energy || !c.solids.empty()) {
             fail("physics.multiphase", "not combinable with energy or solids (yet)");
@@ -837,6 +861,38 @@ CaseConfig parse_case(const std::string& json_text, const std::filesystem::path&
         c.restart = std::filesystem::path(get_string(root, "restart", "case", ""));
     }
     return c;
+}
+
+bool uses_gpu(ComputeDevice device) {
+    switch (device) {
+    case ComputeDevice::Gpu:
+        return true;
+    case ComputeDevice::Cpu:
+        return false;
+    case ComputeDevice::Auto:
+        break;
+    }
+    return gpu::device_available();
+}
+
+void apply_device(SolverConfig& solver) {
+    const bool gpu_solvers = uses_gpu(solver.device);
+    solver.flow.p_solver.type =
+        gpu_solvers ? fv::LinearSolverType::GpuCg : fv::LinearSolverType::AmgCg;
+    solver.flow.u_solver.type =
+        gpu_solvers ? fv::LinearSolverType::GpuBiCgStab : fv::LinearSolverType::BiCgStab;
+}
+
+const char* device_name(ComputeDevice device) {
+    switch (device) {
+    case ComputeDevice::Cpu:
+        return "cpu";
+    case ComputeDevice::Gpu:
+        return "gpu";
+    case ComputeDevice::Auto:
+        break;
+    }
+    return "auto";
 }
 
 CaseConfig load_case(const std::filesystem::path& file) {

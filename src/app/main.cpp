@@ -196,6 +196,14 @@ int run_case(int argc, char* argv[]) {
         out << ", " << comm.size() << " processes";
     }
     out << ")" << std::endl;
+    if (!cfg.compressible) {
+        // MPI runs always use the CPU solvers.
+        const bool gpu_solvers = cfd::cases::uses_gpu(cfg.solver.device) && !comm.parallel();
+        out << "Linear solvers: "
+            << (gpu_solvers ? "GPU, " + cfd::gpu::device_description() : std::string("CPU"))
+            << "  (solver.device \"" << cfd::cases::device_name(cfg.solver.device) << "\")"
+            << std::endl;
+    }
 
     const int log_interval = cfg.output.log_interval;
     const bool energy = cfg.energy.has_value();

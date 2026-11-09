@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <cfd/fv/fv_geometry.hpp>
+#include <cfd/gpu/fv_device.hpp>
 #include <cmath>
 #include <stdexcept>
 
@@ -123,6 +124,100 @@ FvGeometry::least_squares_gradient(const std::vector<Scalar>& cell_values,
     }
     exchange(grad);
     return grad;
+}
+
+std::vector<Vec3> FvGeometry::gauss_gradient(const std::vector<Scalar>& cell_values,
+                                             const std::vector<Scalar>& boundary_values) const {
+    const Mesh& m = *mesh_;
+    const auto nc = static_cast<std::size_t>(m.n_cells());
+    const auto nf = static_cast<std::size_t>(m.n_faces());
+    const auto nif = static_cast<std::size_t>(m.n_internal_faces());
+    const auto& w = weights_;
+    const auto& sf = m.face_area_vectors();
+    std::vector<Vec3> grad(nc, Vec3::Zero());
+    for (std::size_t f = 0; f < nif; ++f) {
+        const auto p = static_cast<std::size_t>(m.owner()[f]);
+        const auto n = static_cast<std::size_t>(m.neighbour()[f]);
+        const Vec3 flux = sf[f] * (w[f] * cell_values[p] + (1.0 - w[f]) * cell_values[n]);
+        grad[p] += flux;
+        grad[n] -= flux;
+    }
+    for (std::size_t f = nif; f < nf; ++f) {
+        grad[static_cast<std::size_t>(m.owner()[f])] += sf[f] * boundary_values[f - nif];
+    }
+    for (std::size_t c = 0; c < nc; ++c) {
+        grad[c] /= m.cell_volumes()[c];
+    }
+    exchange(grad);
+    return grad;
+}
+
+std::vector<Vec3> FvGeometry::gradient(const std::vector<Scalar>& cell_values,
+                                       const std::vector<Scalar>& boundary_values,
+                                       GradientScheme scheme, bool device) const {
+    const bool lsq = scheme == GradientScheme::LeastSquares;
+    if (device && device_capable()) {
+        static_assert(sizeof(Vec3) == 3 * sizeof(Scalar));
+        std::vector<Vec3> grad(cell_values.size());
+        this->device().gradient(cell_values.data(), boundary_values.data(), lsq,
+                                reinterpret_cast<Scalar*>(grad.data()));
+        return grad;
+    }
+    return lsq ? least_squares_gradient(cell_values, boundary_values)
+               : gauss_gradient(cell_values, boundary_values);
+}
+
+gpu::DeviceFv& FvGeometry::device() const {
+    if (halo_ != nullptr) {
+        throw std::logic_error("FvGeometry::device: not available for decomposed meshes");
+    }
+    if (!device_) {
+        if (lsq_inverse_.empty()) {
+            build_least_squares();
+        }
+        const Mesh& m = *mesh_;
+        const auto nc = static_cast<std::size_t>(m.n_cells());
+        const auto nf = static_cast<std::size_t>(m.n_faces());
+        const auto nif = static_cast<std::size_t>(m.n_internal_faces());
+        const auto& cc = m.cell_centres();
+        const auto& cf = m.face_centres();
+        std::vector<Scalar> lsq_d(3 * nf);
+        for (std::size_t f = 0; f < nf; ++f) {
+            const auto p = static_cast<std::size_t>(m.owner()[f]);
+            const Vec3 d = f < nif ? Vec3(cc[static_cast<std::size_t>(m.neighbour()[f])] - cc[p])
+                                   : Vec3(cf[f] - cc[p]);
+            const Vec3 q = d / d.squaredNorm();
+            for (int i = 0; i < 3; ++i) {
+                lsq_d[3 * f + static_cast<std::size_t>(i)] = q[i];
+            }
+        }
+        std::vector<Scalar> lsq(9 * nc);
+        for (std::size_t c = 0; c < nc; ++c) {
+            std::copy(lsq_inverse_[c].data(), lsq_inverse_[c].data() + 9, lsq.begin() + 9 * c);
+        }
+        auto vec = [](const std::vector<Vec3>& v) {
+            static_assert(sizeof(Vec3) == 3 * sizeof(Scalar));
+            return reinterpret_cast<const Scalar*>(v.data());
+        };
+        gpu::FvMeshView view;
+        view.n_cells = m.n_cells();
+        view.n_internal_faces = m.n_internal_faces();
+        view.n_faces = m.n_faces();
+        view.owner = m.owner().data();
+        view.neighbour = m.neighbour().data();
+        view.cell_offsets = m.cell_face_offsets().data();
+        view.cell_faces = m.cell_faces().data();
+        view.weight = weights_.data();
+        view.sf = vec(m.face_area_vectors());
+        view.face_centre = vec(cf);
+        view.cell_centre = vec(cc);
+        view.volume = m.cell_volumes().data();
+        view.correction = vec(corrections_);
+        view.lsq_d = lsq_d.data();
+        view.lsq_inverse = lsq.data();
+        device_ = std::make_shared<gpu::DeviceFv>(view);
+    }
+    return *device_;
 }
 
 } // namespace cfd::fv
