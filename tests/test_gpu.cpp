@@ -429,10 +429,10 @@ TEST(Gpu, FvKernelsMatchCpu) {
 // AMG-PCG) converges to the CPU solution; the variable viscosity enables the transpose term.
 TEST(Gpu, SkewedCavityMatchesCpu) {
     const auto mesh = skewed_box(16, 16, 1, 1.0 / 16);
-    auto run = [&](bool gpu, cfd::fv::Limiter limiter) {
+    auto run = [&](bool gpu, cfd::fv::Limiter limiter, cfd::fv::ConvectionScheme scheme) {
         cfd::fv::FlowSettings s;
         s.nu = 0.01;
-        s.convection = cfd::fv::ConvectionScheme::LimitedLinearUpwind;
+        s.convection = scheme;
         s.limiter = limiter;
         s.gradient = cfd::fv::GradientScheme::LeastSquares;
         s.n_non_orth_correctors = 1;
@@ -452,8 +452,17 @@ TEST(Gpu, SkewedCavityMatchesCpu) {
     };
     for (const auto limiter :
          {cfd::fv::Limiter::BarthJespersen, cfd::fv::Limiter::Venkatakrishnan}) {
-        const auto u_cpu = run(false, limiter);
-        const auto u_gpu = run(true, limiter);
+        const auto u_cpu = run(false, limiter, cfd::fv::ConvectionScheme::LimitedLinearUpwind);
+        const auto u_gpu = run(true, limiter, cfd::fv::ConvectionScheme::LimitedLinearUpwind);
+        for (std::size_t c = 0; c < u_cpu.size(); ++c) {
+            EXPECT_NEAR((u_gpu[c] - u_cpu[c]).norm(), 0.0, 1e-5);
+        }
+    }
+    {
+        const auto u_cpu =
+            run(false, cfd::fv::Limiter::BarthJespersen, cfd::fv::ConvectionScheme::Lust);
+        const auto u_gpu =
+            run(true, cfd::fv::Limiter::BarthJespersen, cfd::fv::ConvectionScheme::Lust);
         for (std::size_t c = 0; c < u_cpu.size(); ++c) {
             EXPECT_NEAR((u_gpu[c] - u_cpu[c]).norm(), 0.0, 1e-5);
         }

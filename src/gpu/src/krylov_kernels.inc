@@ -206,8 +206,8 @@ void dense_mv(int n, const double* m, const double* b, double* x) {
     }
 }
 
-void vcycle(const AmgLevel* levels, int n_levels, int l, const double* coarse_inverse,
-            int sweeps, double w) {
+void vcycle(const AmgLevel* levels, int n_levels, int l, const double* coarse_inverse, int sweeps,
+            double w) {
     const AmgLevel& lv = levels[l];
     const int n = lv.a.n;
     if (l == n_levels - 1) {

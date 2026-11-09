@@ -181,8 +181,8 @@ public:
     }
 
     void momentum_corrections(const double* flux, const double* nu_face, bool linear_upwind,
-                              bool limited, bool venkat, const double* eps2, bool transpose_term,
-                              double* source) override {
+                              bool limited, bool venkat, const double* eps2, double central,
+                              bool transpose_term, double* source) override {
         const double e0 = venkat ? eps2[0] : 0.0;
         const double e1 = venkat ? eps2[1] : 0.0;
         const double e2 = venkat ? eps2[2] : 0.0;
@@ -214,7 +214,7 @@ public:
             for (int c = 0; c < nc; ++c) {
                 const fvoff::FvArrays m CFD_FV_ARRAYS;
                 fvoff::cell_momentum_corrections(m, c, g, lim, use_lim, fl, nu, linear_upwind,
-                                                 transpose_term, src);
+                                                 central, u, transpose_term, src);
             }
         } else
 #endif
@@ -229,7 +229,7 @@ public:
             CFD_FV_HOST_LOOP
             for (int c = 0; c < nc; ++c) {
                 fvhost::cell_momentum_corrections(m, c, g, lim, use_lim, fl, nu, linear_upwind,
-                                                  transpose_term, src);
+                                                  central, u, transpose_term, src);
             }
         }
         download(src_, source, 3 * h_.nc);

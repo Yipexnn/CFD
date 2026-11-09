@@ -59,8 +59,8 @@ public:
     // grad_f = w grad_P + (1 - w) grad_N; nu_face: n_internal_faces. venkat: Venkatakrishnan
     // limiter with eps2 (3 values, one per component) instead of Barth-Jespersen.
     void momentum_corrections(const double* flux, const double* nu_face, bool linear_upwind,
-                              bool limited, bool venkat, const double* eps2, bool transpose_term,
-                              double* source);
+                              bool limited, bool venkat, const double* eps2, double central,
+                              bool transpose_term, double* source);
     // True if the kernels run on an accelerator (not on host threads).
     [[nodiscard]] bool on_device() const;
 

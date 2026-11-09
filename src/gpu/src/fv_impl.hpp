@@ -20,7 +20,7 @@ struct DeviceFv::Impl {
                                     const double* flux, const double* gamma, bool linear_upwind,
                                     double* source) = 0;
     virtual void momentum_corrections(const double* flux, const double* nu_face, bool linear_upwind,
-                                      bool limited, bool venkat, const double* eps2,
+                                      bool limited, bool venkat, const double* eps2, double central,
                                       bool transpose_term, double* source) = 0;
     [[nodiscard]] virtual bool on_device() const = 0;
 };

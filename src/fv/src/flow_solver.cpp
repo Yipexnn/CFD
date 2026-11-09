@@ -450,6 +450,8 @@ void FlowSolver::assemble_momentum(MomentumSystem& sys, Scalar dt, bool relax) c
     const Scalar nu = settings_.nu;
     const bool linear_upwind = settings_.convection != ConvectionScheme::Upwind;
     const bool limited = settings_.convection == ConvectionScheme::LimitedLinearUpwind;
+    const bool lust = settings_.convection == ConvectionScheme::Lust;
+    constexpr Scalar k_lust = 0.75; // linear-interpolation share of LUST
     // Constant-step BDF2 once two old levels exist (Euler otherwise).
     const bool bdf2 = dt > 0.0 && settings_.time_scheme == TimeScheme::Backward &&
                       u_old_old_.size() == u_.size() && std::abs(dt - dt_old_) <= 1e-12 * dt;
@@ -530,7 +532,7 @@ void FlowSolver::assemble_momentum(MomentumSystem& sys, Scalar dt, bool relax) c
         const Vec3 eps2 = venkat_eps2();
         geo_.device().momentum_corrections(phi_.data(), nu_f.data(), linear_upwind, limited,
                                            settings_.limiter == Limiter::Venkatakrishnan,
-                                           eps2.data(), transpose_term,
+                                           eps2.data(), lust ? k_lust : 0.0, transpose_term,
                                            reinterpret_cast<Scalar*>(sys.source.data()));
     }
 
@@ -554,7 +556,12 @@ void FlowSolver::assemble_momentum(MomentumSystem& sys, Scalar dt, bool relax) c
             const std::size_t up = flux >= 0.0 ? p : n;
             const Vec3 r = cf[f] - cc[up];
             const Vec3 delta = grad[up].transpose() * r;
-            explicit_flux -= flux * (limited ? Vec3(limiter[up].cwiseProduct(delta)) : delta);
+            if (lust) {
+                const Vec3 uf = w[f] * u_[p] + (1.0 - w[f]) * u_[n];
+                explicit_flux -= flux * ((1.0 - k_lust) * delta + k_lust * (uf - u_[up]));
+            } else {
+                explicit_flux -= flux * (limited ? Vec3(limiter[up].cwiseProduct(delta)) : delta);
+            }
         }
         const Mat3 grad_f = w[f] * grad[p] + (1.0 - w[f]) * grad[n];
         explicit_flux += nu_f * (grad_f.transpose() * k[f]);

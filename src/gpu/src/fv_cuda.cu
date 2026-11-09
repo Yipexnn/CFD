@@ -51,10 +51,11 @@ __global__ void scalar_kernel(fvcuda::FvArrays m, const double* g, const double*
 
 __global__ void momentum_kernel(fvcuda::FvArrays m, const double* g, const double* lim,
                                 bool limited, const double* flux, const double* nu, bool lu,
-                                bool transpose_term, double* src) {
+                                double central, const double* u, bool transpose_term, double* src) {
     const int c = blockIdx.x * blockDim.x + threadIdx.x;
     if (c < m.nc) {
-        fvcuda::cell_momentum_corrections(m, c, g, lim, limited, flux, nu, lu, transpose_term, src);
+        fvcuda::cell_momentum_corrections(m, c, g, lim, limited, flux, nu, lu, central, u,
+                                          transpose_term, src);
     }
 }
 
@@ -130,8 +131,8 @@ public:
     }
 
     void momentum_corrections(const double* flux, const double* nu_face, bool linear_upwind,
-                              bool limited, bool venkat, const double* eps2, bool transpose_term,
-                              double* source) override {
+                              bool limited, bool venkat, const double* eps2, double central,
+                              bool transpose_term, double* source) override {
         if (!have_vector_) {
             throw std::logic_error("DeviceFv::momentum_corrections before vector_gradient");
         }
@@ -146,7 +147,8 @@ public:
             fv_check(cudaGetLastError(), "kernel");
         }
         momentum_kernel<<<grid(), k_fv_block>>>(m_, vgrad_, lim_, use_lim, flux_, coef_,
-                                                linear_upwind, transpose_term, src_);
+                                                linear_upwind, central, vphi_, transpose_term,
+                                                src_);
         fv_check(cudaGetLastError(), "kernel");
         from(source, src_, 3 * h_.nc);
     }

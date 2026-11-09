@@ -150,10 +150,12 @@ CFD_HD inline void cell_scalar_corrections(const FvArrays& m, int c, const doubl
 }
 
 // Explicit internal-face fluxes of the momentum equation (see DeviceFv::momentum_corrections).
+// central > 0: face value blended with linear interpolation (LUST: 0.75), needs u (3 per cell).
 CFD_HD inline void cell_momentum_corrections(const FvArrays& m, int c, const double* g,
                                              const double* lim, bool limited, const double* flux,
                                              const double* nu_face, bool linear_upwind,
-                                             bool transpose_term, double* source) {
+                                             double central, const double* u, bool transpose_term,
+                                             double* source) {
     double s[3] = {0.0, 0.0, 0.0};
     for (int k = m.start[c]; k < m.start[c + 1]; ++k) {
         const int f = m.faces[k];
@@ -174,6 +176,11 @@ CFD_HD inline void cell_momentum_corrections(const FvArrays& m, int c, const dou
                 double d = gu[3 * i] * r0 + gu[3 * i + 1] * r1 + gu[3 * i + 2] * r2;
                 if (limited) {
                     d = lim[3 * up + i] * d;
+                }
+                if (central > 0.0) {
+                    const double wc = m.w[f];
+                    const double uf = wc * u[3 * p + i] + (1.0 - wc) * u[3 * n + i];
+                    d = (1.0 - central) * d + central * (uf - u[3 * up + i]);
                 }
                 e[i] -= fl * d;
             }
