@@ -165,7 +165,11 @@ private:
 
     void assemble_momentum(MomentumSystem& sys, Scalar dt, bool relax) const;
     Vec3 solve_momentum(MomentumSystem& sys);
-    Scalar pressure_correction(const MomentumSystem& sys, bool relax_p);
+    // u_prev / phi_prev (steady SIMPLE): velocity and face flux before the momentum
+    // predictor, for the relaxation-independent face flux (Majumdar 1988).
+    Scalar pressure_correction(const MomentumSystem& sys, bool relax_p,
+                               const std::vector<Vec3>* u_prev = nullptr,
+                               const std::vector<Scalar>* phi_prev = nullptr);
     void compute_initial_flux();
 
     const BoundaryCondition& bc(Label boundary_face_index) const;

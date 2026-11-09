@@ -669,7 +669,9 @@ Vec3 FlowSolver::solve_momentum(MomentumSystem& sys) {
     return residual;
 }
 
-Scalar FlowSolver::pressure_correction(const MomentumSystem& sys, bool relax_p) {
+Scalar FlowSolver::pressure_correction(const MomentumSystem& sys, bool relax_p,
+                                       const std::vector<Vec3>* u_prev,
+                                       const std::vector<Scalar>* phi_prev) {
     const Mesh& m = geo_.mesh();
     const auto nc = static_cast<std::size_t>(m.n_cells());
     const auto nf = static_cast<std::size_t>(m.n_faces());
@@ -729,6 +731,25 @@ Scalar FlowSolver::pressure_correction(const MomentumSystem& sys, bool relax_p) 
         case FlowBoundary::Empty:
             phi_hbya[f] = 0.0;
             break;
+        }
+    }
+
+    // Relaxation-independent face flux (Majumdar): HbyA contains (1 - alpha_u) u_prev, whose
+    // interpolation is replaced by (1 - alpha_u) phi_prev, so the converged face flux (and the
+    // solution) does not depend on alpha_u.
+    if (u_prev != nullptr && phi_prev != nullptr && settings_.alpha_u < 1.0) {
+        const Scalar beta = 1.0 - settings_.alpha_u;
+        for (std::size_t f = 0; f < nif; ++f) {
+            const auto p = static_cast<std::size_t>(own[f]);
+            const auto n = static_cast<std::size_t>(nei[f]);
+            const Vec3 uf = w[f] * (*u_prev)[p] + (1.0 - w[f]) * (*u_prev)[n];
+            phi_hbya[f] += beta * ((*phi_prev)[f] - uf.dot(sf[f]));
+        }
+        for (std::size_t f = nif; f < nf; ++f) {
+            if (bc(static_cast<Label>(f - nif)).kind == FlowBoundary::PressureOutlet) {
+                const auto p = static_cast<std::size_t>(own[f]);
+                phi_hbya[f] += beta * ((*phi_prev)[f] - (*u_prev)[p].dot(sf[f]));
+            }
         }
     }
 
@@ -829,10 +850,12 @@ Residuals FlowSolver::simple_iteration() {
     MomentumSystem sys{LduMatrix(geo_.mesh()), {}, {}};
     sys.base.pattern = &geo_.csr_pattern();
     sys.base.halo = geo_.halo();
+    const std::vector<Vec3> u_prev = u_;
+    const std::vector<Scalar> phi_prev = phi_;
     assemble_momentum(sys, 0.0, true);
     Residuals res;
     res.u = solve_momentum(sys);
-    res.p = pressure_correction(sys, true);
+    res.p = pressure_correction(sys, true, &u_prev, &phi_prev);
     if (turbulence_ != nullptr) {
         std::tie(res.k, res.omega) = turbulence_->correct(*this, 0.0);
     }
