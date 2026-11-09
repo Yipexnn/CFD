@@ -14,6 +14,7 @@ struct SstSettings {
     Scalar relax_k = 0.7;
     Scalar relax_omega = 0.7;
     LinearSolverSettings solver{LinearSolverType::BiCgStab, 1e-10, 0.1, 1000};
+    GradientScheme gradient = GradientScheme::Gauss; // FlowSolver constructor: the flow's
 };
 
 // Flow state the model needs (any incompressible / mixture flow solver).

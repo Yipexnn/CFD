@@ -19,6 +19,10 @@ using mesh::Mesh;
 //   correction  = Sf - d * delta_coeff     (explicit non-orthogonal correction vector)
 // For internal faces, weight is the owner-side linear interpolation weight:
 //   phi_f = weight * phi_P + (1 - weight) * phi_N
+// Cell gradients: Green-Gauss with linear face interpolation, or weighted least squares
+// (second-order also on skewed tetrahedral meshes).
+enum class GradientScheme { Gauss, LeastSquares };
+
 class FvGeometry {
 public:
     // halo (optional, must outlive the geometry): the mesh is one part of a decomposed mesh.

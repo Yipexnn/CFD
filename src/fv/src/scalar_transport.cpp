@@ -40,7 +40,10 @@ std::vector<Scalar> boundary_values(const FvGeometry& geo, const std::vector<Sca
 }
 
 std::vector<Vec3> scalar_gradient(const FvGeometry& geo, const std::vector<Scalar>& field,
-                                  const std::vector<ScalarBoundary>& bc) {
+                                  const std::vector<ScalarBoundary>& bc, GradientScheme scheme) {
+    if (scheme == GradientScheme::LeastSquares) {
+        return geo.least_squares_gradient(field, boundary_values(geo, field, bc));
+    }
     const Mesh& m = geo.mesh();
     const auto nc = static_cast<std::size_t>(m.n_cells());
     const auto nf = static_cast<std::size_t>(m.n_faces());
@@ -87,7 +90,7 @@ LinearSolveResult solve_scalar(const FvGeometry& geo, const std::vector<Scalar>&
         throw std::invalid_argument("solve_scalar: size mismatch");
     }
 
-    const std::vector<Vec3> grad = scalar_gradient(geo, field, eq.boundary);
+    const std::vector<Vec3> grad = scalar_gradient(geo, field, eq.boundary, eq.gradient);
     LduMatrix a(m);
     a.pattern = &geo.csr_pattern();
     a.halo = geo.halo();

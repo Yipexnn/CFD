@@ -37,8 +37,16 @@ std::vector<BoundaryCondition> boundary_conditions(const FlowSolver& flow) {
 
 } // namespace
 
+namespace {
+SstSettings with_flow_gradient(SstSettings s, const FlowSolver& flow) {
+    s.gradient = flow.settings().gradient;
+    return s;
+}
+} // namespace
+
 KOmegaSst::KOmegaSst(const FlowSolver& flow, SstSettings settings)
-    : KOmegaSst(flow.geometry(), boundary_conditions(flow), flow.settings().nu, settings) {}
+    : KOmegaSst(flow.geometry(), boundary_conditions(flow), flow.settings().nu,
+                with_flow_gradient(settings, flow)) {}
 
 KOmegaSst::KOmegaSst(const FvGeometry& geo, const std::vector<BoundaryCondition>& boundary,
                      Scalar nu, SstSettings settings)
@@ -164,8 +172,9 @@ std::pair<Scalar, Scalar> KOmegaSst::correct(const SstFlowState& flow, Scalar dt
     }
 
     const std::vector<Mat3>& grad_u = flow.grad_u;
-    const std::vector<Vec3> grad_k = scalar_gradient(*geo_, k_, k_bc_);
-    const std::vector<Vec3> grad_omega = scalar_gradient(*geo_, omega_, omega_bc_);
+    const std::vector<Vec3> grad_k = scalar_gradient(*geo_, k_, k_bc_, settings_.gradient);
+    const std::vector<Vec3> grad_omega =
+        scalar_gradient(*geo_, omega_, omega_bc_, settings_.gradient);
 
     std::vector<Scalar> s2(nc);
     std::vector<Scalar> f1(nc);
@@ -286,6 +295,7 @@ std::pair<Scalar, Scalar> KOmegaSst::correct(const SstFlowState& flow, Scalar dt
         }
     }
     weq.boundary = omega_bc_;
+    weq.gradient = settings_.gradient;
     weq.fixed_cell = fixed;
     weq.fixed_value = fixed_omega;
     weq.relaxation = steady ? settings_.relax_omega : 1.0;
@@ -307,6 +317,7 @@ std::pair<Scalar, Scalar> KOmegaSst::correct(const SstFlowState& flow, Scalar dt
         keq.sp[c] = -k_beta_star * omega_[c];
     }
     keq.boundary = k_bc_;
+    keq.gradient = settings_.gradient;
     keq.relaxation = steady ? settings_.relax_k : 1.0;
     keq.dt = dt;
     keq.old_value = &k_old_;

@@ -39,10 +39,6 @@ enum class ConvectionScheme { Upwind, LinearUpwind, LimitedLinearUpwind };
 // the first step after a start / restart uses Euler).
 enum class TimeScheme { Euler, Backward };
 
-// Cell gradients: Green-Gauss with linear face interpolation, or weighted least squares
-// (second-order also on skewed tetrahedral meshes).
-enum class GradientScheme { Gauss, LeastSquares };
-
 struct FlowSettings {
     Scalar nu = 1e-3;               // kinematic viscosity [m^2/s]
     Vec3 body_force = Vec3::Zero(); // acceleration [m/s^2], e.g. driving pressure gradient
