@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <cfd/fv/scalar_transport.hpp>
+#include <cfd/gpu/krylov.hpp>
 #include <cmath>
 #include <stdexcept>
 
@@ -92,17 +93,28 @@ LinearSolveResult solve_scalar(const FvGeometry& geo, const std::vector<Scalar>&
     a.halo = geo.halo();
     std::vector<Scalar> divergence(nc, 0.0);
 
+    // Implicit internal-face coefficients: on the accelerator when GPU solvers are selected.
+    const bool device =
+        settings.type == LinearSolverType::GpuCg || settings.type == LinearSolverType::GpuBiCgStab;
+    if (device) {
+        gpu::assemble_convection_diffusion(static_cast<int>(nc), static_cast<int>(nif), own.data(),
+                                           nei.data(), face_flux.data(), eq.gamma_face.data(),
+                                           dc.data(), a.upper.data(), a.lower.data(), a.diag.data(),
+                                           divergence.data());
+    }
     for (std::size_t f = 0; f < nif; ++f) {
         const auto p = static_cast<std::size_t>(own[f]);
         const auto n = static_cast<std::size_t>(nei[f]);
         const Scalar flux = face_flux[f];
-        const Scalar diff = eq.gamma_face[f] * dc[f];
-        a.upper[f] = std::min(flux, 0.0) - diff;
-        a.lower[f] = -std::max(flux, 0.0) - diff;
-        a.diag[p] += std::max(flux, 0.0) + diff;
-        a.diag[n] += -std::min(flux, 0.0) + diff;
-        divergence[p] += flux;
-        divergence[n] -= flux;
+        if (!device) {
+            const Scalar diff = eq.gamma_face[f] * dc[f];
+            a.upper[f] = std::min(flux, 0.0) - diff;
+            a.lower[f] = -std::max(flux, 0.0) - diff;
+            a.diag[p] += std::max(flux, 0.0) + diff;
+            a.diag[n] += -std::min(flux, 0.0) + diff;
+            divergence[p] += flux;
+            divergence[n] -= flux;
+        }
 
         Scalar explicit_flux = 0.0;
         if (eq.linear_upwind) {

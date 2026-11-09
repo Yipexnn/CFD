@@ -1,5 +1,6 @@
 #pragma once
 
+#include <Eigen/Dense>
 #include <cfd/fv/ldu_matrix.hpp>
 #include <cfd/mesh/mesh.hpp>
 #include <vector>
@@ -50,6 +51,13 @@ public:
     [[nodiscard]] const std::vector<Scalar>& weights() const { return weights_; }
     [[nodiscard]] const std::vector<Scalar>& delta_coeffs() const { return delta_coeffs_; }
     [[nodiscard]] const std::vector<Vec3>& corrections() const { return corrections_; }
+    // Weighted least-squares gradient (weights 1/|d|^2 over the face neighbours and boundary
+    // face centres): grad_P = M_P^-1 sum w d (phi_N - phi_P). Second-order on any cell shape
+    // (Green-Gauss with linear face interpolation is not on skewed tetrahedra).
+    // boundary_values: per boundary face (f - n_internal_faces).
+    [[nodiscard]] std::vector<Vec3>
+    least_squares_gradient(const std::vector<Scalar>& cell_values,
+                           const std::vector<Scalar>& boundary_values) const;
     [[nodiscard]] const std::vector<Vec3>& unit_normals() const { return unit_normals_; }
     [[nodiscard]] const std::vector<Scalar>& face_areas() const { return face_areas_; }
 
@@ -60,6 +68,8 @@ public:
     [[nodiscard]] const CsrPattern& csr_pattern() const { return pattern_; }
 
 private:
+    void build_least_squares() const;
+    mutable std::vector<Eigen::Matrix3d> lsq_inverse_;
     const Mesh* mesh_;
     const parallel::Halo* halo_ = nullptr;
     std::vector<Scalar> weights_;

@@ -102,6 +102,17 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
+// Finite-volume assembly of the implicit upwind convection + diffusion coefficients of the
+// internal faces of an LDU matrix: upper = min(F, 0) - G, lower = -max(F, 0) - G,
+// diag[owner] += max(F, 0) + G, diag[neighbour] += -min(F, 0) + G, divergence += +-F, with
+// G = gamma * delta_coeff. diag and divergence are accumulated (not cleared). On a CUDA device
+// or with OpenMP offload the face loop runs on the accelerator (atomic accumulation); the host
+// path is the serial loop (deterministic).
+void assemble_convection_diffusion(int n_cells, int n_faces, const int* owner, const int* neighbour,
+                                   const double* flux, const double* gamma,
+                                   const double* delta_coeff, double* upper, double* lower,
+                                   double* diag, double* divergence);
+
 // Backend compiled in: "cuda", "openmp-offload" or "host".
 [[nodiscard]] std::string backend_name();
 // True if the backend found an accelerator device at run time.
@@ -118,9 +129,15 @@ SolveStats solve_openmp(const CsrView& a, const double* b, double* x, Method met
 bool openmp_device_available();
 SolveStats solve_amg_openmp(const AmgView& amg, const double* b, double* x,
                             const SolveControl& control, bool allow_device);
+void assemble_openmp(int n_cells, int n_faces, const int* owner, const int* neighbour,
+                     const double* flux, const double* gamma, const double* delta_coeff,
+                     double* upper, double* lower, double* diag, double* divergence);
 #ifdef CFD_GPU_CUDA
 SolveStats solve_amg_cuda(const AmgView& amg, const double* b, double* x,
                           const SolveControl& control);
+void assemble_cuda(int n_cells, int n_faces, const int* owner, const int* neighbour,
+                   const double* flux, const double* gamma, const double* delta_coeff,
+                   double* upper, double* lower, double* diag, double* divergence);
 void* cuda_system_create(const LduPattern& pattern);
 void cuda_system_destroy(void* handle);
 void cuda_system_set_amg(void* handle, const AmgView& amg);
