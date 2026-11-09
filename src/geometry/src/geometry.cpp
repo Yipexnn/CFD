@@ -14,6 +14,49 @@ namespace cfd::geometry {
 
 namespace {
 
+// Background size field: Threshold on the distance to the bodies (if near; distance_list sets
+// the list of Field[1]) and one Box field per refine box, combined with Min. Returns false if
+// no field was written.
+bool size_fields(std::ostream& os, const GeometrySpec& s, bool near,
+                 const std::string& distance_list, Scalar dist) {
+    std::vector<int> ids;
+    if (near) {
+        os << "Field[1] = Distance;\n"
+           << distance_list
+           << "Field[2] = Threshold;\nField[2].InField = 1;\nField[2].SizeMin = " << s.size_near
+           << ";\nField[2].SizeMax = " << s.size << ";\nField[2].DistMin = 0;\n"
+           << "Field[2].DistMax = " << dist << ";\n";
+        ids.push_back(2);
+    }
+    for (std::size_t i = 0; i < s.refine_boxes.size(); ++i) {
+        const RefineBox& b = s.refine_boxes[i];
+        const int id = 10 + static_cast<int>(i);
+        os << "Field[" << id << "] = Box;\nField[" << id << "].VIn = " << b.size << ";\nField["
+           << id << "].VOut = " << s.size << ";\n";
+        const char* names[6] = {"XMin", "YMin", "ZMin", "XMax", "YMax", "ZMax"};
+        for (int k = 0; k < 3; ++k) {
+            os << "Field[" << id << "]." << names[k] << " = " << b.min[k] << ";\nField[" << id
+               << "]." << names[k + 3] << " = " << b.max[k] << ";\n";
+        }
+        // Smooth transition to the outer size over a few outer cells.
+        os << "Field[" << id << "].Thickness = " << 2.0 * s.size << ";\n";
+        ids.push_back(id);
+    }
+    if (ids.empty()) {
+        return false;
+    }
+    if (ids.size() == 1) {
+        os << "Background Field = " << ids[0] << ";\n";
+        return true;
+    }
+    os << "Field[9] = Min;\nField[9].FieldsList = {";
+    for (std::size_t k = 0; k < ids.size(); ++k) {
+        os << (k > 0 ? ", " : "") << ids[k];
+    }
+    os << "};\nBackground Field = 9;\n";
+    return true;
+}
+
 std::string ext_lower(const std::filesystem::path& p) {
     std::string e = p.extension().string();
     std::transform(e.begin(), e.end(), e.begin(),
@@ -386,18 +429,16 @@ private:
     }
 
     void refinement(const char* what, const char* list) {
-        if (!(s_.size_near > 0.0) || s_.size_near >= s_.size) {
-            os_ << "Mesh.MeshSizeMax = " << s_.size << ";\n";
-            return;
-        }
+        const bool near = s_.size_near > 0.0 && s_.size_near < s_.size;
         const Scalar dist = s_.refine_distance > 0.0 ? s_.refine_distance : 10.0 * s_.size_near;
-        os_ << "Field[1] = Distance;\nField[1]." << what << "List = {" << list
-            << "};\nField[1].Sampling = 100;\n"
-            << "Field[2] = Threshold;\nField[2].InField = 1;\nField[2].SizeMin = " << s_.size_near
-            << ";\nField[2].SizeMax = " << s_.size << ";\nField[2].DistMin = 0;\n"
-            << "Field[2].DistMax = " << dist << ";\nBackground Field = 2;\n"
-            << "Mesh.MeshSizeExtendFromBoundary = 0;\nMesh.MeshSizeFromPoints = 0;\n"
-            << "Mesh.MeshSizeFromCurvature = 0;\nMesh.MeshSizeMax = " << s_.size << ";\n";
+        if (size_fields(os_, s_, near,
+                        std::string("Field[1].") + what + "List = {" + list +
+                            "};\nField[1].Sampling = 100;\n",
+                        dist)) {
+            os_ << "Mesh.MeshSizeExtendFromBoundary = 0;\nMesh.MeshSizeFromPoints = 0;\n"
+                << "Mesh.MeshSizeFromCurvature = 0;\n";
+        }
+        os_ << "Mesh.MeshSizeMax = " << s_.size << ";\n";
     }
 
     void mesh_options() { os_ << "Mesh.Optimize = 1;\n"; }
@@ -654,12 +695,8 @@ std::string layered_fluid_geo(const GeometrySpec& s, const std::string& body_stl
         os << "};\n";
     }
     os << "Physical Volume(\"fluid\") = {vols(), 9001};\n";
-    if (s.size_near > 0.0 && s.refine_distance > 0.0) {
-        os << "Field[1] = Distance;\nField[1].SurfacesList = {tops()};\n"
-           << "Field[2] = Threshold;\nField[2].InField = 1;\nField[2].SizeMin = " << s.size_near
-           << ";\nField[2].SizeMax = " << s.size << ";\nField[2].DistMin = 0;\n"
-           << "Field[2].DistMax = " << s.refine_distance << ";\nBackground Field = 2;\n";
-    }
+    (void)size_fields(os, s, s.size_near > 0.0 && s.refine_distance > 0.0,
+                      "Field[1].SurfacesList = {tops()};\n", s.refine_distance);
     os << "Mesh.MeshSizeMax = " << s.size << ";\nMesh.Format = 1;\nMesh.MshFileVersion = 4.1;\n";
     return os.str();
 }

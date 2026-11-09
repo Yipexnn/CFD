@@ -110,6 +110,17 @@ ordered_json geometry_json(const geometry::GeometrySpec& g,
     j["size"] = g.size;
     j["size_near"] = g.size_near;
     j["refine_distance"] = g.refine_distance;
+    if (!g.refine_boxes.empty()) {
+        ordered_json boxes = ordered_json::array();
+        for (const auto& b : g.refine_boxes) {
+            ordered_json jb = ordered_json::object();
+            jb["min"] = vec3_json(b.min);
+            jb["max"] = vec3_json(b.max);
+            jb["size"] = b.size;
+            boxes.push_back(jb);
+        }
+        j["refine_boxes"] = boxes;
+    }
     j["boundary_layer"] = {{"layers", g.bl_layers}, {"first", g.bl_first}, {"ratio", g.bl_ratio}};
     j["quads"] = g.quads;
     const std::array<const char*, 6> faces{"xmin", "xmax", "ymin", "ymax", "zmin", "zmax"};

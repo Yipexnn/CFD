@@ -59,6 +59,7 @@ Gmsh meshes accept only `type` and `file`; box meshes accept only the keys above
 | `size` | number | `0.05` | Maximum cell size. |
 | `size_near` | number | `0` | Cell size at body surfaces (<= 0: `size`). |
 | `refine_distance` | number | `0` | Distance over which `size_near` grows to `size`. |
+| `refine_boxes` | array | none | 3D: regions with a smaller cell size, e.g. a wake: `[{"min": [x, y, z], "max": [x, y, z], "size": h}]` (Gmsh box fields, combined with the body refinement). |
 | `boundary_layer` | object | none | `layers`, `first` (first cell height), `ratio` (growth). 2D: quad layers around bodies; 3D (external flow, non-solid bodies in a box domain): prism layers extruded along the body surface normals, tetrahedra elsewhere. |
 | `quads` | bool | `true` | 2D: recombine into quads (hex cells after extrusion). |
 | `domain_patches` | object | face names | Patch names of the box faces `xmin` ... `zmax`. Equal names are merged. |

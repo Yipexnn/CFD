@@ -160,7 +160,8 @@ geometry::GeometrySpec parse_geometry(const json& j, const std::string& path,
                                       std::vector<SolidConfig>& solids) {
     check_keys(j, path,
                {"type", "min", "max", "bodies", "internal", "two_d", "size", "size_near",
-                "refine_distance", "boundary_layer", "quads", "domain_patches", "patches"});
+                "refine_distance", "refine_boxes", "boundary_layer", "quads", "domain_patches",
+                "patches"});
     geometry::GeometrySpec g;
     g.domain_min = get_vec3(j, "min", path, g.domain_min);
     g.domain_max = get_vec3(j, "max", path, g.domain_max);
@@ -178,6 +179,24 @@ geometry::GeometrySpec parse_geometry(const json& j, const std::string& path,
     g.size = get_number(j, "size", path, g.size);
     g.size_near = get_number(j, "size_near", path, g.size_near);
     g.refine_distance = get_number(j, "refine_distance", path, g.refine_distance);
+    if (j.contains("refine_boxes")) {
+        if (!j["refine_boxes"].is_array()) {
+            fail(path + ".refine_boxes", "expected an array");
+        }
+        for (std::size_t i = 0; i < j["refine_boxes"].size(); ++i) {
+            const json& b = j["refine_boxes"][i];
+            const std::string bp = path + ".refine_boxes[" + std::to_string(i) + "]";
+            check_keys(b, bp, {"min", "max", "size"});
+            geometry::RefineBox box;
+            box.min = get_vec3(b, "min", bp, box.min);
+            box.max = get_vec3(b, "max", bp, box.max);
+            box.size = get_number(b, "size", bp, box.size);
+            if (!(box.size > 0.0) || (box.max - box.min).minCoeff() <= 0.0) {
+                fail(bp, "needs size > 0 and max > min");
+            }
+            g.refine_boxes.push_back(box);
+        }
+    }
     g.quads = get_bool(j, "quads", path, g.quads);
     if (!(g.size > 0.0)) {
         fail(path + ".size", "must be positive");

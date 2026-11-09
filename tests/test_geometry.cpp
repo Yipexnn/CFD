@@ -1,3 +1,4 @@
+#include <cfd/case/case_config.hpp>
 #include <cfd/geometry/geometry.hpp>
 #include <cfd/mesh/gmsh_reader.hpp>
 #include <cfd/mesh/quality.hpp>
@@ -91,6 +92,61 @@ TEST(Geometry, InvalidSpecsThrow) {
     GeometrySpec bad_domain;
     bad_domain.domain_max = Vec3(1, 0, 1);
     EXPECT_THROW((void)cfd::geometry::write_geo(bad_domain), std::invalid_argument);
+}
+
+// Refinement boxes: Box size fields combined with the body distance field; smaller cells
+// inside the box; case-file round trip.
+TEST(Geometry, RefineBoxes) {
+    GeometrySpec s;
+    s.domain_max = Vec3(4, 2, 2);
+    Body sphere;
+    sphere.kind = Body::Kind::Sphere;
+    sphere.a = Vec3(1.0, 1.0, 1.0);
+    sphere.radius = 0.2;
+    s.bodies = {sphere};
+    s.size = 0.5;
+    s.size_near = 0.1;
+    s.refine_distance = 0.5;
+    s.refine_boxes.push_back({Vec3(1.5, 0.5, 0.5), Vec3(3.5, 1.5, 1.5), 0.15});
+    const std::string geo = cfd::geometry::write_geo(s);
+    EXPECT_TRUE(contains(geo, "Field[10] = Box;"));
+    EXPECT_TRUE(contains(geo, "Field[9].FieldsList = {2, 10}"));
+    EXPECT_TRUE(contains(geo, "Background Field = 9;"));
+
+    const std::string json = R"({"name": "rb", "mesh": {"type": "geometry", "min": [0, 0, 0],
+        "max": [4, 2, 2], "size": 0.5,
+        "refine_boxes": [{"min": [1.5, 0.5, 0.5], "max": [3.5, 1.5, 1.5], "size": 0.15}]}})";
+    const auto c = cfd::cases::parse_case(json);
+    ASSERT_EQ(c.mesh.geometry.refine_boxes.size(), 1U);
+    const auto b = cfd::cases::parse_case(cfd::cases::case_to_json(c));
+    ASSERT_EQ(b.mesh.geometry.refine_boxes.size(), 1U);
+    EXPECT_DOUBLE_EQ(b.mesh.geometry.refine_boxes[0].size, 0.15);
+    EXPECT_DOUBLE_EQ(b.mesh.geometry.refine_boxes[0].max.x(), 3.5);
+
+    const std::string gmsh = cfd::geometry::find_gmsh();
+    if (gmsh.empty()) {
+        GTEST_SKIP() << "Gmsh not installed";
+    }
+    const auto dir = std::filesystem::temp_directory_path() / "cfd_test_refine_box";
+    const auto mesh = cfd::geometry::generate_mesh(s, dir, gmsh);
+    double v_in = 0.0;
+    double v_out = 0.0;
+    int n_in = 0;
+    int n_out = 0;
+    for (std::size_t i = 0; i < mesh.cell_volumes().size(); ++i) {
+        const Vec3& x = mesh.cell_centres()[i];
+        if (x.x() > 2.0 && x.x() < 3.3 && std::abs(x.y() - 1.0) < 0.4 &&
+            std::abs(x.z() - 1.0) < 0.4) {
+            v_in += mesh.cell_volumes()[i];
+            ++n_in;
+        } else if (x.x() > 3.6 || x.y() < 0.3 || x.y() > 1.7) {
+            v_out += mesh.cell_volumes()[i];
+            ++n_out;
+        }
+    }
+    ASSERT_GT(n_in, 0);
+    ASSERT_GT(n_out, 0);
+    EXPECT_LT(v_in / n_in, 0.2 * v_out / n_out);
 }
 
 TEST(Geometry, GenerateMesh2dCylinder) {

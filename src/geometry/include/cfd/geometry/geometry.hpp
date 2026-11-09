@@ -45,6 +45,13 @@ struct PatchSelector {
 // Cylinder -> disk using a and radius), meshed in 2D (optionally with quad boundary
 // layers around the bodies) and extruded by one cell layer of thickness
 // domain_max.z - domain_min.z (hexes / prisms), for use with "empty" z patches.
+// Region with a smaller cell size (3D meshes), e.g. the wake behind a body.
+struct RefineBox {
+    Vec3 min = Vec3::Zero();
+    Vec3 max = Vec3::Ones();
+    Scalar size = 0.05;
+};
+
 struct GeometrySpec {
     Vec3 domain_min = Vec3::Zero();
     Vec3 domain_max = Vec3::Ones();
@@ -52,9 +59,10 @@ struct GeometrySpec {
     bool internal = false;
     bool two_d = false;
 
-    Scalar size = 0.05;           // maximum cell size
-    Scalar size_near = 0.0;       // cell size at body surfaces (<= 0: same as size)
-    Scalar refine_distance = 0.0; // distance over which size_near grows to size
+    Scalar size = 0.05;                  // maximum cell size
+    Scalar size_near = 0.0;              // cell size at body surfaces (<= 0: same as size)
+    Scalar refine_distance = 0.0;        // distance over which size_near grows to size
+    std::vector<RefineBox> refine_boxes; // 3D: cell size `size` inside each box
 
     int bl_layers = 0;     // boundary-layer cells on body surfaces (two_d only)
     Scalar bl_first = 0.0; // first boundary-layer cell height
