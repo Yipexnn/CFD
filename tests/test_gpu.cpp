@@ -278,7 +278,7 @@ TEST(Gpu, AssemblyMatchesCpu) {
     std::vector<double> up(nif), lo(nif), diag(nc, 1.0), div(nc, 0.0);
     cfd::gpu::assemble_convection_diffusion(
         static_cast<int>(nc), static_cast<int>(nif), mesh.owner().data(), mesh.neighbour().data(),
-        flux.data(), gamma.data(), dc.data(), up.data(), lo.data(), diag.data(), div.data());
+        flux.data(), gamma.data(), dc.data(), 1.0, up.data(), lo.data(), diag.data(), div.data());
     std::vector<double> diag_ref(nc, 1.0), div_ref(nc, 0.0);
     for (std::size_t f = 0; f < nif; ++f) {
         const double g = gamma[f] * dc[f];

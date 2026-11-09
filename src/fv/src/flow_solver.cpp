@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <array>
 #include <cfd/fv/flow_solver.hpp>
+#include <cfd/gpu/krylov.hpp>
 #include <cmath>
 #include <stdexcept>
 #include <tuple>
@@ -645,16 +646,28 @@ Scalar FlowSolver::pressure_correction(const MomentumSystem& sys, bool relax_p) 
     LduMatrix eq(m);
     eq.pattern = &geo_.csr_pattern();
     eq.halo = geo_.halo();
-    for (std::size_t f = 0; f < nif; ++f) {
-        const auto p = static_cast<std::size_t>(own[f]);
-        const auto n = static_cast<std::size_t>(nei[f]);
-        const Scalar coeff = rau_f[f] * dc[f];
-        eq.upper[f] = -coeff;
-        eq.lower[f] = -coeff;
-        eq.diag[p] += coeff;
-        eq.diag[n] += coeff;
-        eq.source[p] -= phi_hbya[f];
-        eq.source[n] += phi_hbya[f];
+    if (settings_.p_solver.type == LinearSolverType::GpuCg) {
+        // Face loop on the accelerator: Laplacian coefficients and div(phiHbyA).
+        std::vector<Scalar> divergence(nc, 0.0);
+        gpu::assemble_convection_diffusion(static_cast<int>(nc), static_cast<int>(nif), own.data(),
+                                           nei.data(), phi_hbya.data(), rau_f.data(), dc.data(),
+                                           0.0, eq.upper.data(), eq.lower.data(), eq.diag.data(),
+                                           divergence.data());
+        for (std::size_t c = 0; c < nc; ++c) {
+            eq.source[c] -= divergence[c];
+        }
+    } else {
+        for (std::size_t f = 0; f < nif; ++f) {
+            const auto p = static_cast<std::size_t>(own[f]);
+            const auto n = static_cast<std::size_t>(nei[f]);
+            const Scalar coeff = rau_f[f] * dc[f];
+            eq.upper[f] = -coeff;
+            eq.lower[f] = -coeff;
+            eq.diag[p] += coeff;
+            eq.diag[n] += coeff;
+            eq.source[p] -= phi_hbya[f];
+            eq.source[n] += phi_hbya[f];
+        }
     }
     for (std::size_t f = nif; f < nf; ++f) {
         const auto p = static_cast<std::size_t>(own[f]);

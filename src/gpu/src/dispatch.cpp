@@ -29,17 +29,17 @@ SolveStats solve_amg_cg_host(const AmgView& amg, const double* b, double* x,
 
 void assemble_convection_diffusion(int n_cells, int n_faces, const int* owner, const int* neighbour,
                                    const double* flux, const double* gamma,
-                                   const double* delta_coeff, double* upper, double* lower,
-                                   double* diag, double* divergence) {
+                                   const double* delta_coeff, double convection, double* upper,
+                                   double* lower, double* diag, double* divergence) {
 #ifdef CFD_GPU_CUDA
     if (detail::cuda_device_available()) {
-        detail::assemble_cuda(n_cells, n_faces, owner, neighbour, flux, gamma, delta_coeff, upper,
-                              lower, diag, divergence);
+        detail::assemble_cuda(n_cells, n_faces, owner, neighbour, flux, gamma, delta_coeff,
+                              convection, upper, lower, diag, divergence);
         return;
     }
 #endif
-    detail::assemble_openmp(n_cells, n_faces, owner, neighbour, flux, gamma, delta_coeff, upper,
-                            lower, diag, divergence);
+    detail::assemble_openmp(n_cells, n_faces, owner, neighbour, flux, gamma, delta_coeff,
+                            convection, upper, lower, diag, divergence);
 }
 
 std::string backend_name() {

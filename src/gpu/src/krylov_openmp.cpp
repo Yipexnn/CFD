@@ -256,7 +256,8 @@ SolveStats solve_amg_openmp(const AmgView& amg, const double* b, double* x,
 
 void assemble_openmp(int n_cells, int n_faces, const int* owner, const int* neighbour,
                      const double* flux, const double* gamma, const double* delta_coeff,
-                     double* upper, double* lower, double* diag, double* divergence) {
+                     double convection, double* upper, double* lower, double* diag,
+                     double* divergence) {
 #if defined(CFD_GPU_OMP_TARGET) && defined(_OPENMP)
     if (openmp_device_available()) {
 #pragma omp target teams distribute parallel for map(                                              \
@@ -266,8 +267,8 @@ void assemble_openmp(int n_cells, int n_faces, const int* owner, const int* neig
         for (int f = 0; f < n_faces; ++f) {
             const double fl = flux[f];
             const double g = gamma[f] * delta_coeff[f];
-            const double pos = fl > 0.0 ? fl : 0.0;
-            const double neg = fl < 0.0 ? fl : 0.0;
+            const double pos = fl > 0.0 ? convection * fl : 0.0;
+            const double neg = fl < 0.0 ? convection * fl : 0.0;
             upper[f] = neg - g;
             lower[f] = -pos - g;
             const int p = owner[f];
@@ -288,8 +289,8 @@ void assemble_openmp(int n_cells, int n_faces, const int* owner, const int* neig
     for (int f = 0; f < n_faces; ++f) {
         const double fl = flux[f];
         const double g = gamma[f] * delta_coeff[f];
-        const double pos = fl > 0.0 ? fl : 0.0;
-        const double neg = fl < 0.0 ? fl : 0.0;
+        const double pos = fl > 0.0 ? convection * fl : 0.0;
+        const double neg = fl < 0.0 ? convection * fl : 0.0;
         upper[f] = neg - g;
         lower[f] = -pos - g;
         diag[owner[f]] += pos + g;

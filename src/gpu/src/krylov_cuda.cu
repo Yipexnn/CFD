@@ -681,14 +681,14 @@ SolveStats cuda_system_solve(void* handle, const double* diag, const double* upp
 namespace {
 
 __global__ void assemble_kernel(int nf, const int* own, const int* nei, const double* flux,
-                                const double* gamma, const double* dc, double* upper,
-                                double* lower, double* diag, double* div) {
+                                const double* gamma, const double* dc, double convection,
+                                double* upper, double* lower, double* diag, double* div) {
     const int f = blockIdx.x * blockDim.x + threadIdx.x;
     if (f < nf) {
         const double fl = flux[f];
         const double g = gamma[f] * dc[f];
-        const double pos = fl > 0.0 ? fl : 0.0;
-        const double neg = fl < 0.0 ? fl : 0.0;
+        const double pos = fl > 0.0 ? convection * fl : 0.0;
+        const double neg = fl < 0.0 ? convection * fl : 0.0;
         upper[f] = neg - g;
         lower[f] = -pos - g;
         atomicAdd(&diag[own[f]], pos + g);
@@ -702,7 +702,8 @@ __global__ void assemble_kernel(int nf, const int* own, const int* nei, const do
 
 void assemble_cuda(int n_cells, int n_faces, const int* owner, const int* neighbour,
                    const double* flux, const double* gamma, const double* delta_coeff,
-                   double* upper, double* lower, double* diag, double* divergence) {
+                   double convection, double* upper, double* lower, double* diag,
+                   double* divergence) {
     if (n_faces == 0) {
         return;
     }
@@ -730,7 +731,7 @@ void assemble_cuda(int n_cells, int n_faces, const int* owner, const int* neighb
     check(cudaMemcpy(d_diag, diag, bc, cudaMemcpyHostToDevice), "copy");
     check(cudaMemcpy(d_div, divergence, bc, cudaMemcpyHostToDevice), "copy");
     assemble_kernel<<<(n_faces + k_block - 1) / k_block, k_block>>>(
-        n_faces, own, nei, d_flux, d_gamma, d_dc, d_up, d_lo, d_diag, d_div);
+        n_faces, own, nei, d_flux, d_gamma, d_dc, convection, d_up, d_lo, d_diag, d_div);
     check(cudaGetLastError(), "kernel");
     check(cudaMemcpy(upper, d_up, bf, cudaMemcpyDeviceToHost), "copy");
     check(cudaMemcpy(lower, d_lo, bf, cudaMemcpyDeviceToHost), "copy");

@@ -102,8 +102,8 @@ LinearSolveResult solve_scalar(const FvGeometry& geo, const std::vector<Scalar>&
     if (device) {
         gpu::assemble_convection_diffusion(static_cast<int>(nc), static_cast<int>(nif), own.data(),
                                            nei.data(), face_flux.data(), eq.gamma_face.data(),
-                                           dc.data(), a.upper.data(), a.lower.data(), a.diag.data(),
-                                           divergence.data());
+                                           dc.data(), 1.0, a.upper.data(), a.lower.data(),
+                                           a.diag.data(), divergence.data());
     }
     for (std::size_t f = 0; f < nif; ++f) {
         const auto p = static_cast<std::size_t>(own[f]);
