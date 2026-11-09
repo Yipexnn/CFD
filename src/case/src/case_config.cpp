@@ -660,7 +660,7 @@ CaseConfig parse_case(const std::string& json_text, const std::filesystem::path&
         check_keys(s, path,
                    {"mode", "max_iterations", "tolerance", "dt", "end_time", "alpha_u", "alpha_p",
                     "convection", "non_orthogonal_correctors", "piso_correctors", "time_scheme",
-                    "max_courant", "device", "gradient"});
+                    "max_courant", "device", "gradient", "limiter", "venkat_k"});
         c.solver.max_courant = get_number(s, "max_courant", path, c.solver.max_courant);
         const std::string mode = get_string(s, "mode", path, "steady");
         if (mode == "steady") {
@@ -681,6 +681,19 @@ CaseConfig parse_case(const std::string& json_text, const std::filesystem::path&
             flow.gradient = fv::GradientScheme::LeastSquares;
         } else {
             fail(path + ".gradient", "unknown scheme '" + gradient + "' (gauss, least_squares)");
+        }
+        const std::string lim = get_string(s, "limiter", path, "barth_jespersen");
+        if (lim == "barth_jespersen") {
+            flow.limiter = fv::Limiter::BarthJespersen;
+        } else if (lim == "venkatakrishnan") {
+            flow.limiter = fv::Limiter::Venkatakrishnan;
+        } else {
+            fail(path + ".limiter",
+                 "unknown limiter '" + lim + "' (barth_jespersen, venkatakrishnan)");
+        }
+        flow.venkat_k = get_number(s, "venkat_k", path, flow.venkat_k);
+        if (!(flow.venkat_k > 0.0)) {
+            fail(path + ".venkat_k", "must be positive");
         }
         const std::string device = get_string(s, "device", path, "auto");
         if (device == "auto") {

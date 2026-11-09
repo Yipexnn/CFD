@@ -74,8 +74,11 @@ CFD_HD inline void cell_gradient(const FvArrays& m, int c, const double* phi, co
 
 // Barth-Jespersen limiter (3 components) of cell c for the vector field u (3 per cell) with
 // boundary values ub and gradient g (9 per cell, column-major, g(j, i) = du_i / dx_j).
+// venkat: Venkatakrishnan with thresholds e0, e1, e2 (eps^2 per component).
 CFD_HD inline void cell_limiter(const FvArrays& m, int c, const double* u, const double* ub,
-                                const double* g, double* lim) {
+                                const double* g, bool venkat, double e0, double e1, double e2,
+                                double* lim) {
+    const double eps2[3] = {e0, e1, e2};
     double lo[3];
     double hi[3];
     for (int i = 0; i < 3; ++i) {
@@ -104,7 +107,9 @@ CFD_HD inline void cell_limiter(const FvArrays& m, int c, const double* u, const
                 continue;
             }
             const double bound = d > 0.0 ? hi[i] - u[3 * c + i] : lo[i] - u[3 * c + i];
-            const double q = bound / d > 0.0 ? bound / d : 0.0;
+            const double q = venkat ? (bound * bound + eps2[i] + 2.0 * d * bound) /
+                                          (bound * bound + 2.0 * d * d + d * bound + eps2[i])
+                                    : (bound / d > 0.0 ? bound / d : 0.0);
             l[i] = q < l[i] ? q : l[i];
         }
     }

@@ -33,10 +33,11 @@ __global__ void gradient_kernel(fvcuda::FvArrays m, const double* phi, const dou
 }
 
 __global__ void limiter_kernel(fvcuda::FvArrays m, const double* u, const double* ub,
-                               const double* g, double* lim) {
+                               const double* g, bool venkat, double e0, double e1, double e2,
+                               double* lim) {
     const int c = blockIdx.x * blockDim.x + threadIdx.x;
     if (c < m.nc) {
-        fvcuda::cell_limiter(m, c, u, ub, g, lim);
+        fvcuda::cell_limiter(m, c, u, ub, g, venkat, e0, e1, e2, lim);
     }
 }
 
@@ -129,7 +130,8 @@ public:
     }
 
     void momentum_corrections(const double* flux, const double* nu_face, bool linear_upwind,
-                              bool limited, bool transpose_term, double* source) override {
+                              bool limited, bool venkat, const double* eps2, bool transpose_term,
+                              double* source) override {
         if (!have_vector_) {
             throw std::logic_error("DeviceFv::momentum_corrections before vector_gradient");
         }
@@ -138,7 +140,9 @@ public:
         to(src_, source, 3 * h_.nc);
         const bool use_lim = limited && linear_upwind;
         if (use_lim) {
-            limiter_kernel<<<grid(), k_fv_block>>>(m_, vphi_, vbv_, vgrad_, lim_);
+            limiter_kernel<<<grid(), k_fv_block>>>(m_, vphi_, vbv_, vgrad_, venkat,
+                                                   venkat ? eps2[0] : 0.0, venkat ? eps2[1] : 0.0,
+                                                   venkat ? eps2[2] : 0.0, lim_);
             fv_check(cudaGetLastError(), "kernel");
         }
         momentum_kernel<<<grid(), k_fv_block>>>(m_, vgrad_, lim_, use_lim, flux_, coef_,

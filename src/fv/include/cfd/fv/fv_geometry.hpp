@@ -27,6 +27,8 @@ using mesh::Mesh;
 // Cell gradients: Green-Gauss with linear face interpolation, or weighted least squares
 // (second-order also on skewed tetrahedral meshes).
 enum class GradientScheme { Gauss, LeastSquares };
+// Slope limiters: Barth-Jespersen (strict min/max bounds) or Venkatakrishnan (smooth).
+enum class Limiter { BarthJespersen, Venkatakrishnan };
 
 class FvGeometry {
 public:

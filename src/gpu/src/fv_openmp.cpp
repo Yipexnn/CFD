@@ -181,7 +181,11 @@ public:
     }
 
     void momentum_corrections(const double* flux, const double* nu_face, bool linear_upwind,
-                              bool limited, bool transpose_term, double* source) override {
+                              bool limited, bool venkat, const double* eps2, bool transpose_term,
+                              double* source) override {
+        const double e0 = venkat ? eps2[0] : 0.0;
+        const double e1 = venkat ? eps2[1] : 0.0;
+        const double e2 = venkat ? eps2[2] : 0.0;
         if (!have_vector_) {
             throw std::logic_error("DeviceFv::momentum_corrections before vector_gradient");
         }
@@ -203,7 +207,7 @@ public:
 #pragma omp target teams distribute parallel for
                 for (int c = 0; c < nc; ++c) {
                     const fvoff::FvArrays m CFD_FV_ARRAYS;
-                    fvoff::cell_limiter(m, c, u, ub, g, lim);
+                    fvoff::cell_limiter(m, c, u, ub, g, venkat, e0, e1, e2, lim);
                 }
             }
 #pragma omp target teams distribute parallel for
@@ -219,7 +223,7 @@ public:
             if (use_lim) {
                 CFD_FV_HOST_LOOP
                 for (int c = 0; c < nc; ++c) {
-                    fvhost::cell_limiter(m, c, u, ub, g, lim);
+                    fvhost::cell_limiter(m, c, u, ub, g, venkat, e0, e1, e2, lim);
                 }
             }
             CFD_FV_HOST_LOOP

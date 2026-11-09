@@ -11,7 +11,6 @@ namespace cfd::fv {
 
 // Slope limiter of the MUSCL reconstruction: Barth-Jespersen (strict, best for transient
 // shocks) or Venkatakrishnan (smooth; steady problems converge to machine accuracy).
-enum class Limiter { BarthJespersen, Venkatakrishnan };
 
 struct CompressibleSettings {
     Scalar gamma = 1.4;   // ratio of specific heats
