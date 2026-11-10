@@ -12,7 +12,9 @@
 - `solver.gradient: "gauss_corrected"`: Green-Gauss with face values
   φ_f = w φ_P + (1 − w) φ_N + ∇φ_LSQ,f · (x_f − x_ip), x_ip on the line P–N
 - Exact for linear fields on any cell shape (test on a skewed mesh; plain Gauss is not) and
-  conservative (face sums telescope); CPU loops (the GPU kernels cover Gauss / least squares)
+  conservative (face sums telescope)
+- Also on the GPU kernels (least-squares pass + corrected face sums; test: device = CPU for all
+  three schemes)
 
 ## LUST convection (momentum)
 - `solver.convection: "lust"`: 75 % linear interpolation + 25 % linear upwind, low numerical
