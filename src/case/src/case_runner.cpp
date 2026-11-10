@@ -1113,6 +1113,7 @@ RunResult CaseRunner::run(const ProgressCallback& progress) {
                        << ',' << cv.x() << ',' << cv.y() << ',' << cv.z();
         }
         forces_log << '\n';
+        forces_log.flush(); // followed live; survives interrupted runs
     };
 
     const HeatConfig& hc = config_.heat;
