@@ -49,3 +49,9 @@
   Johnson & Patel's 0.137), then the wake settles again: t > 105 mean Cd 0.679, lift 0.046,
   decaying fluctuations – no sustained shedding on this wake mesh with any of the schemes
   (Barth-Jespersen, Venkatakrishnan, LUST); unlimited linear upwind diverges
+- Finer wake (box size 0.15, 173.7k cells, LUST, from rest, 4 processes, 4 s per step):
+  the wake becomes **unsteady**; t = 30–87: mean Cd 0.678 (Johnson & Patel 0.656, +3 %),
+  mean lift 0.061 (0.069), lift oscillation amplitude 0.017, irregular periods 4.6–13
+  (St ≈ 0.12 vs 0.137); the run then diverges at t ≈ 88 (LUST is unbounded on tetrahedra)
+- Open: a stable low-dissipation scheme for long shedding runs (e.g. LUST with a
+  Venkatakrishnan-limited upwind part, or a smaller time step / more PISO correctors)
