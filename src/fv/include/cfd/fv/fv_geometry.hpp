@@ -26,7 +26,10 @@ using mesh::Mesh;
 //   phi_f = weight * phi_P + (1 - weight) * phi_N
 // Cell gradients: Green-Gauss with linear face interpolation, or weighted least squares
 // (second-order also on skewed tetrahedral meshes).
-enum class GradientScheme { Gauss, LeastSquares };
+// GaussCorrected: Green-Gauss with skewness-corrected face values
+//   phi_f = w phi_P + (1 - w) phi_N + grad_LSQ_f . (x_f - x_ip)   (x_ip on the line P-N),
+// exact for linear fields on any cell shape and conservative (face sums telescope).
+enum class GradientScheme { Gauss, LeastSquares, GaussCorrected };
 // Slope limiters: Barth-Jespersen (strict min/max bounds) or Venkatakrishnan (smooth).
 enum class Limiter { BarthJespersen, Venkatakrishnan };
 
@@ -69,6 +72,10 @@ public:
     [[nodiscard]] std::vector<Vec3>
     least_squares_gradient(const std::vector<Scalar>& cell_values,
                            const std::vector<Scalar>& boundary_values) const;
+    // Green-Gauss with skewness-corrected face values (GradientScheme::GaussCorrected).
+    [[nodiscard]] std::vector<Vec3>
+    gauss_corrected_gradient(const std::vector<Scalar>& cell_values,
+                             const std::vector<Scalar>& boundary_values) const;
     // Green-Gauss gradient with linear face interpolation (boundary_values as above).
     [[nodiscard]] std::vector<Vec3>
     gauss_gradient(const std::vector<Scalar>& cell_values,

@@ -72,6 +72,51 @@ CFD_HD inline void cell_gradient(const FvArrays& m, int c, const double* phi, co
     }
 }
 
+// Skewness-corrected Green-Gauss gradient: face values w phi_P + (1 - w) phi_N +
+// (w g_P + (1 - w) g_N) . (x_f - x_ip) with the least-squares gradient g (3 per cell).
+CFD_HD inline void cell_gradient_corrected(const FvArrays& m, int c, const double* phi,
+                                           const double* bv, int stride, int comp, const double* g,
+                                           double* out, int ostride, int ooff) {
+    double g0 = 0.0;
+    double g1 = 0.0;
+    double g2 = 0.0;
+    for (int k = m.start[c]; k < m.start[c + 1]; ++k) {
+        const int f = m.faces[k];
+        if (f < m.nif) {
+            const int p = m.own[f];
+            const int n = m.nei[f];
+            const double wf = m.w[f];
+            double pf = wf * phi[p * stride + comp] + (1.0 - wf) * phi[n * stride + comp];
+            double dot = 0.0;
+            for (int j = 0; j < 3; ++j) {
+                const double xip = wf * m.cc[3 * p + j] + (1.0 - wf) * m.cc[3 * n + j];
+                const double gf = wf * g[3 * p + j] + (1.0 - wf) * g[3 * n + j];
+                dot = j == 0 ? gf * (m.cf[3 * f] - xip) : dot + gf * (m.cf[3 * f + j] - xip);
+            }
+            pf += dot;
+            if (p == c) {
+                g0 += m.sf[3 * f] * pf;
+                g1 += m.sf[3 * f + 1] * pf;
+                g2 += m.sf[3 * f + 2] * pf;
+            } else {
+                g0 -= m.sf[3 * f] * pf;
+                g1 -= m.sf[3 * f + 1] * pf;
+                g2 -= m.sf[3 * f + 2] * pf;
+            }
+        } else {
+            const double b = bv[(f - m.nif) * stride + comp];
+            g0 += m.sf[3 * f] * b;
+            g1 += m.sf[3 * f + 1] * b;
+            g2 += m.sf[3 * f + 2] * b;
+        }
+    }
+    double* o = out + c * ostride + ooff;
+    const double v = m.vol[c];
+    o[0] = g0 / v;
+    o[1] = g1 / v;
+    o[2] = g2 / v;
+}
+
 // Barth-Jespersen limiter (3 components) of cell c for the vector field u (3 per cell) with
 // boundary values ub and gradient g (9 per cell, column-major, g(j, i) = du_i / dx_j).
 // venkat: Venkatakrishnan with thresholds e0, e1, e2 (eps^2 per component).
@@ -150,10 +195,12 @@ CFD_HD inline void cell_scalar_corrections(const FvArrays& m, int c, const doubl
 }
 
 // Explicit internal-face fluxes of the momentum equation (see DeviceFv::momentum_corrections).
+// central > 0: face value blended with linear interpolation (LUST: 0.75), needs u (3 per cell).
 CFD_HD inline void cell_momentum_corrections(const FvArrays& m, int c, const double* g,
                                              const double* lim, bool limited, const double* flux,
                                              const double* nu_face, bool linear_upwind,
-                                             bool transpose_term, double* source) {
+                                             double central, const double* u, bool transpose_term,
+                                             double* source) {
     double s[3] = {0.0, 0.0, 0.0};
     for (int k = m.start[c]; k < m.start[c + 1]; ++k) {
         const int f = m.faces[k];
@@ -174,6 +221,11 @@ CFD_HD inline void cell_momentum_corrections(const FvArrays& m, int c, const dou
                 double d = gu[3 * i] * r0 + gu[3 * i + 1] * r1 + gu[3 * i + 2] * r2;
                 if (limited) {
                     d = lim[3 * up + i] * d;
+                }
+                if (central > 0.0) {
+                    const double wc = m.w[f];
+                    const double uf = wc * u[3 * p + i] + (1.0 - wc) * u[3 * n + i];
+                    d = (1.0 - central) * d + central * (uf - u[3 * up + i]);
                 }
                 e[i] -= fl * d;
             }

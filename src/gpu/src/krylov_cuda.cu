@@ -21,8 +21,8 @@ void check(cudaError_t e, const char* what) {
     }
 }
 
-__global__ void spmv_kernel(int n, const int* rp, const int* ci, const double* va,
-                            const double* x, double* y) {
+__global__ void spmv_kernel(int n, const int* rp, const int* ci, const double* va, const double* x,
+                            double* y) {
     const int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < n) {
         double s = 0.0;
@@ -325,8 +325,7 @@ class AmgDevice {
 public:
     // A level-0 operator without host data (row_ptr == nullptr) is supplied later with
     // set_level0 (persistent systems assembled on the device).
-    explicit AmgDevice(const AmgView& v)
-        : sweeps_(v.smooth_sweeps), weight_(v.jacobi_weight) {
+    explicit AmgDevice(const AmgView& v) : sweeps_(v.smooth_sweeps), weight_(v.jacobi_weight) {
         for (const AmgLevelView& l : v.levels) {
             DeviceLevel d;
             if (l.a.row_ptr == nullptr) {
@@ -421,8 +420,7 @@ public:
 private:
     template <typename T> T* alloc(long long count) {
         T* p = nullptr;
-        check(cudaMalloc(&p, sizeof(T) * static_cast<std::size_t>(std::max(count, 1LL))),
-              "malloc");
+        check(cudaMalloc(&p, sizeof(T) * static_cast<std::size_t>(std::max(count, 1LL))), "malloc");
         check(cudaMemset(p, 0, sizeof(T) * static_cast<std::size_t>(std::max(count, 1LL))),
               "memset");
         owned_.push_back(p);
@@ -525,16 +523,16 @@ SolveStats solve_amg_cuda(const AmgView& amg, const double* b_host, double* x_ho
     double* r = d.vec();
     double* p = d.vec();
     double* q = d.vec();
-    check(cudaMemcpy(b, b_host, sizeof(double) * static_cast<std::size_t>(n),
-                     cudaMemcpyHostToDevice),
-          "copy");
-    check(cudaMemcpy(x, x_host, sizeof(double) * static_cast<std::size_t>(n),
-                     cudaMemcpyHostToDevice),
-          "copy");
+    check(
+        cudaMemcpy(b, b_host, sizeof(double) * static_cast<std::size_t>(n), cudaMemcpyHostToDevice),
+        "copy");
+    check(
+        cudaMemcpy(x, x_host, sizeof(double) * static_cast<std::size_t>(n), cudaMemcpyHostToDevice),
+        "copy");
     const SolveStats st = amg_cg_device(h, d, b, x, r, p, q, control);
-    check(cudaMemcpy(x_host, x, sizeof(double) * static_cast<std::size_t>(n),
-                     cudaMemcpyDeviceToHost),
-          "copy");
+    check(
+        cudaMemcpy(x_host, x, sizeof(double) * static_cast<std::size_t>(n), cudaMemcpyDeviceToHost),
+        "copy");
     return st;
 }
 
@@ -547,8 +545,8 @@ __global__ void assemble_diag_kernel(int n, const int* pos, const double* diag, 
     }
 }
 
-__global__ void assemble_faces_kernel(int nf, const int* upos, const int* lpos,
-                                      const double* upper, const double* lower, double* va) {
+__global__ void assemble_faces_kernel(int nf, const int* upos, const int* lpos, const double* upper,
+                                      const double* lower, double* va) {
     const int f = blockIdx.x * blockDim.x + threadIdx.x;
     if (f < nf) {
         va[upos[f]] = upper[f];
@@ -566,7 +564,7 @@ __global__ void inv_diag_kernel(int n, const double* diag, double* dinv) {
 // Persistent system: CSR pattern, assembly positions and work vectors stay on the device; per
 // solve only the LDU coefficients, right-hand side and initial guess are copied.
 struct CudaSystem {
-    Device d;              // matrix (owned below) and CG / BiCGStab vectors
+    Device d; // matrix (owned below) and CG / BiCGStab vectors
     int nf = 0;
     int* dpos = nullptr;
     int* upos = nullptr;

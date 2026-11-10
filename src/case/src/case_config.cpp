@@ -679,8 +679,11 @@ CaseConfig parse_case(const std::string& json_text, const std::filesystem::path&
             flow.gradient = fv::GradientScheme::Gauss;
         } else if (gradient == "least_squares") {
             flow.gradient = fv::GradientScheme::LeastSquares;
+        } else if (gradient == "gauss_corrected") {
+            flow.gradient = fv::GradientScheme::GaussCorrected;
         } else {
-            fail(path + ".gradient", "unknown scheme '" + gradient + "' (gauss, least_squares)");
+            fail(path + ".gradient",
+                 "unknown scheme '" + gradient + "' (gauss, least_squares, gauss_corrected)");
         }
         const std::string lim = get_string(s, "limiter", path, "barth_jespersen");
         if (lim == "barth_jespersen") {
@@ -714,9 +717,12 @@ CaseConfig parse_case(const std::string& json_text, const std::filesystem::path&
             flow.convection = fv::ConvectionScheme::Upwind;
         } else if (conv == "limited_linear_upwind") {
             flow.convection = fv::ConvectionScheme::LimitedLinearUpwind;
+        } else if (conv == "lust") {
+            flow.convection = fv::ConvectionScheme::Lust;
         } else {
             fail(path + ".convection",
-                 "unknown scheme '" + conv + "' (upwind, linear_upwind, limited_linear_upwind)");
+                 "unknown scheme '" + conv +
+                     "' (upwind, linear_upwind, limited_linear_upwind, lust)");
         }
         flow.n_non_orth_correctors =
             get_int(s, "non_orthogonal_correctors", path, flow.n_non_orth_correctors);

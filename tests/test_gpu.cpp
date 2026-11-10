@@ -385,8 +385,8 @@ TEST(Gpu, FvKernelsMatchCpu) {
     for (std::size_t f = nif; f < nf; ++f) {
         bv[f - nif] = field(mesh.face_centres()[f]);
     }
-    for (const auto scheme :
-         {cfd::fv::GradientScheme::Gauss, cfd::fv::GradientScheme::LeastSquares}) {
+    for (const auto scheme : {cfd::fv::GradientScheme::Gauss, cfd::fv::GradientScheme::LeastSquares,
+                              cfd::fv::GradientScheme::GaussCorrected}) {
         const auto cpu = geo.gradient(phi, bv, scheme, false);
         const auto dev = geo.gradient(phi, bv, scheme, true);
         for (std::size_t c = 0; c < nc; ++c) {
@@ -394,6 +394,29 @@ TEST(Gpu, FvKernelsMatchCpu) {
         }
     }
     EXPECT_EQ(geo.device().on_device(), cfd::gpu::device_available());
+
+    // Skewness-corrected Gauss: exact for a linear field on the skewed mesh (plain Gauss is not).
+    {
+        const Vec3 a(0.7, -1.3, 2.1);
+        std::vector<Scalar> lin(nc);
+        std::vector<Scalar> lin_b(nf - nif);
+        for (std::size_t c = 0; c < nc; ++c) {
+            lin[c] = a.dot(mesh.cell_centres()[c]) + 0.4;
+        }
+        for (std::size_t f = nif; f < nf; ++f) {
+            lin_b[f - nif] = a.dot(mesh.face_centres()[f]) + 0.4;
+        }
+        const auto gc = geo.gradient(lin, lin_b, cfd::fv::GradientScheme::GaussCorrected);
+        const auto gg = geo.gradient(lin, lin_b, cfd::fv::GradientScheme::Gauss);
+        double err_c = 0.0;
+        double err_g = 0.0;
+        for (std::size_t c = 0; c < nc; ++c) {
+            err_c = std::max(err_c, (gc[c] - a).norm());
+            err_g = std::max(err_g, (gg[c] - a).norm());
+        }
+        EXPECT_LT(err_c, 1e-10);
+        EXPECT_GT(err_g, 1e-3);
+    }
 
     // Explicit linear-upwind + non-orthogonal corrections against the CPU face loop.
     std::vector<Scalar> flux(nf);
@@ -417,7 +440,7 @@ TEST(Gpu, FvKernelsMatchCpu) {
         ref[p] += e;
         ref[n] -= e;
     }
-    geo.device().scalar_corrections(phi.data(), bv.data(), true, flux.data(), gamma.data(), true,
+    geo.device().scalar_corrections(phi.data(), bv.data(), 1, flux.data(), gamma.data(), true,
                                     src.data());
     for (std::size_t c = 0; c < nc; ++c) {
         EXPECT_NEAR(src[c], ref[c], 1e-12);
@@ -429,10 +452,10 @@ TEST(Gpu, FvKernelsMatchCpu) {
 // AMG-PCG) converges to the CPU solution; the variable viscosity enables the transpose term.
 TEST(Gpu, SkewedCavityMatchesCpu) {
     const auto mesh = skewed_box(16, 16, 1, 1.0 / 16);
-    auto run = [&](bool gpu, cfd::fv::Limiter limiter) {
+    auto run = [&](bool gpu, cfd::fv::Limiter limiter, cfd::fv::ConvectionScheme scheme) {
         cfd::fv::FlowSettings s;
         s.nu = 0.01;
-        s.convection = cfd::fv::ConvectionScheme::LimitedLinearUpwind;
+        s.convection = scheme;
         s.limiter = limiter;
         s.gradient = cfd::fv::GradientScheme::LeastSquares;
         s.n_non_orth_correctors = 1;
@@ -452,8 +475,17 @@ TEST(Gpu, SkewedCavityMatchesCpu) {
     };
     for (const auto limiter :
          {cfd::fv::Limiter::BarthJespersen, cfd::fv::Limiter::Venkatakrishnan}) {
-        const auto u_cpu = run(false, limiter);
-        const auto u_gpu = run(true, limiter);
+        const auto u_cpu = run(false, limiter, cfd::fv::ConvectionScheme::LimitedLinearUpwind);
+        const auto u_gpu = run(true, limiter, cfd::fv::ConvectionScheme::LimitedLinearUpwind);
+        for (std::size_t c = 0; c < u_cpu.size(); ++c) {
+            EXPECT_NEAR((u_gpu[c] - u_cpu[c]).norm(), 0.0, 1e-5);
+        }
+    }
+    {
+        const auto u_cpu =
+            run(false, cfd::fv::Limiter::BarthJespersen, cfd::fv::ConvectionScheme::Lust);
+        const auto u_gpu =
+            run(true, cfd::fv::Limiter::BarthJespersen, cfd::fv::ConvectionScheme::Lust);
         for (std::size_t c = 0; c < u_cpu.size(); ++c) {
             EXPECT_NEAR((u_gpu[c] - u_cpu[c]).norm(), 0.0, 1e-5);
         }

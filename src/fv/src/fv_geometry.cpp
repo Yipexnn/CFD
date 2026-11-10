@@ -152,19 +152,58 @@ std::vector<Vec3> FvGeometry::gauss_gradient(const std::vector<Scalar>& cell_val
     return grad;
 }
 
+std::vector<Vec3>
+FvGeometry::gauss_corrected_gradient(const std::vector<Scalar>& cell_values,
+                                     const std::vector<Scalar>& boundary_values) const {
+    const std::vector<Vec3> g = least_squares_gradient(cell_values, boundary_values);
+    const Mesh& m = *mesh_;
+    const auto nc = static_cast<std::size_t>(m.n_cells());
+    const auto nf = static_cast<std::size_t>(m.n_faces());
+    const auto nif = static_cast<std::size_t>(m.n_internal_faces());
+    const auto& w = weights_;
+    const auto& sf = m.face_area_vectors();
+    const auto& cc = m.cell_centres();
+    const auto& cf = m.face_centres();
+    std::vector<Vec3> grad(nc, Vec3::Zero());
+    for (std::size_t f = 0; f < nif; ++f) {
+        const auto p = static_cast<std::size_t>(m.owner()[f]);
+        const auto n = static_cast<std::size_t>(m.neighbour()[f]);
+        const Vec3 x_ip = w[f] * cc[p] + (1.0 - w[f]) * cc[n];
+        const Scalar phi_f = w[f] * cell_values[p] + (1.0 - w[f]) * cell_values[n] +
+                             (w[f] * g[p] + (1.0 - w[f]) * g[n]).dot(cf[f] - x_ip);
+        const Vec3 flux = sf[f] * phi_f;
+        grad[p] += flux;
+        grad[n] -= flux;
+    }
+    for (std::size_t f = nif; f < nf; ++f) {
+        grad[static_cast<std::size_t>(m.owner()[f])] += sf[f] * boundary_values[f - nif];
+    }
+    for (std::size_t c = 0; c < nc; ++c) {
+        grad[c] /= m.cell_volumes()[c];
+    }
+    exchange(grad);
+    return grad;
+}
+
 std::vector<Vec3> FvGeometry::gradient(const std::vector<Scalar>& cell_values,
                                        const std::vector<Scalar>& boundary_values,
                                        GradientScheme scheme, bool device) const {
-    const bool lsq = scheme == GradientScheme::LeastSquares;
     if (device && device_capable()) {
         static_assert(sizeof(Vec3) == 3 * sizeof(Scalar));
         std::vector<Vec3> grad(cell_values.size());
-        this->device().gradient(cell_values.data(), boundary_values.data(), lsq,
-                                reinterpret_cast<Scalar*>(grad.data()));
+        this->device().gradient(cell_values.data(), boundary_values.data(),
+                                static_cast<int>(scheme), reinterpret_cast<Scalar*>(grad.data()));
         return grad;
     }
-    return lsq ? least_squares_gradient(cell_values, boundary_values)
-               : gauss_gradient(cell_values, boundary_values);
+    switch (scheme) {
+    case GradientScheme::LeastSquares:
+        return least_squares_gradient(cell_values, boundary_values);
+    case GradientScheme::GaussCorrected:
+        return gauss_corrected_gradient(cell_values, boundary_values);
+    case GradientScheme::Gauss:
+        break;
+    }
+    return gauss_gradient(cell_values, boundary_values);
 }
 
 gpu::DeviceFv& FvGeometry::device() const {

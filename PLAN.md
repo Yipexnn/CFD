@@ -45,7 +45,8 @@ Goal: realistic 3D CFD desktop application, running locally on Windows.
 14. ✅ **Compressible far field, decomposed meshes, GPU assembly, sphere study** → details: [docs/phase14.md](docs/phase14.md)
 15. ✅ **Sphere drag resolved (least-squares gradients), GPU face assembly** → details: [docs/phase15.md](docs/phase15.md)
 16. ✅ **CPU/GPU auto selection, FV kernels on the GPU, refine boxes, sphere Re 20 / 300** → details: [docs/phase16.md](docs/phase16.md)
-17. **Later** – GPU hardware test (manual), Rhie-Chow / turbulence terms on the GPU, cause of the sphere low-Re drag deficit (Re 20: −4…6 %), sphere Re 300 vortex shedding (steady with both limiters on the 0.2 wake mesh: finer wake / less dissipative scheme)
+17. ✅ **Discretisation accuracy: relaxation-independent SIMPLE, corrected Gauss (CPU + GPU), LUST, Venkatakrishnan momentum limiter, Re 20 refinement study** → details: [docs/phase17.md](docs/phase17.md)
+18. **Later** – GPU hardware test (manual), Rhie-Chow / turbulence terms on the GPU, sphere Re 300 shedding on a finer wake mesh, near-field refinement for accurate low-Re drag
 
 ## Notes
 - Development environment is Linux; code stays portable. Windows build/test via CI; GUI tested on user's PC.

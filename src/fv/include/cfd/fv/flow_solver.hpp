@@ -31,9 +31,10 @@ struct BoundaryCondition {
     bool far_field = false;
 };
 
-// LimitedLinearUpwind: linear upwind with a Barth-Jespersen gradient limiter (bounded,
-// robust at high cell Peclet numbers).
-enum class ConvectionScheme { Upwind, LinearUpwind, LimitedLinearUpwind };
+// LimitedLinearUpwind: linear upwind with a gradient limiter (bounded, robust at high cell
+// Peclet numbers). Lust: 75 % linear interpolation + 25 % linear upwind (low dissipation, for
+// vortex shedding / LES; momentum only, scalars use linear upwind).
+enum class ConvectionScheme { Upwind, LinearUpwind, LimitedLinearUpwind, Lust };
 
 // Transient schemes: implicit Euler (1st order) or backward differencing (BDF2, 2nd order;
 // the first step after a start / restart uses Euler).
@@ -164,7 +165,11 @@ private:
 
     void assemble_momentum(MomentumSystem& sys, Scalar dt, bool relax) const;
     Vec3 solve_momentum(MomentumSystem& sys);
-    Scalar pressure_correction(const MomentumSystem& sys, bool relax_p);
+    // u_prev / phi_prev (steady SIMPLE): velocity and face flux before the momentum
+    // predictor, for the relaxation-independent face flux (Majumdar 1988).
+    Scalar pressure_correction(const MomentumSystem& sys, bool relax_p,
+                               const std::vector<Vec3>* u_prev = nullptr,
+                               const std::vector<Scalar>* phi_prev = nullptr);
     void compute_initial_flux();
 
     const BoundaryCondition& bc(Label boundary_face_index) const;

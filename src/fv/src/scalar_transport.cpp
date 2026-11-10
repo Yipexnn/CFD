@@ -80,9 +80,9 @@ LinearSolveResult solve_scalar(const FvGeometry& geo, const std::vector<Scalar>&
     std::vector<Vec3> grad;
     if (device_fv) {
         const std::vector<Scalar> bv = boundary_values(geo, field, eq.boundary);
-        geo.device().scalar_corrections(
-            field.data(), bv.data(), eq.gradient == GradientScheme::LeastSquares, face_flux.data(),
-            eq.gamma_face.data(), eq.linear_upwind, a.source.data());
+        geo.device().scalar_corrections(field.data(), bv.data(), static_cast<int>(eq.gradient),
+                                        face_flux.data(), eq.gamma_face.data(), eq.linear_upwind,
+                                        a.source.data());
     } else {
         grad = scalar_gradient(geo, field, eq.boundary, eq.gradient);
     }

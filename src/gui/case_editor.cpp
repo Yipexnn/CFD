@@ -47,11 +47,11 @@ constexpr std::array<fv::FlowBoundary, 5> kBoundaryKinds{
 // Index - 1 is fv::ThermalBoundary::Kind (0 = no entry / default).
 constexpr std::array<const char*, 4> kThermalNames{"default", "adiabatic", "fixed T", "heat flux"};
 
-constexpr std::array<const char*, 3> kConvectionNames{"upwind", "linear_upwind",
-                                                      "limited_linear_upwind"};
-constexpr std::array<fv::ConvectionScheme, 3> kConvections{
+constexpr std::array<const char*, 4> kConvectionNames{"upwind", "linear_upwind",
+                                                      "limited_linear_upwind", "lust"};
+constexpr std::array<fv::ConvectionScheme, 4> kConvections{
     fv::ConvectionScheme::Upwind, fv::ConvectionScheme::LinearUpwind,
-    fv::ConvectionScheme::LimitedLinearUpwind};
+    fv::ConvectionScheme::LimitedLinearUpwind, fv::ConvectionScheme::Lust};
 
 // Restores the updating flag on scope exit (nesting-safe).
 class UpdateScope {
@@ -556,6 +556,7 @@ QWidget* CaseEditor::build_solver_tab() {
     gradient_ = new QComboBox(page);
     gradient_->addItem(QStringLiteral("Green-Gauss"));
     gradient_->addItem(QStringLiteral("Least squares (tetrahedral meshes)"));
+    gradient_->addItem(QStringLiteral("Gauss, skewness corrected (conservative)"));
     form->addRow(QStringLiteral("Gradients"), gradient_);
     watch(gradient_, false);
 
@@ -682,7 +683,7 @@ void CaseEditor::set_config(const cases::CaseConfig& cfg) {
     alpha_p_->setValue(flow.alpha_p);
     convection_->setCurrentIndex(index_of(kConvections, flow.convection));
     time_scheme_->setCurrentIndex(flow.time_scheme == fv::TimeScheme::Backward ? 1 : 0);
-    gradient_->setCurrentIndex(flow.gradient == fv::GradientScheme::LeastSquares ? 1 : 0);
+    gradient_->setCurrentIndex(static_cast<int>(flow.gradient));
     device_->setCurrentIndex(static_cast<int>(solver.device));
     non_orth_correctors_->setValue(flow.n_non_orth_correctors);
     piso_correctors_->setValue(flow.n_piso_correctors);
@@ -810,8 +811,7 @@ cases::CaseConfig CaseEditor::config() const {
     flow.convection = kConvections[current_index(convection_)];
     flow.time_scheme =
         time_scheme_->currentIndex() == 1 ? fv::TimeScheme::Backward : fv::TimeScheme::Euler;
-    flow.gradient = gradient_->currentIndex() == 1 ? fv::GradientScheme::LeastSquares
-                                                   : fv::GradientScheme::Gauss;
+    flow.gradient = static_cast<fv::GradientScheme>(gradient_->currentIndex());
     solver.device = static_cast<cases::ComputeDevice>(device_->currentIndex());
     cases::apply_device(solver);
     flow.n_non_orth_correctors = non_orth_correctors_->value();

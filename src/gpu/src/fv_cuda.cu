@@ -32,6 +32,15 @@ __global__ void gradient_kernel(fvcuda::FvArrays m, const double* phi, const dou
     }
 }
 
+__global__ void corrected_kernel(fvcuda::FvArrays m, const double* phi, const double* bv,
+                                 int stride, int comp, const double* g, double* out, int ostride,
+                                 int ooff) {
+    const int c = blockIdx.x * blockDim.x + threadIdx.x;
+    if (c < m.nc) {
+        fvcuda::cell_gradient_corrected(m, c, phi, bv, stride, comp, g, out, ostride, ooff);
+    }
+}
+
 __global__ void limiter_kernel(fvcuda::FvArrays m, const double* u, const double* ub,
                                const double* g, bool venkat, double e0, double e1, double e2,
                                double* lim) {
@@ -51,10 +60,11 @@ __global__ void scalar_kernel(fvcuda::FvArrays m, const double* g, const double*
 
 __global__ void momentum_kernel(fvcuda::FvArrays m, const double* g, const double* lim,
                                 bool limited, const double* flux, const double* nu, bool lu,
-                                bool transpose_term, double* src) {
+                                double central, const double* u, bool transpose_term, double* src) {
     const int c = blockIdx.x * blockDim.x + threadIdx.x;
     if (c < m.nc) {
-        fvcuda::cell_momentum_corrections(m, c, g, lim, limited, flux, nu, lu, transpose_term, src);
+        fvcuda::cell_momentum_corrections(m, c, g, lim, limited, flux, nu, lu, central, u,
+                                          transpose_term, src);
     }
 }
 
@@ -91,6 +101,7 @@ public:
             flux_ = alloc(sz(h_.nif));
             coef_ = alloc(sz(h_.nif));
             src_ = alloc(3 * sz(h_.nc));
+            tmp_ = alloc(3 * sz(h_.nc));
         } catch (...) {
             release();
             throw;
@@ -99,28 +110,28 @@ public:
 
     ~CudaFv() override { release(); }
 
-    void gradient(const double* phi, const double* bv, bool lsq, double* grad) override {
+    void gradient(const double* phi, const double* bv, int scheme, double* grad) override {
         to(phi_, phi, h_.nc);
         to(bv_, bv, h_.nb());
-        launch_gradient(phi_, bv_, 1, 0, lsq, sgrad_, 3, 0);
+        launch_gradient(phi_, bv_, 1, 0, scheme, sgrad_, 3, 0);
         from(grad, sgrad_, 3 * h_.nc);
     }
 
-    void vector_gradient(const double* u, const double* ub, bool lsq, double* grad) override {
+    void vector_gradient(const double* u, const double* ub, int scheme, double* grad) override {
         to(vphi_, u, 3 * h_.nc);
         to(vbv_, ub, 3 * h_.nb());
         for (int i = 0; i < 3; ++i) {
-            launch_gradient(vphi_, vbv_, 3, i, lsq, vgrad_, 9, 3 * i);
+            launch_gradient(vphi_, vbv_, 3, i, scheme, vgrad_, 9, 3 * i);
         }
         from(grad, vgrad_, 9 * h_.nc);
         have_vector_ = true;
     }
 
-    void scalar_corrections(const double* phi, const double* bv, bool lsq, const double* flux,
+    void scalar_corrections(const double* phi, const double* bv, int scheme, const double* flux,
                             const double* gamma, bool linear_upwind, double* source) override {
         to(phi_, phi, h_.nc);
         to(bv_, bv, h_.nb());
-        launch_gradient(phi_, bv_, 1, 0, lsq, sgrad_, 3, 0);
+        launch_gradient(phi_, bv_, 1, 0, scheme, sgrad_, 3, 0);
         to(flux_, flux, h_.nif);
         to(coef_, gamma, h_.nif);
         to(src_, source, h_.nc);
@@ -130,8 +141,8 @@ public:
     }
 
     void momentum_corrections(const double* flux, const double* nu_face, bool linear_upwind,
-                              bool limited, bool venkat, const double* eps2, bool transpose_term,
-                              double* source) override {
+                              bool limited, bool venkat, const double* eps2, double central,
+                              bool transpose_term, double* source) override {
         if (!have_vector_) {
             throw std::logic_error("DeviceFv::momentum_corrections before vector_gradient");
         }
@@ -146,7 +157,8 @@ public:
             fv_check(cudaGetLastError(), "kernel");
         }
         momentum_kernel<<<grid(), k_fv_block>>>(m_, vgrad_, lim_, use_lim, flux_, coef_,
-                                                linear_upwind, transpose_term, src_);
+                                                linear_upwind, central, vphi_, transpose_term,
+                                                src_);
         fv_check(cudaGetLastError(), "kernel");
         from(source, src_, 3 * h_.nc);
     }
@@ -156,9 +168,18 @@ public:
 private:
     [[nodiscard]] int grid() const { return (h_.nc + k_fv_block - 1) / k_fv_block; }
 
-    void launch_gradient(const double* phi, const double* bv, int stride, int comp, bool lsq,
+    void launch_gradient(const double* phi, const double* bv, int stride, int comp, int scheme,
                          double* out, int ostride, int ooff) {
-        gradient_kernel<<<grid(), k_fv_block>>>(m_, phi, bv, stride, comp, lsq, out, ostride, ooff);
+        if (scheme == 2) { // corrected Gauss: least-squares gradient first
+            gradient_kernel<<<grid(), k_fv_block>>>(m_, phi, bv, stride, comp, true, tmp_, 3, 0);
+            fv_check(cudaGetLastError(), "kernel");
+            corrected_kernel<<<grid(), k_fv_block>>>(m_, phi, bv, stride, comp, tmp_, out, ostride,
+                                                     ooff);
+            fv_check(cudaGetLastError(), "kernel");
+            return;
+        }
+        gradient_kernel<<<grid(), k_fv_block>>>(m_, phi, bv, stride, comp, scheme == 1, out,
+                                                ostride, ooff);
         fv_check(cudaGetLastError(), "kernel");
     }
 
@@ -216,6 +237,7 @@ private:
     double* flux_ = nullptr;
     double* coef_ = nullptr;
     double* src_ = nullptr;
+    double* tmp_ = nullptr;
     bool have_vector_ = false;
 };
 

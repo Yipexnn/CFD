@@ -236,13 +236,12 @@ std::vector<Mat3> FlowSolver::velocity_gradient() const {
             ub[b] = boundary_velocity(static_cast<Label>(nifl + b));
         }
         std::vector<Mat3> g(u_.size());
-        geo_.device().vector_gradient(reinterpret_cast<const Scalar*>(u_.data()),
-                                      reinterpret_cast<const Scalar*>(ub.data()),
-                                      settings_.gradient == GradientScheme::LeastSquares,
-                                      reinterpret_cast<Scalar*>(g.data()));
+        geo_.device().vector_gradient(
+            reinterpret_cast<const Scalar*>(u_.data()), reinterpret_cast<const Scalar*>(ub.data()),
+            static_cast<int>(settings_.gradient), reinterpret_cast<Scalar*>(g.data()));
         return g;
     }
-    if (settings_.gradient == GradientScheme::LeastSquares) {
+    if (settings_.gradient != GradientScheme::Gauss) {
         const auto ncl = static_cast<std::size_t>(m.n_cells());
         const auto nifl = static_cast<std::size_t>(m.n_internal_faces());
         const auto nb = static_cast<std::size_t>(m.n_boundary_faces());
@@ -256,7 +255,7 @@ std::vector<Mat3> FlowSolver::velocity_gradient() const {
             for (std::size_t b = 0; b < nb; ++b) {
                 bnd[b] = boundary_velocity(static_cast<Label>(nifl + b))[i];
             }
-            const std::vector<Vec3> gi = geo_.least_squares_gradient(cell, bnd);
+            const std::vector<Vec3> gi = geo_.gradient(cell, bnd, settings_.gradient);
             for (std::size_t c = 0; c < ncl; ++c) {
                 g[c].col(i) = gi[c]; // g(j, i) = du_i / dx_j
             }
@@ -297,7 +296,7 @@ std::vector<Vec3> FlowSolver::pressure_gradient() const {
     const auto& sf = m.face_area_vectors();
     const auto& vol = m.cell_volumes();
 
-    if (settings_.gradient == GradientScheme::LeastSquares) {
+    if (settings_.gradient != GradientScheme::Gauss) {
         // Two passes as below: tangential extrapolation of zero-gradient boundary values.
         std::vector<Scalar> pb(nf - nif);
         std::vector<Vec3> g;
@@ -313,7 +312,7 @@ std::vector<Vec3> FlowSolver::pressure_gradient() const {
                 }
                 pb[f - nif] = v;
             }
-            g = geo_.gradient(p_, pb, GradientScheme::LeastSquares, device_fv());
+            g = geo_.gradient(p_, pb, settings_.gradient, device_fv());
         }
         return g;
     }
@@ -450,6 +449,8 @@ void FlowSolver::assemble_momentum(MomentumSystem& sys, Scalar dt, bool relax) c
     const Scalar nu = settings_.nu;
     const bool linear_upwind = settings_.convection != ConvectionScheme::Upwind;
     const bool limited = settings_.convection == ConvectionScheme::LimitedLinearUpwind;
+    const bool lust = settings_.convection == ConvectionScheme::Lust;
+    constexpr Scalar k_lust = 0.75; // linear-interpolation share of LUST
     // Constant-step BDF2 once two old levels exist (Euler otherwise).
     const bool bdf2 = dt > 0.0 && settings_.time_scheme == TimeScheme::Backward &&
                       u_old_old_.size() == u_.size() && std::abs(dt - dt_old_) <= 1e-12 * dt;
@@ -530,7 +531,7 @@ void FlowSolver::assemble_momentum(MomentumSystem& sys, Scalar dt, bool relax) c
         const Vec3 eps2 = venkat_eps2();
         geo_.device().momentum_corrections(phi_.data(), nu_f.data(), linear_upwind, limited,
                                            settings_.limiter == Limiter::Venkatakrishnan,
-                                           eps2.data(), transpose_term,
+                                           eps2.data(), lust ? k_lust : 0.0, transpose_term,
                                            reinterpret_cast<Scalar*>(sys.source.data()));
     }
 
@@ -554,7 +555,12 @@ void FlowSolver::assemble_momentum(MomentumSystem& sys, Scalar dt, bool relax) c
             const std::size_t up = flux >= 0.0 ? p : n;
             const Vec3 r = cf[f] - cc[up];
             const Vec3 delta = grad[up].transpose() * r;
-            explicit_flux -= flux * (limited ? Vec3(limiter[up].cwiseProduct(delta)) : delta);
+            if (lust) {
+                const Vec3 uf = w[f] * u_[p] + (1.0 - w[f]) * u_[n];
+                explicit_flux -= flux * ((1.0 - k_lust) * delta + k_lust * (uf - u_[up]));
+            } else {
+                explicit_flux -= flux * (limited ? Vec3(limiter[up].cwiseProduct(delta)) : delta);
+            }
         }
         const Mat3 grad_f = w[f] * grad[p] + (1.0 - w[f]) * grad[n];
         explicit_flux += nu_f * (grad_f.transpose() * k[f]);
@@ -662,7 +668,9 @@ Vec3 FlowSolver::solve_momentum(MomentumSystem& sys) {
     return residual;
 }
 
-Scalar FlowSolver::pressure_correction(const MomentumSystem& sys, bool relax_p) {
+Scalar FlowSolver::pressure_correction(const MomentumSystem& sys, bool relax_p,
+                                       const std::vector<Vec3>* u_prev,
+                                       const std::vector<Scalar>* phi_prev) {
     const Mesh& m = geo_.mesh();
     const auto nc = static_cast<std::size_t>(m.n_cells());
     const auto nf = static_cast<std::size_t>(m.n_faces());
@@ -722,6 +730,25 @@ Scalar FlowSolver::pressure_correction(const MomentumSystem& sys, bool relax_p) 
         case FlowBoundary::Empty:
             phi_hbya[f] = 0.0;
             break;
+        }
+    }
+
+    // Relaxation-independent face flux (Majumdar): HbyA contains (1 - alpha_u) u_prev, whose
+    // interpolation is replaced by (1 - alpha_u) phi_prev, so the converged face flux (and the
+    // solution) does not depend on alpha_u.
+    if (u_prev != nullptr && phi_prev != nullptr && settings_.alpha_u < 1.0) {
+        const Scalar beta = 1.0 - settings_.alpha_u;
+        for (std::size_t f = 0; f < nif; ++f) {
+            const auto p = static_cast<std::size_t>(own[f]);
+            const auto n = static_cast<std::size_t>(nei[f]);
+            const Vec3 uf = w[f] * (*u_prev)[p] + (1.0 - w[f]) * (*u_prev)[n];
+            phi_hbya[f] += beta * ((*phi_prev)[f] - uf.dot(sf[f]));
+        }
+        for (std::size_t f = nif; f < nf; ++f) {
+            if (bc(static_cast<Label>(f - nif)).kind == FlowBoundary::PressureOutlet) {
+                const auto p = static_cast<std::size_t>(own[f]);
+                phi_hbya[f] += beta * ((*phi_prev)[f] - (*u_prev)[p].dot(sf[f]));
+            }
         }
     }
 
@@ -822,10 +849,12 @@ Residuals FlowSolver::simple_iteration() {
     MomentumSystem sys{LduMatrix(geo_.mesh()), {}, {}};
     sys.base.pattern = &geo_.csr_pattern();
     sys.base.halo = geo_.halo();
+    const std::vector<Vec3> u_prev = u_;
+    const std::vector<Scalar> phi_prev = phi_;
     assemble_momentum(sys, 0.0, true);
     Residuals res;
     res.u = solve_momentum(sys);
-    res.p = pressure_correction(sys, true);
+    res.p = pressure_correction(sys, true, &u_prev, &phi_prev);
     if (turbulence_ != nullptr) {
         std::tie(res.k, res.omega) = turbulence_->correct(*this, 0.0);
     }
