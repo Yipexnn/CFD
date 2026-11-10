@@ -53,5 +53,13 @@
   the wake becomes **unsteady**; t = 30–87: mean Cd 0.678 (Johnson & Patel 0.656, +3 %),
   mean lift 0.061 (0.069), lift oscillation amplitude 0.017, irregular periods 4.6–13
   (St ≈ 0.12 vs 0.137); the run then diverges at t ≈ 88 (LUST is unbounded on tetrahedra)
-- Open: a stable low-dissipation scheme for long shedding runs (e.g. LUST with a
-  Venkatakrishnan-limited upwind part, or a smaller time step / more PISO correctors)
+- `solver.convection: "limited_lust"` (new): LUST with the limiter applied to the whole
+  higher-order correction (CPU loop + GPU kernel; test: skewed cavity GPU = CPU). Same mesh,
+  Venkatakrishnan K = 0.1, t = 0–110: **stable, but exactly steady** – Cd 0.6785,
+  lift 0.0606, no oscillation
+- Interpretation: the irregular unsteadiness of unlimited LUST was most likely the growing
+  numerical instability, not physical shedding. Re 300 is only slightly above the onset of
+  shedding (Re ≈ 270–280), so the weak physical instability is damped by the remaining
+  numerical dissipation of these tetrahedral wake meshes (0.15–0.2 D)
+- Open: sustained shedding at Re 300 (needs a finer / hex-dominant wake mesh or a higher
+  Reynolds number test, e.g. Re 500–1000, where the instability is strong)

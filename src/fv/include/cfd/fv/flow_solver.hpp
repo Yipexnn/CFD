@@ -34,7 +34,9 @@ struct BoundaryCondition {
 // LimitedLinearUpwind: linear upwind with a gradient limiter (bounded, robust at high cell
 // Peclet numbers). Lust: 75 % linear interpolation + 25 % linear upwind (low dissipation, for
 // vortex shedding / LES; momentum only, scalars use linear upwind).
-enum class ConvectionScheme { Upwind, LinearUpwind, LimitedLinearUpwind, Lust };
+// LimitedLust: LUST with the limiter applied to the whole higher-order correction (bounded;
+// use with the Venkatakrishnan limiter for long vortex-shedding runs).
+enum class ConvectionScheme { Upwind, LinearUpwind, LimitedLinearUpwind, Lust, LimitedLust };
 
 // Transient schemes: implicit Euler (1st order) or backward differencing (BDF2, 2nd order;
 // the first step after a start / restart uses Euler).

@@ -219,13 +219,13 @@ CFD_HD inline void cell_momentum_corrections(const FvArrays& m, int c, const dou
             const double* gu = g + 9 * up;
             for (int i = 0; i < 3; ++i) {
                 double d = gu[3 * i] * r0 + gu[3 * i + 1] * r1 + gu[3 * i + 2] * r2;
-                if (limited) {
-                    d = lim[3 * up + i] * d;
-                }
                 if (central > 0.0) {
                     const double wc = m.w[f];
                     const double uf = wc * u[3 * p + i] + (1.0 - wc) * u[3 * n + i];
                     d = (1.0 - central) * d + central * (uf - u[3 * up + i]);
+                }
+                if (limited) {
+                    d = lim[3 * up + i] * d;
                 }
                 e[i] -= fl * d;
             }
