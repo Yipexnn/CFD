@@ -61,5 +61,10 @@
   numerical instability, not physical shedding. Re 300 is only slightly above the onset of
   shedding (Re ≈ 270–280), so the weak physical instability is damped by the remaining
   numerical dissipation of these tetrahedral wake meshes (0.15–0.2 D)
+- **Re 500** (same 174k mesh, `limited_lust`, Venkatakrishnan K = 0.1, t = 0–110, 94 min on 4
+  processes): the wake is **unsteady** from t ≈ 30 on; t > 40: mean Cd 0.591 (correlation
+  ≈ 0.555, +6.5 %), lift 0.084 ± 0.022, dominant St ≈ 0.10 (literature ≈ 0.17) – the solver
+  captures the unsteady wake, but on 0.15 D tetrahedral wake cells the shedding is too weak and
+  too slow, consistent with the excess dissipation seen at Re 300
 - Open: sustained shedding at Re 300 (needs a finer / hex-dominant wake mesh or a higher
   Reynolds number test, e.g. Re 500–1000, where the instability is strong)
