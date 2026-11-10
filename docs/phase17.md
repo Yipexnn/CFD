@@ -43,4 +43,9 @@
   needs a finer mesh in the whole near field (size ≲ 0.25 D up to several D)
 
 ## Sphere Re 300 with LUST
-- Pending
+- Same mesh as Phase 16 (98.8k cells, wake box size 0.2), restart at t = 40 from the steady
+  oblique wake, BDF2 + PISO, dt 0.08, 4 MPI processes (1.4 s per step)
+- A transient burst at t ≈ 90–100 (lift up to 0.3, half period ≈ 3.6 → St ≈ 0.14, close to
+  Johnson & Patel's 0.137), then the wake settles again: t > 105 mean Cd 0.679, lift 0.046,
+  decaying fluctuations – no sustained shedding on this wake mesh with any of the schemes
+  (Barth-Jespersen, Venkatakrishnan, LUST); unlimited linear upwind diverges
