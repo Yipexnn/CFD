@@ -57,6 +57,8 @@ const char* convection_name(fv::ConvectionScheme s) {
         return "limited_linear_upwind";
     case fv::ConvectionScheme::Lust:
         return "lust";
+    case fv::ConvectionScheme::LimitedLust:
+        return "limited_lust";
     }
     return "linear_upwind";
 }

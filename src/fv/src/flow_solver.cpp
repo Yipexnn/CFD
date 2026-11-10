@@ -448,8 +448,10 @@ void FlowSolver::assemble_momentum(MomentumSystem& sys, Scalar dt, bool relax) c
     const auto& vol = m.cell_volumes();
     const Scalar nu = settings_.nu;
     const bool linear_upwind = settings_.convection != ConvectionScheme::Upwind;
-    const bool limited = settings_.convection == ConvectionScheme::LimitedLinearUpwind;
-    const bool lust = settings_.convection == ConvectionScheme::Lust;
+    const bool limited = settings_.convection == ConvectionScheme::LimitedLinearUpwind ||
+                         settings_.convection == ConvectionScheme::LimitedLust;
+    const bool lust = settings_.convection == ConvectionScheme::Lust ||
+                      settings_.convection == ConvectionScheme::LimitedLust;
     constexpr Scalar k_lust = 0.75; // linear-interpolation share of LUST
     // Constant-step BDF2 once two old levels exist (Euler otherwise).
     const bool bdf2 = dt > 0.0 && settings_.time_scheme == TimeScheme::Backward &&
@@ -467,7 +469,7 @@ void FlowSolver::assemble_momentum(MomentumSystem& sys, Scalar dt, bool relax) c
     // stay within the min/max of the cell and its face neighbours (boundary values included).
     const bool device = device_fv(); // limiter and explicit fluxes on the accelerator
     std::vector<Vec3> limiter;
-    if (settings_.convection == ConvectionScheme::LimitedLinearUpwind && !device) {
+    if (limited && !device) {
         std::vector<Vec3> u_min(u_);
         std::vector<Vec3> u_max(u_);
         for (std::size_t f = 0; f < nif; ++f) {
@@ -555,12 +557,12 @@ void FlowSolver::assemble_momentum(MomentumSystem& sys, Scalar dt, bool relax) c
             const std::size_t up = flux >= 0.0 ? p : n;
             const Vec3 r = cf[f] - cc[up];
             const Vec3 delta = grad[up].transpose() * r;
+            Vec3 corr = delta;
             if (lust) {
                 const Vec3 uf = w[f] * u_[p] + (1.0 - w[f]) * u_[n];
-                explicit_flux -= flux * ((1.0 - k_lust) * delta + k_lust * (uf - u_[up]));
-            } else {
-                explicit_flux -= flux * (limited ? Vec3(limiter[up].cwiseProduct(delta)) : delta);
+                corr = (1.0 - k_lust) * delta + k_lust * (uf - u_[up]);
             }
+            explicit_flux -= flux * (limited ? Vec3(limiter[up].cwiseProduct(corr)) : corr);
         }
         const Mat3 grad_f = w[f] * grad[p] + (1.0 - w[f]) * grad[n];
         explicit_flux += nu_f * (grad_f.transpose() * k[f]);

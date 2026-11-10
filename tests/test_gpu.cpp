@@ -481,11 +481,10 @@ TEST(Gpu, SkewedCavityMatchesCpu) {
             EXPECT_NEAR((u_gpu[c] - u_cpu[c]).norm(), 0.0, 1e-5);
         }
     }
-    {
-        const auto u_cpu =
-            run(false, cfd::fv::Limiter::BarthJespersen, cfd::fv::ConvectionScheme::Lust);
-        const auto u_gpu =
-            run(true, cfd::fv::Limiter::BarthJespersen, cfd::fv::ConvectionScheme::Lust);
+    for (const auto scheme :
+         {cfd::fv::ConvectionScheme::Lust, cfd::fv::ConvectionScheme::LimitedLust}) {
+        const auto u_cpu = run(false, cfd::fv::Limiter::Venkatakrishnan, scheme);
+        const auto u_gpu = run(true, cfd::fv::Limiter::Venkatakrishnan, scheme);
         for (std::size_t c = 0; c < u_cpu.size(); ++c) {
             EXPECT_NEAR((u_gpu[c] - u_cpu[c]).norm(), 0.0, 1e-5);
         }

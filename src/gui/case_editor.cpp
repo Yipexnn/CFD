@@ -47,11 +47,12 @@ constexpr std::array<fv::FlowBoundary, 5> kBoundaryKinds{
 // Index - 1 is fv::ThermalBoundary::Kind (0 = no entry / default).
 constexpr std::array<const char*, 4> kThermalNames{"default", "adiabatic", "fixed T", "heat flux"};
 
-constexpr std::array<const char*, 4> kConvectionNames{"upwind", "linear_upwind",
-                                                      "limited_linear_upwind", "lust"};
-constexpr std::array<fv::ConvectionScheme, 4> kConvections{
+constexpr std::array<const char*, 5> kConvectionNames{
+    "upwind", "linear_upwind", "limited_linear_upwind", "lust", "limited_lust"};
+constexpr std::array<fv::ConvectionScheme, 5> kConvections{
     fv::ConvectionScheme::Upwind, fv::ConvectionScheme::LinearUpwind,
-    fv::ConvectionScheme::LimitedLinearUpwind, fv::ConvectionScheme::Lust};
+    fv::ConvectionScheme::LimitedLinearUpwind, fv::ConvectionScheme::Lust,
+    fv::ConvectionScheme::LimitedLust};
 
 // Restores the updating flag on scope exit (nesting-safe).
 class UpdateScope {
