@@ -188,19 +188,22 @@ FvGeometry::gauss_corrected_gradient(const std::vector<Scalar>& cell_values,
 std::vector<Vec3> FvGeometry::gradient(const std::vector<Scalar>& cell_values,
                                        const std::vector<Scalar>& boundary_values,
                                        GradientScheme scheme, bool device) const {
-    if (scheme == GradientScheme::GaussCorrected) {
-        return gauss_corrected_gradient(cell_values, boundary_values);
-    }
-    const bool lsq = scheme == GradientScheme::LeastSquares;
     if (device && device_capable()) {
         static_assert(sizeof(Vec3) == 3 * sizeof(Scalar));
         std::vector<Vec3> grad(cell_values.size());
-        this->device().gradient(cell_values.data(), boundary_values.data(), lsq,
-                                reinterpret_cast<Scalar*>(grad.data()));
+        this->device().gradient(cell_values.data(), boundary_values.data(),
+                                static_cast<int>(scheme), reinterpret_cast<Scalar*>(grad.data()));
         return grad;
     }
-    return lsq ? least_squares_gradient(cell_values, boundary_values)
-               : gauss_gradient(cell_values, boundary_values);
+    switch (scheme) {
+    case GradientScheme::LeastSquares:
+        return least_squares_gradient(cell_values, boundary_values);
+    case GradientScheme::GaussCorrected:
+        return gauss_corrected_gradient(cell_values, boundary_values);
+    case GradientScheme::Gauss:
+        break;
+    }
+    return gauss_gradient(cell_values, boundary_values);
 }
 
 gpu::DeviceFv& FvGeometry::device() const {

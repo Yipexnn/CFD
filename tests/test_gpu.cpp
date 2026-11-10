@@ -385,8 +385,8 @@ TEST(Gpu, FvKernelsMatchCpu) {
     for (std::size_t f = nif; f < nf; ++f) {
         bv[f - nif] = field(mesh.face_centres()[f]);
     }
-    for (const auto scheme :
-         {cfd::fv::GradientScheme::Gauss, cfd::fv::GradientScheme::LeastSquares}) {
+    for (const auto scheme : {cfd::fv::GradientScheme::Gauss, cfd::fv::GradientScheme::LeastSquares,
+                              cfd::fv::GradientScheme::GaussCorrected}) {
         const auto cpu = geo.gradient(phi, bv, scheme, false);
         const auto dev = geo.gradient(phi, bv, scheme, true);
         for (std::size_t c = 0; c < nc; ++c) {
@@ -440,7 +440,7 @@ TEST(Gpu, FvKernelsMatchCpu) {
         ref[p] += e;
         ref[n] -= e;
     }
-    geo.device().scalar_corrections(phi.data(), bv.data(), true, flux.data(), gamma.data(), true,
+    geo.device().scalar_corrections(phi.data(), bv.data(), 1, flux.data(), gamma.data(), true,
                                     src.data());
     for (std::size_t c = 0; c < nc; ++c) {
         EXPECT_NEAR(src[c], ref[c], 1e-12);

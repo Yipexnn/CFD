@@ -72,7 +72,7 @@ public:
     explicit OpenMpFv(const FvMeshView& view)
         : h_(view), phi_(sz(h_.nc)), bv_(sz(h_.nb())), sgrad_(3 * sz(h_.nc)), vphi_(3 * sz(h_.nc)),
           vbv_(3 * sz(h_.nb())), vgrad_(9 * sz(h_.nc)), lim_(3 * sz(h_.nc)), flux_(sz(h_.nif)),
-          coef_(sz(h_.nif)), src_(3 * sz(h_.nc)) {
+          coef_(sz(h_.nif)), src_(3 * sz(h_.nc)), tmp_(3 * sz(h_.nc)) {
 #ifdef CFD_FV_OFFLOAD
         offload_ = openmp_device_available();
         if (offload_) {
@@ -89,6 +89,7 @@ public:
             [[maybe_unused]] double* flux = flux_.data();
             [[maybe_unused]] double* coef = coef_.data();
             [[maybe_unused]] double* src = src_.data();
+            [[maybe_unused]] double* tmp = tmp_.data();
             [[maybe_unused]] const int n1 = static_cast<int>(phi_.size());
             [[maybe_unused]] const int nb1 = static_cast<int>(bv_.size());
             [[maybe_unused]] const int nfl = static_cast<int>(flux_.size());
@@ -97,7 +98,8 @@ public:
                                       cc[0 : 3 * nc], vol[0 : nc], kv[0 : 3 * nf],                 \
                                       lsq_dd[0 : 3 * nf], lsq_inv[0 : 9 * nc])                     \
     map(alloc : phi[0 : n1], bv[0 : nb1], sg[0 : 3 * n1], vphi[0 : 3 * n1], vbv[0 : 3 * nb1],      \
-            vg[0 : 9 * n1], lim[0 : 3 * n1], flux[0 : nfl], coef[0 : nfl], src[0 : 3 * n1])
+            vg[0 : 9 * n1], lim[0 : 3 * n1], flux[0 : nfl], coef[0 : nfl], src[0 : 3 * n1],        \
+            tmp[0 : 3 * n1])
         }
 #endif
     }
@@ -118,6 +120,7 @@ public:
             [[maybe_unused]] double* flux = flux_.data();
             [[maybe_unused]] double* coef = coef_.data();
             [[maybe_unused]] double* src = src_.data();
+            [[maybe_unused]] double* tmp = tmp_.data();
             [[maybe_unused]] const int n1 = static_cast<int>(phi_.size());
             [[maybe_unused]] const int nb1 = static_cast<int>(bv_.size());
             [[maybe_unused]] const int nfl = static_cast<int>(flux_.size());
@@ -126,33 +129,33 @@ public:
             sf[0 : 3 * nf], cf[0 : 3 * nf], cc[0 : 3 * nc], vol[0 : nc], kv[0 : 3 * nf],           \
             lsq_dd[0 : 3 * nf], lsq_inv[0 : 9 * nc], phi[0 : n1], bv[0 : nb1], sg[0 : 3 * n1],     \
             vphi[0 : 3 * n1], vbv[0 : 3 * nb1], vg[0 : 9 * n1], lim[0 : 3 * n1], flux[0 : nfl],    \
-            coef[0 : nfl], src[0 : 3 * n1])
+            coef[0 : nfl], src[0 : 3 * n1], tmp[0 : 3 * n1])
         }
 #endif
     }
 
-    void gradient(const double* phi, const double* bv, bool lsq, double* grad) override {
+    void gradient(const double* phi, const double* bv, int scheme, double* grad) override {
         upload(phi_, phi, h_.nc);
         upload(bv_, bv, h_.nb());
-        gradient_loop(phi_.data(), bv_.data(), 1, 0, lsq, sgrad_.data(), 3, 0);
+        gradient_loop(phi_.data(), bv_.data(), 1, 0, scheme, sgrad_.data(), 3, 0);
         download(sgrad_, grad, 3 * h_.nc);
     }
 
-    void vector_gradient(const double* u, const double* ub, bool lsq, double* grad) override {
+    void vector_gradient(const double* u, const double* ub, int scheme, double* grad) override {
         upload(vphi_, u, 3 * h_.nc);
         upload(vbv_, ub, 3 * h_.nb());
         for (int i = 0; i < 3; ++i) {
-            gradient_loop(vphi_.data(), vbv_.data(), 3, i, lsq, vgrad_.data(), 9, 3 * i);
+            gradient_loop(vphi_.data(), vbv_.data(), 3, i, scheme, vgrad_.data(), 9, 3 * i);
         }
         download(vgrad_, grad, 9 * h_.nc);
         have_vector_ = true;
     }
 
-    void scalar_corrections(const double* phi, const double* bv, bool lsq, const double* flux,
+    void scalar_corrections(const double* phi, const double* bv, int scheme, const double* flux,
                             const double* gamma, bool linear_upwind, double* source) override {
         upload(phi_, phi, h_.nc);
         upload(bv_, bv, h_.nb());
-        gradient_loop(phi_.data(), bv_.data(), 1, 0, lsq, sgrad_.data(), 3, 0);
+        gradient_loop(phi_.data(), bv_.data(), 1, 0, scheme, sgrad_.data(), 3, 0);
         upload(flux_, flux, h_.nif);
         upload(coef_, gamma, h_.nif);
         upload(src_, source, h_.nc);
@@ -238,11 +241,28 @@ public:
     [[nodiscard]] bool on_device() const override { return offload_; }
 
 private:
-    void gradient_loop(const double* phi, const double* bv, int stride, int comp, bool lsq,
+    void gradient_loop(const double* phi, const double* bv, int stride, int comp, int scheme,
                        double* out, int ostride, int ooff) {
         CFD_FV_LOCALS
+        const bool lsq = scheme == 1;
+        const bool corrected = scheme == 2;
+        double* tmp = tmp_.data(); // least-squares gradient for the corrected scheme
 #ifdef CFD_FV_OFFLOAD
         if (offload_) {
+            if (corrected) {
+#pragma omp target teams distribute parallel for
+                for (int c = 0; c < nc; ++c) {
+                    const fvoff::FvArrays m CFD_FV_ARRAYS;
+                    fvoff::cell_gradient(m, c, phi, bv, stride, comp, true, tmp, 3, 0);
+                }
+#pragma omp target teams distribute parallel for
+                for (int c = 0; c < nc; ++c) {
+                    const fvoff::FvArrays m CFD_FV_ARRAYS;
+                    fvoff::cell_gradient_corrected(m, c, phi, bv, stride, comp, tmp, out, ostride,
+                                                   ooff);
+                }
+                return;
+            }
 #pragma omp target teams distribute parallel for
             for (int c = 0; c < nc; ++c) {
                 const fvoff::FvArrays m CFD_FV_ARRAYS;
@@ -252,6 +272,18 @@ private:
         }
 #endif
         const fvhost::FvArrays m CFD_FV_ARRAYS;
+        if (corrected) {
+            CFD_FV_HOST_LOOP
+            for (int c = 0; c < nc; ++c) {
+                fvhost::cell_gradient(m, c, phi, bv, stride, comp, true, tmp, 3, 0);
+            }
+            CFD_FV_HOST_LOOP
+            for (int c = 0; c < nc; ++c) {
+                fvhost::cell_gradient_corrected(m, c, phi, bv, stride, comp, tmp, out, ostride,
+                                                ooff);
+            }
+            return;
+        }
         CFD_FV_HOST_LOOP
         for (int c = 0; c < nc; ++c) {
             fvhost::cell_gradient(m, c, phi, bv, stride, comp, lsq, out, ostride, ooff);
@@ -297,6 +329,7 @@ private:
     std::vector<double> flux_;
     std::vector<double> coef_;
     std::vector<double> src_;
+    std::vector<double> tmp_;
     bool offload_ = false;
     bool have_vector_ = false;
 };

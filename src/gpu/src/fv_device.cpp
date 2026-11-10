@@ -60,19 +60,18 @@ DeviceFv::DeviceFv(const FvMeshView& mesh) {
 
 DeviceFv::~DeviceFv() = default;
 
-void DeviceFv::gradient(const double* phi, const double* bv, bool least_squares, double* grad) {
-    impl_->gradient(phi, bv, least_squares, grad);
+void DeviceFv::gradient(const double* phi, const double* bv, int scheme, double* grad) {
+    impl_->gradient(phi, bv, scheme, grad);
 }
 
-void DeviceFv::vector_gradient(const double* u, const double* ub, bool least_squares,
-                               double* grad) {
-    impl_->vector_gradient(u, ub, least_squares, grad);
+void DeviceFv::vector_gradient(const double* u, const double* ub, int scheme, double* grad) {
+    impl_->vector_gradient(u, ub, scheme, grad);
 }
 
-void DeviceFv::scalar_corrections(const double* phi, const double* bv, bool least_squares,
+void DeviceFv::scalar_corrections(const double* phi, const double* bv, int scheme,
                                   const double* flux, const double* gamma, bool linear_upwind,
                                   double* source) {
-    impl_->scalar_corrections(phi, bv, least_squares, flux, gamma, linear_upwind, source);
+    impl_->scalar_corrections(phi, bv, scheme, flux, gamma, linear_upwind, source);
 }
 
 void DeviceFv::momentum_corrections(const double* flux, const double* nu_face, bool linear_upwind,

@@ -38,20 +38,20 @@ public:
     DeviceFv(const DeviceFv&) = delete;
     DeviceFv& operator=(const DeviceFv&) = delete;
 
+    // scheme: 0 Green-Gauss, 1 least squares, 2 skewness-corrected Gauss (fv::GradientScheme).
     // Gradient of a cell field phi (n_cells) with boundary face values bv (n_boundary):
     // grad = 3 n_cells.
-    void gradient(const double* phi, const double* bv, bool least_squares, double* grad);
+    void gradient(const double* phi, const double* bv, int scheme, double* grad);
     // Gradient of a vector field u (3 n_cells) with boundary values ub (3 n_boundary):
     // grad = 9 n_cells, column-major 3x3 per cell with grad(j, i) = du_i / dx_j. u, ub and the
     // gradient stay on the device for momentum_corrections.
-    void vector_gradient(const double* u, const double* ub, bool least_squares, double* grad);
+    void vector_gradient(const double* u, const double* ub, int scheme, double* grad);
     // Explicit internal-face fluxes of a scalar convection-diffusion equation, accumulated into
     // source (n_cells): e_f = -F_f grad_up . (x_f - x_up) [linear_upwind]
     //                         + gamma_f k_f . (w grad_P + (1 - w) grad_N),
     // source_P += e_f, source_N -= e_f; the gradient of phi is computed on the device.
-    void scalar_corrections(const double* phi, const double* bv, bool least_squares,
-                            const double* flux, const double* gamma, bool linear_upwind,
-                            double* source);
+    void scalar_corrections(const double* phi, const double* bv, int scheme, const double* flux,
+                            const double* gamma, bool linear_upwind, double* source);
     // Explicit internal-face fluxes of the momentum equation with the field and gradient of the
     // last vector_gradient call, accumulated into source (3 n_cells):
     //   -F_f lim_up * (grad_up^T (x_f - x_up)) [linear_upwind; lim = Barth-Jespersen limiter

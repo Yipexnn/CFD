@@ -12,11 +12,9 @@ struct DeviceFv::Impl {
     Impl(const Impl&) = delete;
     Impl& operator=(const Impl&) = delete;
     virtual ~Impl() = default;
-    virtual void gradient(const double* phi, const double* bv, bool least_squares,
-                          double* grad) = 0;
-    virtual void vector_gradient(const double* u, const double* ub, bool least_squares,
-                                 double* grad) = 0;
-    virtual void scalar_corrections(const double* phi, const double* bv, bool least_squares,
+    virtual void gradient(const double* phi, const double* bv, int scheme, double* grad) = 0;
+    virtual void vector_gradient(const double* u, const double* ub, int scheme, double* grad) = 0;
+    virtual void scalar_corrections(const double* phi, const double* bv, int scheme,
                                     const double* flux, const double* gamma, bool linear_upwind,
                                     double* source) = 0;
     virtual void momentum_corrections(const double* flux, const double* nu_face, bool linear_upwind,

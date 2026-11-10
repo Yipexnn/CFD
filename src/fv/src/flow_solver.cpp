@@ -220,8 +220,7 @@ Vec3 FlowSolver::venkat_eps2() const {
 }
 
 bool FlowSolver::device_fv() const {
-    return settings_.p_solver.type == LinearSolverType::GpuCg && geo_.device_capable() &&
-           settings_.gradient != GradientScheme::GaussCorrected; // corrected Gauss: CPU loops
+    return settings_.p_solver.type == LinearSolverType::GpuCg && geo_.device_capable();
 }
 
 std::vector<Mat3> FlowSolver::velocity_gradient() const {
@@ -237,10 +236,9 @@ std::vector<Mat3> FlowSolver::velocity_gradient() const {
             ub[b] = boundary_velocity(static_cast<Label>(nifl + b));
         }
         std::vector<Mat3> g(u_.size());
-        geo_.device().vector_gradient(reinterpret_cast<const Scalar*>(u_.data()),
-                                      reinterpret_cast<const Scalar*>(ub.data()),
-                                      settings_.gradient == GradientScheme::LeastSquares,
-                                      reinterpret_cast<Scalar*>(g.data()));
+        geo_.device().vector_gradient(
+            reinterpret_cast<const Scalar*>(u_.data()), reinterpret_cast<const Scalar*>(ub.data()),
+            static_cast<int>(settings_.gradient), reinterpret_cast<Scalar*>(g.data()));
         return g;
     }
     if (settings_.gradient != GradientScheme::Gauss) {
