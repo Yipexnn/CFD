@@ -67,9 +67,12 @@
   captures the unsteady wake, but on 0.15 D tetrahedral wake cells the shedding is too weak and
   too slow, consistent with the excess dissipation seen at Re 300
 - **Re 500, finer wake** (refine boxes 0.1 D in x 0.3–6 D, 0.2 D in 6–10 D, 254k cells, same
-  schemes, 7.75 s per step on 4 processes, stopped by the time limit at t = 68): t > 30 mean
-  Cd 0.571 (correlation ≈ 0.555, +2.9 %), mean |lift| 0.090, lift oscillation amplitude 0.064
-  (3× the 174k mesh) – the finer wake strengthens the shedding and moves Cd towards the
-  reference; the window holds only ≈ 2 periods (St 0.05–0.07, not converged – needs t ≳ 200)
+  schemes, ≈ 7 s per step on 4 processes, t = 0–187 with two checkpoint restarts): t > 60
+  mean Cd 0.573 (correlation ≈ 0.555, +3.2 %), mean |lift| 0.086, lift oscillation amplitude
+  0.067 (3× the 174k mesh), both lift components oscillate with St = 0.061 (FFT and 7
+  zero-crossing periods agree) – the finer wake strengthens the unsteadiness and moves Cd
+  towards the reference, but the dominant mode is the low-frequency wake oscillation
+  (literature St ≈ 0.02–0.06); the vortex-shedding frequency St ≈ 0.17 is not resolved
+  (no spectral peak), which still needs a finer / hex-dominant wake mesh
 - Open: sustained shedding at Re 300 (needs a finer / hex-dominant wake mesh or a higher
   Reynolds number test, e.g. Re 500–1000, where the instability is strong)
